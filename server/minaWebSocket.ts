@@ -44,6 +44,10 @@ export class MinaWebSocketClient extends EventEmitter {
 
   constructor() {
     super();
+    // Prevent Node.js from crashing with Unhandled 'error' event when underlying TLS/socket disconnects
+    this.on('error', (err: any) => {
+      console.warn('[Mina WebSocket] Handled socket error:', err?.message || err);
+    });
   }
 
   public getStatus(): MinaWsStatus {
@@ -154,8 +158,20 @@ export class MinaWebSocketClient extends EventEmitter {
       });
 
       this.ws.on('error', (err: Error) => {
-        this.lastError = err.message || 'WebSocket error';
-        this.emit('error', err);
+        const errMsg = err?.message || 'WebSocket error';
+        this.lastError = errMsg;
+        console.warn(`[Mina WebSocket] Network or TLS error: ${errMsg}`);
+        this.recordEvent({
+          id: `evt-${Date.now()}`,
+          type: 'raw',
+          timestamp: new Date().toLocaleTimeString(),
+          deviceId: this.deviceId || undefined,
+          data: { error: errMsg },
+          summary: `Mina 云端 WebSocket 网络连接波动: ${errMsg}`
+        });
+        try {
+          this.emit('error', err);
+        } catch {}
       });
 
       this.ws.on('close', (code: number, reason: Buffer) => {

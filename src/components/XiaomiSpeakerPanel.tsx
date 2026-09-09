@@ -2663,6 +2663,19 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
               </div>
 
               <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveSubTab('logs');
+                    setLogTypeFilter('sync');
+                  }}
+                  className="text-xs px-3 py-1 rounded-full bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 border border-white/10 transition flex items-center gap-1.5 cursor-pointer shadow-sm"
+                  title="跳转至 MIoT 指令流水查看账号授权与同步历史"
+                >
+                  <Terminal className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>查看绑定日志</span>
+                </button>
+
                 <span className={`text-xs px-3 py-1 rounded-full font-semibold flex items-center gap-1.5 ${
                   miotConfig.isLoggedIn 
                     ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
@@ -3073,7 +3086,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                     : 'text-zinc-400 hover:text-zinc-200'
                 }`}
               >
-                音频流拉取 ({castLogs.filter(l => l.type === 'sync').length})
+                音频流拉取 / 账号同步 ({castLogs.filter(l => l.type === 'sync').length})
               </button>
               <button
                 onClick={() => setLogTypeFilter('error')}

@@ -1460,6 +1460,10 @@ if (
 }
 
 // Auto-connect Mina WebSocket in background if logged in
+minaWsClient.on('error', (err: any) => {
+  console.warn('[Mina WebSocket] Handled socket error:', err?.message || err);
+});
+
 if (miotConfig.isLoggedIn && miotConfig.userId && miotConfig.serviceToken) {
   try {
     minaWsClient.connect(miotConfig.userId, miotConfig.serviceToken, miotConfig.activeDeviceId || '');
