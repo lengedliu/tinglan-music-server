@@ -3006,6 +3006,9 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                           <li><strong>方式 2</strong>：使用手机自带<strong>【系统相机】</strong>或<strong>【微信扫一扫】</strong>对准二维码打开授权页。</li>
                           <li><strong>方式 3（小米/Redmi 手机）</strong>：进入手机<strong>【设置】➔ 顶部【小米账号】➔ 右上角【扫一扫】</strong>。</li>
                         </ul>
+                        <p className="text-amber-300/90 text-[10.5px] pt-1 border-t border-emerald-500/20">
+                          💡 <strong>地区设置提示</strong>：小爱音箱语音云端服务 (`micoapi`) 主要部署在中国大陆。若米家 App 地区设为日本、新加坡等非大陆地区，可能会触发 70016 鉴权错误。建议检查：<strong>【米家 App】➔【我的】➔【更多设置】➔【关于米家】➔【地区】</strong>设为<strong>「中国大陆」</strong>。
+                        </p>
                       </div>
 
                       <div className="p-4 bg-white rounded-2xl inline-block shadow-lg relative my-2">

@@ -478,6 +478,13 @@ export class XiaomiPassport {
         };
       }
 
+      if (json.code === 70016) {
+        return {
+          error: '小米云端凭证校验失效 (错误码: 70016)。推荐使用【扫码登录】或【局域网 Token 直连】模式',
+          userId: returnedUserId
+        };
+      }
+
       return {
         error: json.desc || json.message || `认证错误 (code: ${json.code})`,
         userId: returnedUserId
