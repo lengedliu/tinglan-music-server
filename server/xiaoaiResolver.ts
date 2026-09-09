@@ -17,6 +17,9 @@ export type DeviceSource = 'cloud' | 'lan' | 'hybrid';
 
 export interface XiaoAiDevice {
   did: string;
+  deviceID?: string;
+  hardwareDeviceId?: string;
+  cloudDid?: string;
   model: string;
   name: string;
   ip?: string;
@@ -65,6 +68,9 @@ export interface LanDiscoveredItem {
 
 export interface CloudDiscoveredItem {
   did: string;
+  deviceID?: string;
+  hardwareDeviceId?: string;
+  cloudDid?: string;
   model: string;
   name: string;
   ip?: string;
@@ -394,6 +400,9 @@ export class XiaoAiResolverEngine {
 
             const cloudItem: CloudDiscoveredItem = {
               did,
+              deviceID: item.deviceID || item.hardwareDeviceId || item.device_id || did,
+              hardwareDeviceId: item.hardwareDeviceId || item.deviceID,
+              cloudDid: item.did || item.miotDID || did,
               model,
               name: cleanName,
               ip,
@@ -514,6 +523,9 @@ export class XiaoAiResolverEngine {
 
             const cloudItem: CloudDiscoveredItem = {
               did,
+              deviceID: item.deviceID || item.hardwareDeviceId || item.device_id || did,
+              hardwareDeviceId: item.hardwareDeviceId || item.deviceID,
+              cloudDid: item.did || item.miotDID || did,
               model,
               name: cleanName,
               ip,
@@ -855,6 +867,9 @@ export class XiaoAiResolverEngine {
     // Merge Pool
     const mergedMap = new Map<string, {
       did: string;
+      deviceID?: string;
+      hardwareDeviceId?: string;
+      cloudDid?: string;
       model: string;
       name: string;
       ip?: string;
@@ -884,6 +899,9 @@ export class XiaoAiResolverEngine {
         // Hybrid: Exists in both Cloud and LAN
         mergedMap.set(did, {
           did,
+          deviceID: cDev.deviceID || exDev?.deviceID || did,
+          hardwareDeviceId: cDev.hardwareDeviceId || exDev?.hardwareDeviceId,
+          cloudDid: cDev.cloudDid || exDev?.cloudDid || did,
           model: cDev.model,
           name: cDev.name,
           ip: lanMatch.ip,
@@ -900,6 +918,9 @@ export class XiaoAiResolverEngine {
         const resolvedIp = cDev.ip || exDev?.ip || undefined;
         mergedMap.set(did, {
           did,
+          deviceID: cDev.deviceID || exDev?.deviceID || did,
+          hardwareDeviceId: cDev.hardwareDeviceId || exDev?.hardwareDeviceId,
+          cloudDid: cDev.cloudDid || exDev?.cloudDid || did,
           model: cDev.model,
           name: cDev.name,
           ip: resolvedIp,
@@ -1014,6 +1035,9 @@ export class XiaoAiResolverEngine {
 
         xiaoAiDevices.push({
           did: item.did,
+          deviceID: item.deviceID,
+          hardwareDeviceId: item.hardwareDeviceId,
+          cloudDid: item.cloudDid,
           model: item.model,
           name: item.name,
           ip: item.ip,

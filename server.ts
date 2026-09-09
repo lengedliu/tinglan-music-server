@@ -3551,35 +3551,56 @@ async function callMinaCloudApi(
   methodName: string,
   messageObj: any,
   targetDid?: string
-): Promise<{ success: boolean; data?: any; error?: string; raw?: string }> {
-  const activeMicoToken = (miotConfig as any).micoServiceToken || miotConfig.serviceToken;
-  if (!activeMicoToken || !miotConfig.userId) {
-    return { success: false, error: '未检测到有效的小米服务令牌 (serviceToken)，请先绑定小米账号或输入令牌' };
+): Promise<{ success: boolean; data?: any; error?: string; raw?: string; statusCode?: number }> {
+  const rawToken = (miotConfig as any).micoServiceToken || miotConfig.serviceToken || '';
+  const rawUid = miotConfig.userId || '';
+
+  // Clean ASCII only to prevent ByteString character code > 255 TypeError
+  const activeMicoToken = String(rawToken).replace(/[^\x20-\x7E]/g, '').trim();
+  const cleanUid = String(rawUid).replace(/[^\x20-\x7E]/g, '').trim();
+
+  if (!activeMicoToken || !cleanUid || activeMicoToken.includes('••') || activeMicoToken.includes('**')) {
+    return {
+      success: false,
+      error: '未检测到有效的小米服务令牌 (serviceToken)。请在【米家账号绑定】中点击【扫码登录】或输入账号密码完成绑定。'
+    };
   }
 
   let deviceId = targetDid || miotConfig.activeDeviceId || '';
 
-  // Handle synthetic local DIDs (e.g., manual_... / detected_... / lan_...)
+  // Look up actual device to find real Mina hardware deviceID
+  const matchedDev = xiaomiDevices.find(d => 
+    d.did === targetDid || 
+    (d as any).deviceID === targetDid || 
+    (d as any).hardwareDeviceId === targetDid || 
+    (d as any).cloudDid === targetDid
+  );
+
+  if (matchedDev) {
+    if ((matchedDev as any).deviceID) deviceId = (matchedDev as any).deviceID;
+    else if ((matchedDev as any).hardwareDeviceId) deviceId = (matchedDev as any).hardwareDeviceId;
+    else if ((matchedDev as any).cloudDid) deviceId = (matchedDev as any).cloudDid;
+    else if (matchedDev.did && !matchedDev.did.startsWith('manual_') && !matchedDev.did.startsWith('detected_') && !matchedDev.did.startsWith('lan_') && !matchedDev.did.startsWith('miio_')) {
+      deviceId = matchedDev.did;
+    }
+  }
+
+  // Handle synthetic local DIDs if still unmapped
   if (!deviceId || deviceId.startsWith('manual_') || deviceId.startsWith('detected_') || deviceId.startsWith('lan_') || deviceId.startsWith('miio_')) {
-    const matchedDev = xiaomiDevices.find(d => d.did === targetDid);
-    if (matchedDev && (matchedDev.cloudDid || matchedDev.deviceID)) {
-      deviceId = matchedDev.cloudDid || matchedDev.deviceID;
-    } else {
-      const realCloudDev = xiaomiDevices.find(d => 
-        d.did && !d.did.startsWith('manual_') && !d.did.startsWith('detected_') && !d.did.startsWith('lan_') && !d.did.startsWith('miio_')
-      );
-      if (realCloudDev) {
-        deviceId = realCloudDev.did;
-      } else if (miotConfig.activeDeviceId && !miotConfig.activeDeviceId.startsWith('manual_') && !miotConfig.activeDeviceId.startsWith('detected_')) {
-        deviceId = miotConfig.activeDeviceId;
-      }
+    const realCloudDev = xiaomiDevices.find(d => 
+      d.did && !d.did.startsWith('manual_') && !d.did.startsWith('detected_') && !d.did.startsWith('lan_') && !d.did.startsWith('miio_')
+    );
+    if (realCloudDev) {
+      deviceId = (realCloudDev as any).deviceID || realCloudDev.did;
+    } else if (miotConfig.activeDeviceId && !miotConfig.activeDeviceId.startsWith('manual_') && !miotConfig.activeDeviceId.startsWith('detected_')) {
+      deviceId = miotConfig.activeDeviceId;
     }
   }
 
   if (!deviceId || deviceId.startsWith('manual_') || deviceId.startsWith('detected_') || deviceId.startsWith('lan_') || deviceId.startsWith('miio_')) {
     return {
       success: false,
-      error: '当前音箱为纯局域网手动添加设备，无关联的小米云端 DID。云端 Preview 容器因网络隔离无法直连 192.168.x.x，请先点击【同步云端音箱】拉取绑定账号下的小爱音箱即可通过云端成功投播！'
+      error: '当前音箱为纯局域网手动添加设备，无关联的小米云端 DID。云端容器因网络隔离无法直连 192.168.x.x。请在设备管理中点击【扫描/同步云端音箱】拉取绑定账号下的小爱音箱即可通过云端成功投播！'
     };
   }
 
@@ -3596,8 +3617,12 @@ async function callMinaCloudApi(
 
   const endpoints = [
     'https://api2.mina.mi.com/remote/ubus',
-    'https://api.mina.mi.com/remote/ubus'
+    'https://api.mina.mi.com/remote/ubus',
+    'https://user.app.mina.mi.com/remote/ubus'
   ];
+
+  let lastError = '';
+  let lastStatus = 0;
 
   for (const endpoint of endpoints) {
     try {
@@ -3606,11 +3631,13 @@ async function callMinaCloudApi(
         headers: {
           'User-Agent': 'MISoundBox/1.4.0 (iPhone; iOS 14.4; Scale/3.00)',
           'Content-Type': 'application/x-www-form-urlencoded',
-          'Cookie': `userId=${miotConfig.userId}; serviceToken=${activeMicoToken}; deviceId=${deviceId || miotConfig.userId}; PassportDeviceId=${miotConfig.userId}`
+          'Cookie': `userId=${cleanUid}; serviceToken=${activeMicoToken}; deviceId=${deviceId}; PassportDeviceId=${cleanUid}`
         },
-        body: postBody.toString()
+        body: postBody.toString(),
+        signal: AbortSignal.timeout(6000)
       });
 
+      lastStatus = response.status;
       const responseText = await response.text();
       let resJson: any;
       try {
@@ -3620,24 +3647,30 @@ async function callMinaCloudApi(
       }
 
       if (response.ok && (resJson.code === 0 || resJson.message === 'ok' || resJson.info === 'ok')) {
-        return { success: true, data: resJson };
+        return { success: true, data: resJson, statusCode: 200 };
       } else {
         if (response.status === 401 || responseText.includes('HTTP Status 401') || responseText.includes('Unauthorized')) {
           return {
             success: false,
-            error: '小米服务令牌 (serviceToken) 已过期或无此设备控制权限 (HTTP 401 Unauthorized)。请重新扫码/密码登录小米账号，或使用【局域网 IP / Token 直连】方式推流。',
+            statusCode: 401,
+            error: '小米服务令牌 (serviceToken) 已过期或无此设备控制权限 (HTTP 401 Unauthorized)。请在【米家账号绑定】中重新扫码/账号登录。',
             raw: responseText
           };
         }
-        const errorDesc = resJson.message || resJson.error || `HTTP ${response.status}: ${responseText.slice(0, 120)}`;
-        return { success: false, error: errorDesc, raw: responseText };
+        const errorDesc = resJson.message || resJson.error || resJson.description || `HTTP ${response.status}: ${responseText.slice(0, 120)}`;
+        lastError = errorDesc;
       }
     } catch (netErr: any) {
-      console.warn(`Error calling ${endpoint}:`, netErr.message);
+      console.warn(`Error calling Mina endpoint ${endpoint}:`, netErr.message);
+      lastError = netErr.message;
     }
   }
 
-  return { success: false, error: '未能连接到小米 Mina 云端指令通道 (网络超时或端点不可达)' };
+  return {
+    success: false,
+    statusCode: lastStatus || 500,
+    error: lastError ? `小米 Mina 云端指令通道响应失败: ${lastError}` : '未能连接到小米 Mina 云端指令通道 (网络超时或端点不可达)'
+  };
 }
 
 // Cast Song to Xiaomi Speaker with Real Cloud UBUS Dispatch & Local miIO fallback
@@ -3646,69 +3679,114 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
 
   const startTime = Date.now();
   const { did, songId, songTitle, songArtist, streamUrl, duration } = req.body;
-  const targetDevice = xiaomiDevices.find(d => d.did === did) || xiaomiDevices[0];
+  const targetDevice = xiaomiDevices.find(d => d.did === did || (d as any).deviceID === did) || xiaomiDevices[0];
 
   if (!targetDevice) {
-    return res.status(404).json({ error: 'Device not found' });
+    return res.status(404).json({ success: false, error: '未找到指定音箱设备' });
   }
 
-  const resolvedStreamUrl = streamUrl || `${miotConfig.serverHost}/api/stream/${songId}`;
+  // 1. Resolve absolute public stream URL
+  const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'https';
+  const host = (req.headers['x-forwarded-host'] as string) || req.headers.host || req.get('host');
+  const reqOrigin = `${proto}://${host}`;
+
+  let resolvedStreamUrl = '';
+  if (streamUrl && streamUrl.startsWith('http')) {
+    resolvedStreamUrl = streamUrl;
+  } else if (streamUrl && streamUrl.startsWith('/')) {
+    const baseHost = (miotConfig.serverHost && miotConfig.serverHost.startsWith('http'))
+      ? miotConfig.serverHost.replace(/\/$/, '')
+      : reqOrigin;
+    resolvedStreamUrl = `${baseHost}${streamUrl}`;
+  } else {
+    const baseHost = (miotConfig.serverHost && miotConfig.serverHost.startsWith('http'))
+      ? miotConfig.serverHost.replace(/\/$/, '')
+      : reqOrigin;
+    resolvedStreamUrl = `${baseHost}/api/stream/${songId || 'song-1'}`;
+  }
 
   let cloudResult: any = null;
   let localMiioResult: any = null;
 
-  // 1. If device has token & ip, dispatch via miIO UDP 54321
+  // 2. Track 1: Local miIO UDP 54321 (If device has IP & Token)
   if (targetDevice.token && targetDevice.ip) {
     try {
       localMiioResult = await sendMiioCommand(
         targetDevice.ip,
         targetDevice.token,
         'play_specify_url',
-        [resolvedStreamUrl]
+        [resolvedStreamUrl],
+        3000
       );
     } catch (e: any) {
       localMiioResult = { success: false, error: e.message };
     }
   }
 
-  // 2. If user is logged into Xiaomi Cloud, dispatch cloud command as well
-  if (miotConfig.isLoggedIn && miotConfig.serviceToken && miotConfig.userId) {
+  // 3. Track 2: Xiaomi Mina Cloud UBUS (micoapi)
+  const activeMicoToken = (miotConfig as any).micoServiceToken || miotConfig.serviceToken;
+  if (miotConfig.isLoggedIn && activeMicoToken && miotConfig.userId) {
     try {
       // Send TTS announcement if enabled
       if (miotConfig.ttsAnnouncement) {
-        await callMinaCloudApi(
-          'mibrain',
-          'text_to_speech',
-          { text: `${miotConfig.ttsPrefix} ${songTitle || '歌曲'}` },
-          targetDevice.did
-        );
+        try {
+          await callMinaCloudApi(
+            'mibrain',
+            'text_to_speech',
+            { text: `${miotConfig.ttsPrefix || '正在为您播放'} ${songTitle || '歌曲'}` },
+            targetDevice.did
+          );
+        } catch (ttsErr: any) {
+          console.warn('TTS intro failed before cast:', ttsErr.message);
+        }
       }
 
-      // Send play URL command
+      // Send standard Mina UBUS player_play_url command
       cloudResult = await callMinaCloudApi(
         'mediaplayer',
-        'player_play_operation',
-        { action: 'play', url: resolvedStreamUrl, type: 1 },
+        'player_play_url',
+        { url: resolvedStreamUrl, type: 1, media: 'app_ios' },
         targetDevice.did
       );
+
+      // Track 3: MIoT Cloud Action RPC Fallback if Mina UBUS failed
+      if (!cloudResult?.success && (miotConfig as any).ssecurity && miotConfig.userId) {
+        try {
+          const rpcRes = await miotRpcEngine.executeAction(
+            targetDevice,
+            3,
+            1,
+            [resolvedStreamUrl],
+            {
+              userId: String(miotConfig.userId),
+              serviceToken: (miotConfig as any).xiaomiioServiceToken || activeMicoToken,
+              ssecurity: (miotConfig as any).ssecurity
+            }
+          );
+          if (rpcRes.code === 0) {
+            cloudResult = { success: true, data: rpcRes.result, method: 'miot_cloud_rpc' };
+          }
+        } catch (rpcErr: any) {
+          console.warn('MIoT Action Cloud fallback failed:', rpcErr.message);
+        }
+      }
     } catch (e: any) {
       cloudResult = { success: false, error: e.message };
     }
   }
 
   // Evaluate genuine success: strictly true ONLY if either local miIO or cloud succeeded
-  // If neither channel was executed, or both failed, isSuccess is strictly FALSE!
   const isSuccess = Boolean(localMiioResult?.success) || Boolean(cloudResult?.success);
   const responseTimeMs = Date.now() - startTime;
 
   const errorMessage = !isSuccess
     ? (
         cloudResult?.error
-          ? `云端投播失败: ${cloudResult.error}${localMiioResult?.error ? ` (局域网 UDP ${targetDevice.ip}:54321 亦超时)` : ''}`
+          ? `云端投播失败: ${cloudResult.error}${localMiioResult?.error ? ` (局域网 UDP ${targetDevice.ip}:54321: ${localMiioResult.error})` : ''}`
           : (localMiioResult?.error
               ? (miotConfig.isLoggedIn
-                  ? `局域网 UDP 超时 (${targetDevice.ip}:54321，远程云端容器无法直接访问家庭局域网 IP)。请确认小米账号已正常绑定`
-                  : `局域网 UDP 超时 (${targetDevice.ip}:54321，远程云端容器无法直接访问家庭局域网 IP)。请先在【扫码登录】页面完成米家账号绑定以使用云端投播`)
+                  ? `局域网 UDP 超时 (${targetDevice.ip}:54321，远程云端容器无法直接访问家庭私有 IP)。请点击【扫描/同步云端音箱】以使用米家云端推流通道`
+                  : `局域网 UDP 超时 (${targetDevice.ip}:54321，远程云端容器无法直接访问家庭私有 IP)。请先在【米家账号绑定】中点击【扫码登录】绑定小米账号即可实现云端投播`)
               : (!targetDevice.ip && !targetDevice.token && !miotConfig.isLoggedIn
                   ? '设备缺少可用投播通道（无局域网 IP/Token 且未登录米家云端）'
                   : '投播指令执行失败，音箱未响应或网络断开'))
@@ -3734,7 +3812,7 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
       currentDuration: duration || 200,
       currentPosition: 0,
       streamUrl: resolvedStreamUrl,
-      lastTts: miotConfig.ttsAnnouncement ? `${miotConfig.ttsPrefix}: ${songTitle || '歌曲'}` : targetDevice.status?.lastTts,
+      lastTts: miotConfig.ttsAnnouncement ? `${miotConfig.ttsPrefix || '正在为您播放'}: ${songTitle || '歌曲'}` : targetDevice.status?.lastTts,
       updatedAt: new Date().toISOString()
     };
     saveJson(DEVICES_FILE, xiaomiDevices);

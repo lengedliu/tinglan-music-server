@@ -59,6 +59,9 @@ export type DeviceConnectionState = 'online' | 'offline' | 'unknown' | 'connecti
 
 export interface XiaomiDevice {
   did: string;
+  deviceID?: string; // Mina Cloud Hardware Device ID
+  hardwareDeviceId?: string;
+  cloudDid?: string;
   name: string;
   model: string;
   hardware?: string;
