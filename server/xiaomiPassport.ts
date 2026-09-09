@@ -286,63 +286,83 @@ export class XiaomiPassport {
   ): Promise<{ serviceToken?: string; cookies?: string; rawLocation?: string }> {
     logDebug(`exchangeStsToken START`, { locationUrl, cookies });
     try {
-      const res = await fetch(locationUrl, {
-        headers: {
-          'User-Agent': this.userAgent,
-          'Cookie': cookies
-        },
-        redirect: 'manual'
-      });
+      let currentUrl = locationUrl;
+      let accumulatedCookies = cookies || '';
 
-      const setCookiesArr: string[] = typeof (res.headers as any).getSetCookie === 'function'
-        ? (res.headers as any).getSetCookie()
-        : [res.headers.get('set-cookie') || ''];
-      const combinedCookies = setCookiesArr.filter(Boolean).join('; ');
+      // 1. First check if serviceToken is embedded directly in the locationUrl search params
+      try {
+        const u = new URL(locationUrl);
+        const st = u.searchParams.get('serviceToken') || u.searchParams.get('st') || u.searchParams.get('sts');
+        if (st) {
+          logDebug(`exchangeStsToken found serviceToken directly in URL params:`, st);
+          return { serviceToken: st, cookies: accumulatedCookies };
+        }
+      } catch {}
 
-      logDebug(`exchangeStsToken step 1 response`, {
-        status: res.status,
-        setCookie: combinedCookies,
-        location: res.headers.get('location')
-      });
+      let hops = 0;
+      const maxHops = 5;
 
-      const tokenMatch = combinedCookies.match(/serviceToken=([^;]+)/i);
-      if (tokenMatch) {
-        logDebug(`exchangeStsToken success in step 1`, tokenMatch[1]);
-        return { serviceToken: tokenMatch[1], cookies: combinedCookies };
-      }
-
-      // If 302 redirect points to next hop
-      const nextLocation = res.headers.get('location');
-      if (nextLocation) {
-        logDebug(`exchangeStsToken following redirect`, { nextLocation });
-        const nextRes = await fetch(nextLocation, {
+      while (hops < maxHops) {
+        hops++;
+        const res = await fetch(currentUrl, {
           headers: {
             'User-Agent': this.userAgent,
-            'Cookie': `${cookies}; ${combinedCookies}`
+            'Cookie': accumulatedCookies
           },
           redirect: 'manual'
         });
 
-        const nextCookiesArr: string[] = typeof (nextRes.headers as any).getSetCookie === 'function'
-          ? (nextRes.headers as any).getSetCookie()
-          : [nextRes.headers.get('set-cookie') || ''];
-        const nextCombined = nextCookiesArr.filter(Boolean).join('; ');
+        const setCookiesArr: string[] = typeof (res.headers as any).getSetCookie === 'function'
+          ? (res.headers as any).getSetCookie()
+          : [res.headers.get('set-cookie') || ''];
+        const setCookieStr = setCookiesArr.filter(Boolean).join('; ');
 
-        logDebug(`exchangeStsToken step 2 response`, {
-          status: nextRes.status,
-          setCookie: nextCombined,
-          location: nextRes.headers.get('location')
+        if (setCookieStr) {
+          accumulatedCookies = accumulatedCookies ? `${accumulatedCookies}; ${setCookieStr}` : setCookieStr;
+        }
+
+        logDebug(`exchangeStsToken hop ${hops}`, {
+          url: currentUrl,
+          status: res.status,
+          setCookie: setCookieStr,
+          location: res.headers.get('location')
         });
 
-        const match2 = nextCombined.match(/serviceToken=([^;]+)/i);
-        if (match2) {
-          logDebug(`exchangeStsToken success in step 2`, match2[1]);
-          return { serviceToken: match2[1], cookies: `${combinedCookies}; ${nextCombined}` };
+        // Check if serviceToken is in Set-Cookie header
+        const cookieMatch = accumulatedCookies.match(/serviceToken=([^;]+)/i);
+        if (cookieMatch) {
+          logDebug(`exchangeStsToken success at hop ${hops}:`, cookieMatch[1]);
+          return { serviceToken: cookieMatch[1], cookies: accumulatedCookies };
+        }
+
+        // Check next location
+        const nextLoc = res.headers.get('location');
+        if (nextLoc) {
+          try {
+            const nextUrlObj = new URL(nextLoc, currentUrl);
+            const st = nextUrlObj.searchParams.get('serviceToken');
+            if (st) {
+              logDebug(`exchangeStsToken found serviceToken in redirect URL at hop ${hops}:`, st);
+              return { serviceToken: st, cookies: accumulatedCookies };
+            }
+            currentUrl = nextUrlObj.href;
+          } catch {
+            break;
+          }
+        } else {
+          // No more redirects. Check response body
+          const bodyText = await res.text();
+          const bodyMatch = bodyText.match(/["']?serviceToken["']?\s*[:=]\s*["']?([^"';\s&]+)/i);
+          if (bodyMatch) {
+            logDebug(`exchangeStsToken found serviceToken in response body at hop ${hops}:`, bodyMatch[1]);
+            return { serviceToken: bodyMatch[1], cookies: accumulatedCookies };
+          }
+          break;
         }
       }
 
-      logDebug(`exchangeStsToken finished with NO serviceToken found`);
-      return {};
+      logDebug(`exchangeStsToken finished with NO serviceToken found after ${hops} hops`);
+      return { cookies: accumulatedCookies };
     } catch (err: any) {
       logDebug(`exchangeStsToken ERROR`, err.message);
       console.warn('STS exchange failed:', err.message);
