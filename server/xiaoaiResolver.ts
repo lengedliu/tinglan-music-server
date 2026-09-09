@@ -285,7 +285,7 @@ export class XiaoAiResolverEngine {
       `https://api.io.mi.com/app/v2/home/device_list`
     ];
 
-    // Query Mina & MiHome Cloud APIs
+    // Query Mina & MiHome Cloud APIs (China Region first)
     for (const ep of minaEndpoints) {
       try {
         const isMiot = ep.includes('io.mi.com');
@@ -352,6 +352,61 @@ export class XiaoAiResolverEngine {
         }
       } catch (err: any) {
         console.warn(`[XiaoAi Resolver] Cloud query error (${ep}):`, err.message);
+      }
+    }
+
+    // Auto-detect overseas regions if China region returned 0 devices
+    if (cloudMap.size === 0) {
+      const overseasRegions = [
+        { code: 'sg', name: '新加坡/东南亚', url: 'https://sg.api.io.mi.com/app/v2/home/device_list' },
+        { code: 'us', name: '美国', url: 'https://us.api.io.mi.com/app/v2/home/device_list' },
+        { code: 'de', name: '欧洲/德国', url: 'https://de.api.io.mi.com/app/v2/home/device_list' },
+        { code: 'ru', name: '俄罗斯', url: 'https://ru.api.io.mi.com/app/v2/home/device_list' },
+        { code: 'i2', name: '印度', url: 'https://i2.api.io.mi.com/app/v2/home/device_list' }
+      ];
+
+      for (const region of overseasRegions) {
+        try {
+          const res = await fetch(region.url, {
+            headers: {
+              'User-Agent': 'MiHome/6.0.0 (com.xiaomi.mihome; build:20210219; iOS 14.4.0)',
+              'Cookie': `userId=${cleanUid}; serviceToken=${cleanToken}`
+            },
+            signal: AbortSignal.timeout(2500)
+          });
+          if (!res.ok) continue;
+          const text = await res.text();
+          let data: any;
+          try {
+            data = JSON.parse(text);
+          } catch {
+            continue;
+          }
+          const list = extractDevicesFromMinaResponse(data);
+          if (Array.isArray(list) && list.length > 0) {
+            console.log(`[XiaoAi Resolver] Auto-detected ${list.length} devices in overseas region: ${region.name} (${region.code})`);
+            for (const item of list) {
+              const did = String(item.miotDID || item.deviceID || item.did || item.id || item.mac || '');
+              if (!did || cloudMap.has(did)) continue;
+              const rawName = item.alias || item.name || item.device_name || '小米音箱';
+              const cleanName = String(rawName).replace(/\s*[\(（]点击(右侧)?编辑[\)）]/g, '').trim();
+              const hardware = item.hardware || item.model || 'XiaoAi';
+              const model = item.model || (item.hardware ? `xiaomi.wifispeaker.${item.hardware.toLowerCase()}` : 'xiaomi.wifispeaker');
+              cloudMap.set(did, {
+                did,
+                model,
+                name: `${cleanName} [${region.code.toUpperCase()}]`,
+                ip: item.currentIp || item.localip || undefined,
+                mac: item.mac || undefined,
+                token: item.token || undefined,
+                hardware,
+                online: item.isOnline === true || item.presence === 'online',
+                raw: item
+              });
+            }
+            break; // Matched region successfully
+          }
+        } catch {}
       }
     }
 

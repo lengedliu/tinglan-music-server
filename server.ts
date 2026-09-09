@@ -17,6 +17,7 @@ import { minaWsClient } from './server/minaWebSocket';
 import { miotRpcEngine, XIAOAI_MIOT_SPEC } from './server/miotRpc';
 import { deviceDiscoveryEngine } from './server/deviceDiscovery';
 import { xiaoaiResolverEngine, extractDevicesFromMinaResponse } from './server/xiaoaiResolver';
+import { GoogleGenAI } from '@google/genai';
 
 const require = createRequire(import.meta.url);
 
@@ -28,11 +29,8 @@ try {
 }
 
 const app = express();
-// Read PORT from process.env.PORT (defaults to 3000).
-// If running in container infrastructure where port 8080 is reserved for nginx reverse proxy, fallback to 3000.
-const PORT = (process.env.PORT && process.env.PORT !== '8080')
-  ? (parseInt(process.env.PORT, 10) || 3000)
-  : 3000;
+// Port 3000 is the hardcoded entry port required for AI Studio ingress routing
+const PORT = 3000;
 const API_KEY = process.env.API_KEY || '';
 
 app.use(express.json({ limit: '100mb' }));
@@ -2395,7 +2393,7 @@ async function queryXiaomiMinaDevices(userId: string, serviceToken: string): Pro
 }
 
 // Xiaomi Cloud Passport Authenticator (Enhanced with Full STS Token Exchange)
-async function authenticateXiaomiPassport(user: string, pass: string, region = 'cn'): Promise<{
+async function authenticateXiaomiPassport(user: string, pass: string): Promise<{
   success: boolean;
   userId?: string;
   ssecurity?: string;
@@ -2408,7 +2406,7 @@ async function authenticateXiaomiPassport(user: string, pass: string, region = '
     return { success: false, error: '请输入小米账号与密码' };
   }
 
-  const result = await xiaomiPassport.loginWithPassword(user, pass, 'micoapi', region);
+  const result = await xiaomiPassport.loginWithPassword(user, pass, 'micoapi');
   if (!result.success || !result.userId || !result.serviceToken) {
     return {
       success: false,
@@ -2451,7 +2449,7 @@ async function authenticateXiaomiPassport(user: string, pass: string, region = '
 app.post('/api/miot/login', async (req: Request, res: Response) => {
   if (!checkMiotAdminPermission(req, res)) return;
 
-  const { username, password, mode, token, did, ip, serviceToken, userId, region } = req.body;
+  const { username, password, mode, token, did, ip, serviceToken, userId } = req.body;
 
   // Mode 1: Direct Token / LAN Mode (For users avoiding 2FA)
   if (mode === 'token' || (token && ip)) {
@@ -2604,7 +2602,7 @@ app.post('/api/miot/login', async (req: Request, res: Response) => {
     });
   }
 
-  const authResult = await authenticateXiaomiPassport(username.trim(), password, region || 'cn');
+  const authResult = await authenticateXiaomiPassport(username.trim(), password);
 
   if (!authResult.success || !authResult.userId || !authResult.serviceToken || authResult.userId === 'undefined') {
     castLogs.unshift({
@@ -2697,8 +2695,7 @@ app.post('/api/miot/logout', (req: Request, res: Response) => {
 app.get('/api/miot/passport/qrcode/get', async (req: Request, res: Response) => {
   if (!checkMiotAdminPermission(req, res)) return;
 
-  const region = String(req.query.region || 'cn').trim();
-  const qrRes = await xiaomiPassport.generateLoginQrCode('xiaomiio', region);
+  const qrRes = await xiaomiPassport.generateLoginQrCode('xiaomiio');
   if (qrRes.success) {
     return res.json(qrRes);
   }
@@ -2722,9 +2719,7 @@ app.post('/api/miot/passport/qrcode/check', async (req: Request, res: Response) 
     // we must now perform a sub-exchange to obtain the 'micoapi' serviceToken using the confirmed passToken!
     if (checkRes.userId && checkRes.passToken) {
       try {
-        const isCn = String(loginUrl || lpUrl || '').includes('cn.account.xiaomi.com');
-        const qrRegion = isCn ? 'cn' : 'sgp';
-        const micoToken = await xiaomiPassport.fetchAdditionalStsToken(checkRes.userId, checkRes.passToken, 'micoapi', qrRegion);
+        const micoToken = await xiaomiPassport.fetchAdditionalStsToken(checkRes.userId, checkRes.passToken, 'micoapi');
         if (micoToken.serviceToken) {
           serviceToken = micoToken.serviceToken;
         }
@@ -4330,6 +4325,37 @@ app.post('/api/navidrome/sync', async (req: Request, res: Response) => {
     return res.json({
       success: false,
       message: `Navidrome 同步异常: ${e.message || '网络连接超时'}`
+    });
+  }
+});
+
+// AI Music Insight & Recommendation (server-side Gemini)
+app.post('/api/ai/music-insight', async (req: Request, res: Response) => {
+  try {
+    const { title, artist, genre } = req.body;
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.json({
+        success: true,
+        insight: `《${title || '曲目'}》是一首经典的${genre || '音乐'}作品。如需获取专属 AI 鉴赏与风格解析，请在环境变量或系统设置中配置 GEMINI_API_KEY。`
+      });
+    }
+
+    const ai = new GoogleGenAI({ apiKey });
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: `为歌曲《${title || '未命名'}》${artist ? `（艺术家：${artist}）` : ''}${genre ? `（流派：${genre}）` : ''}写一段简短优美（80字以内）的鉴赏语与情绪共鸣分析。`,
+    });
+
+    return res.json({
+      success: true,
+      insight: response.text || '暂无解析'
+    });
+  } catch (err: any) {
+    return res.json({
+      success: false,
+      insight: 'AI 乐评生成暂不可用',
+      error: err.message
     });
   }
 });

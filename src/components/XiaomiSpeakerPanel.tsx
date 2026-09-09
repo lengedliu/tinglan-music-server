@@ -120,7 +120,6 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   // QR Code Login State
-  const [qrRegion, setQrRegion] = useState<'cn' | 'sg'>('cn');
   const [qrCodeData, setQrCodeData] = useState<{ qrUrl?: string; loginUrl?: string; lpUrl?: string } | null>(null);
   const [qrStatusText, setQrStatusText] = useState<string>('等待生成二维码');
   const [isGeneratingQr, setIsGeneratingQr] = useState(false);
@@ -233,19 +232,17 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
   }, []);
 
   // Fetch QR Code for Login
-  const handleGenerateQrCode = async (overrideRegion?: 'cn' | 'sg') => {
-    const activeRegion = overrideRegion || qrRegion;
+  const handleGenerateQrCode = async () => {
     setIsGeneratingQr(true);
     setLoginError(null);
     setQrStatusText('正在向小米认证中心申请安全登录二维码...');
     try {
-      const res = await apiFetch(`/api/miot/passport/qrcode/get?region=${activeRegion}`);
+      const res = await apiFetch('/api/miot/passport/qrcode/get');
       const data = await res.json();
-      if (data.success && (data.qrDataUrl || data.qrUrl || data.loginUrl)) {
-        let finalQrImage = data.qrDataUrl || '';
-        const qrScanTarget = data.qrUrl || data.qrCodeUrl || data.loginUrl;
-        
-        if (!finalQrImage && qrScanTarget) {
+      if (data.success && (data.qr || data.loginUrl || data.qrUrl)) {
+        let finalQrImage = data.qrUrl || data.qrCodeUrl || data.qrDataUrl || '';
+        const qrScanTarget = data.qr || data.loginUrl;
+        if (!finalQrImage.startsWith('data:image') && qrScanTarget) {
           try {
             finalQrImage = await QRCode.toDataURL(qrScanTarget, {
               width: 320,
@@ -734,8 +731,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
         bodyData = {
           mode: 'account',
           username: loginUsername.trim(),
-          password: loginPassword.trim(),
-          region: qrRegion
+          password: loginPassword.trim()
         };
       } else if (bindMode === 'token') {
         if (!directIp.trim() || !directToken.trim()) {
@@ -2765,38 +2761,6 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                     <QrCode className="w-4 h-4 text-[#FF6700]" />
                     小米安全扫码授权登录
                   </h4>
-
-                  {/* 地区/服务集群选择 */}
-                  <div className="flex items-center justify-center gap-2 py-1 bg-zinc-900 rounded-xl p-1 border border-white/5 max-w-[280px] mx-auto text-xs">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setQrRegion('cn');
-                        handleGenerateQrCode('cn');
-                      }}
-                      className={`flex-1 py-1 rounded-lg font-medium transition ${
-                        qrRegion === 'cn'
-                          ? 'bg-[#FF6700] text-white font-semibold shadow-md'
-                          : 'text-zinc-400 hover:text-zinc-200'
-                      }`}
-                    >
-                      中国大陆 (推荐)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setQrRegion('sg');
-                        handleGenerateQrCode('sg');
-                      }}
-                      className={`flex-1 py-1 rounded-lg font-medium transition ${
-                        qrRegion === 'sg'
-                          ? 'bg-[#FF6700] text-white font-semibold shadow-md'
-                          : 'text-zinc-400 hover:text-zinc-200'
-                      }`}
-                    >
-                      国际/新加坡
-                    </button>
-                  </div>
 
                   <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-200/90 text-left space-y-1.5">
                     <p className="font-semibold flex items-center gap-1.5 text-amber-300 text-xs">
