@@ -1,0 +1,6 @@
+{
+  "name": "Tinglan 听澜 - 局域网家庭音乐中枢",
+  "description": "Tinglan (听澜) 统一家庭 NAS 音乐服务器与多设备播放中枢，集成无损曲库管理 (FLAC/WAV/MP3)、多协议音频控制层 (XiaoAi MIoT / DLNA / UPnP / AirPlay / Local DAC) 与 Subsonic API 开放接口，服务手机、平板、PC 与各种音响系统。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

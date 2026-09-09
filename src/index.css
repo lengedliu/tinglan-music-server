@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+::selection {
+  background-color: #FF6700;
+  color: #ffffff;
+}
+
+/* Custom smooth dark scrollbar for immersive dark mode */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 103, 0, 0.6);
+}

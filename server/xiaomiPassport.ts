@@ -1,0 +1,529 @@
+import crypto from 'crypto';
+import QRCode from 'qrcode';
+
+export interface XiaomiPassportResult {
+  success: boolean;
+  userId?: string;
+  ssecurity?: string;
+  serviceToken?: string;
+  passToken?: string;
+  cUserId?: string;
+  location?: string;
+  nonce?: number;
+  code?: number;
+  error?: string;
+  captchaUrl?: string;
+  captchaIck?: string;
+  notificationUrl?: string;
+  stsTokens?: {
+    micoapi?: string;
+    xiaomiio?: string;
+  };
+}
+
+export interface QrCodeResult {
+  success: boolean;
+  qrId?: string;
+  qrUrl?: string;
+  loginUrl?: string;
+  lpUrl?: string;
+  qrCodeUrl?: string;
+  qrDataUrl?: string;
+  error?: string;
+}
+
+export interface QrCodeStatusResult {
+  success: boolean;
+  status: 'pending' | 'scanned' | 'confirmed' | 'expired' | 'failed';
+  userId?: string;
+  serviceToken?: string;
+  ssecurity?: string;
+  passToken?: string;
+  error?: string;
+}
+
+/**
+ * Xiaomi Passport Authentication Engine
+ * Implements complete Xiaomi Cloud Passport Login, STS Token exchange,
+ * QR-code scan login, and cookie bypass parsing.
+ */
+export class XiaomiPassport {
+  private userAgent = 'APP/com.xiaomi.mihome APPV/6.0.103 iosPassportSDK/3.9.0 iOS/14.4';
+  private webUserAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+  /**
+   * Parse Cookie strings or raw auth input to extract userId, serviceToken, ssecurity, passToken
+   */
+  public parseTokenCookies(input: string): {
+    userId?: string;
+    serviceToken?: string;
+    ssecurity?: string;
+    passToken?: string;
+    cUserId?: string;
+  } {
+    if (!input) return {};
+    const text = String(input).trim();
+    const result: {
+      userId?: string;
+      serviceToken?: string;
+      ssecurity?: string;
+      passToken?: string;
+      cUserId?: string;
+    } = {};
+
+    const uidMatch = text.match(/(?:userId|uid|cUserId)=([^;\s"'&]+)/i);
+    if (uidMatch) result.userId = uidMatch[1].trim();
+
+    const tokenMatch = text.match(/(?:serviceToken)=([^;\s"'&]+)/i);
+    if (tokenMatch) result.serviceToken = tokenMatch[1].trim();
+
+    const ssecMatch = text.match(/(?:ssecurity)=([^;\s"'&]+)/i);
+    if (ssecMatch) result.ssecurity = ssecMatch[1].trim();
+
+    const passMatch = text.match(/(?:passToken)=([^;\s"'&]+)/i);
+    if (passMatch) result.passToken = passMatch[1].trim();
+
+    const cUserMatch = text.match(/(?:cUserId)=([^;\s"'&]+)/i);
+    if (cUserMatch) result.cUserId = cUserMatch[1].trim();
+
+    return result;
+  }
+
+  /**
+   * Step 1: Query initial login parameters from Xiaomi Passport
+   */
+  public async getServiceLoginParams(sid = 'micoapi'): Promise<{
+    _sign: string;
+    qs: string;
+    callback: string;
+    cookies: string;
+    sid: string;
+  }> {
+    const url = `https://account.xiaomi.com/pass/serviceLogin?sid=${encodeURIComponent(sid)}&_json=true`;
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': this.userAgent
+      }
+    });
+
+    const setCookiesArr: string[] = typeof (res.headers as any).getSetCookie === 'function'
+      ? (res.headers as any).getSetCookie()
+      : [res.headers.get('set-cookie') || ''];
+    const cookies = setCookiesArr.filter(Boolean).join('; ');
+
+    const rawText = await res.text();
+    const cleanJson = rawText.replace('&&&START&&&', '');
+    const data = JSON.parse(cleanJson);
+
+    return {
+      _sign: data._sign || '',
+      qs: data.qs || '',
+      callback: data.callback || (sid === 'micoapi' ? 'https://api2.mina.mi.com/sts' : 'https://sts.api.io.mi.com/sts'),
+      cookies,
+      sid
+    };
+  }
+
+  /**
+   * Step 2 & 3: Login with account and password, followed by STS token exchange
+   */
+  public async loginWithPassword(
+    user: string,
+    pass: string,
+    sid = 'micoapi',
+    options?: { captchaCode?: string; captchaIck?: string }
+  ): Promise<XiaomiPassportResult> {
+    if (!user || !pass) {
+      return { success: false, error: '请输入小米账号与密码' };
+    }
+
+    try {
+      // 1. Get login metadata
+      const params = await this.getServiceLoginParams(sid);
+      if (!params._sign || !params.qs) {
+        return { success: false, error: '未能从小米认证服务器获取登录签名，请检查网络连通性' };
+      }
+
+      // 2. Compute uppercase MD5 hash of password
+      const passHash = crypto.createHash('md5').update(pass).digest('hex').toUpperCase();
+
+      const postBody = new URLSearchParams({
+        user: user.trim(),
+        hash: passHash,
+        callback: params.callback,
+        sid: params.sid,
+        qs: params.qs,
+        _sign: params._sign,
+        _json: 'true'
+      });
+
+      if (options?.captchaCode) {
+        postBody.append('captCode', options.captchaCode);
+      }
+      if (options?.captchaIck) {
+        postBody.append('ick', options.captchaIck);
+      }
+
+      const res = await fetch('https://account.xiaomi.com/pass/serviceLoginAuth2', {
+        method: 'POST',
+        headers: {
+          'User-Agent': this.userAgent,
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Cookie': params.cookies
+        },
+        body: postBody.toString()
+      });
+
+      const setCookies2Arr: string[] = typeof (res.headers as any).getSetCookie === 'function'
+        ? (res.headers as any).getSetCookie()
+        : [res.headers.get('set-cookie') || ''];
+      const currentCookies = [params.cookies, ...setCookies2Arr].filter(Boolean).join('; ');
+
+      const rawText = await res.text();
+      const cleanJson = rawText.replace('&&&START&&&', '');
+      let data: any;
+      try {
+        data = JSON.parse(cleanJson);
+      } catch (parseErr) {
+        return { success: false, error: `小米认证响应解析异常: ${rawText.slice(0, 100)}` };
+      }
+
+      if (data.code !== 0) {
+        let errorMsg = data.description || data.desc || '登录验证失败';
+        if (data.code === 70016) {
+          errorMsg = '小米账号或密码错误 (错误码: 70016)，请仔细核对账号和密码后重试';
+        } else if (data.code === 70002) {
+          errorMsg = '该小米账号不存在 (错误码: 70002)，请检查输入';
+        } else if (data.code === 87001) {
+          errorMsg = '触发了小米安全图形验证码，请在输入验证码后重试，或使用【二维码扫码】/【Token 直连】模式';
+        } else if (data.notificationUrl) {
+          errorMsg = '触发了小米官方二次安全验证 (2FA)。推荐使用【扫码登录】或直接粘贴【ServiceToken】直连';
+        }
+
+        return {
+          success: false,
+          code: data.code,
+          error: errorMsg,
+          captchaUrl: data.captchaUrl ? `https://account.xiaomi.com${data.captchaUrl}` : undefined,
+          notificationUrl: data.notificationUrl
+        };
+      }
+
+      const userId = String(data.userId || '').trim();
+      const ssecurity = data.ssecurity;
+      const passToken = data.passToken;
+      const cUserId = data.cUserId;
+      let serviceToken = data.serviceToken || '';
+
+      // 3. Follow location to perform STS token exchange
+      if (data.location) {
+        const stsResult = await this.exchangeStsToken(data.location, currentCookies, ssecurity);
+        if (stsResult.serviceToken) {
+          serviceToken = stsResult.serviceToken;
+        }
+      }
+
+      // If we authenticated for micoapi, also attempt to fetch xiaomiio STS token for MIoT Home capabilities
+      let xiaomiioToken: string | undefined;
+      if (serviceToken && passToken && userId) {
+        try {
+          const miHomeSts = await this.fetchAdditionalStsToken(userId, passToken, 'xiaomiio');
+          if (miHomeSts?.serviceToken) {
+            xiaomiioToken = miHomeSts.serviceToken;
+          }
+        } catch {
+          // Non-blocking
+        }
+      }
+
+      if (!userId || !serviceToken) {
+        return {
+          success: false,
+          code: 87002,
+          error: '小米安全风控拦截：未获取到有效授权令牌 (serviceToken)。建议使用【局域网 Token 直连】或【扫码登录】模式！'
+        };
+      }
+
+      return {
+        success: true,
+        userId,
+        ssecurity,
+        serviceToken,
+        passToken,
+        cUserId,
+        stsTokens: {
+          micoapi: serviceToken,
+          xiaomiio: xiaomiioToken
+        }
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        error: `连接小米认证服务器异常: ${err.message || '网络超时'}`
+      };
+    }
+  }
+
+  /**
+   * STS Token Exchange
+   * Exchanges location redirect URL from Passport for a scoped serviceToken
+   */
+  public async exchangeStsToken(
+    locationUrl: string,
+    cookies: string,
+    ssecurity?: string
+  ): Promise<{ serviceToken?: string; cookies?: string; rawLocation?: string }> {
+    try {
+      const res = await fetch(locationUrl, {
+        headers: {
+          'User-Agent': this.userAgent,
+          'Cookie': cookies
+        },
+        redirect: 'manual'
+      });
+
+      const setCookiesArr: string[] = typeof (res.headers as any).getSetCookie === 'function'
+        ? (res.headers as any).getSetCookie()
+        : [res.headers.get('set-cookie') || ''];
+      const combinedCookies = setCookiesArr.filter(Boolean).join('; ');
+
+      const tokenMatch = combinedCookies.match(/serviceToken=([^;]+)/i);
+      if (tokenMatch) {
+        return { serviceToken: tokenMatch[1], cookies: combinedCookies };
+      }
+
+      // If 302 redirect points to next hop
+      const nextLocation = res.headers.get('location');
+      if (nextLocation) {
+        const nextRes = await fetch(nextLocation, {
+          headers: {
+            'User-Agent': this.userAgent,
+            'Cookie': `${cookies}; ${combinedCookies}`
+          },
+          redirect: 'manual'
+        });
+
+        const nextCookiesArr: string[] = typeof (nextRes.headers as any).getSetCookie === 'function'
+          ? (nextRes.headers as any).getSetCookie()
+          : [nextRes.headers.get('set-cookie') || ''];
+        const nextCombined = nextCookiesArr.filter(Boolean).join('; ');
+
+        const match2 = nextCombined.match(/serviceToken=([^;]+)/i);
+        if (match2) {
+          return { serviceToken: match2[1], cookies: `${combinedCookies}; ${nextCombined}` };
+        }
+      }
+
+      return {};
+    } catch (err: any) {
+      console.warn('STS exchange failed:', err.message);
+      return {};
+    }
+  }
+
+  /**
+   * Fetch additional scoped STS token using passToken (e.g. for xiaomiio or micoapi)
+   */
+  public async fetchAdditionalStsToken(
+    userId: string,
+    passToken: string,
+    targetSid: 'xiaomiio' | 'micoapi'
+  ): Promise<{ serviceToken?: string; ssecurity?: string }> {
+    try {
+      const params = await this.getServiceLoginParams(targetSid);
+      const url = `https://account.xiaomi.com/pass/serviceLoginAuth2`;
+      const body = new URLSearchParams({
+        sid: targetSid,
+        callback: params.callback,
+        qs: params.qs,
+        _sign: params._sign,
+        _json: 'true',
+        userId,
+        passToken
+      });
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'User-Agent': this.userAgent,
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Cookie': `userId=${userId}; passToken=${passToken}`
+        },
+        body: body.toString()
+      });
+
+      const raw = await res.text();
+      const clean = raw.replace('&&&START&&&', '');
+      const json = JSON.parse(clean);
+
+      if (json.code === 0 && json.location) {
+        const sts = await this.exchangeStsToken(json.location, `userId=${userId}; passToken=${passToken}`, json.ssecurity);
+        return {
+          serviceToken: sts.serviceToken || json.serviceToken,
+          ssecurity: json.ssecurity
+        };
+      }
+      return {
+        serviceToken: json.serviceToken,
+        ssecurity: json.ssecurity
+      };
+    } catch {
+      return {};
+    }
+  }
+
+  /**
+   * QR Code Login - Step 1: Generate Login QR Code
+   */
+  public async generateLoginQrCode(sid = 'micoapi'): Promise<QrCodeResult & { qrCodeUrl?: string; qrDataUrl?: string }> {
+    try {
+      const url = `https://account.xiaomi.com/longPolling/loginUrl?sid=${encodeURIComponent(sid)}&_json=true`;
+      const res = await fetch(url, {
+        headers: {
+          'User-Agent': this.webUserAgent,
+          'Accept': 'application/json, text/plain, */*'
+        }
+      });
+
+      const raw = await res.text();
+      const clean = raw.replace('&&&START&&&', '');
+      let data: any;
+      try {
+        data = JSON.parse(clean);
+      } catch (parseErr) {
+        return { success: false, error: `解析小米二维码响应异常: ${raw.slice(0, 100)}` };
+      }
+
+      if (data.code !== 0 || !data.loginUrl) {
+        return { success: false, error: data.description || data.desc || `生成二维码失败 (code: ${data.code})` };
+      }
+
+      // Extract qrId/lp parameter from loginUrl
+      const lpMatch = data.loginUrl.match(/[?&]lp=([^&]+)/);
+      const ticketMatch = data.loginUrl.match(/[?&](?:ticket|lp|k)=([^&]+)/);
+      const qrId = lpMatch ? lpMatch[1] : (ticketMatch ? ticketMatch[1] : `qr_${Date.now()}`);
+
+      // The URL to encode into QR code: data.loginUrl is the authorization webpage URL
+      const qrTarget = data.loginUrl || data.qr;
+      let qrDataUrl = '';
+      try {
+        qrDataUrl = await QRCode.toDataURL(qrTarget, {
+          width: 320,
+          margin: 1,
+          color: {
+            dark: '#000000',
+            light: '#ffffff'
+          },
+          errorCorrectionLevel: 'M'
+        });
+      } catch (qrErr: any) {
+        console.warn('QRCode toDataURL error:', qrErr.message);
+      }
+
+      const finalQrUrl = qrDataUrl || data.qr || data.loginUrl;
+
+      return {
+        success: true,
+        qrId,
+        loginUrl: data.loginUrl,
+        lpUrl: data.lp,
+        qrUrl: finalQrUrl,
+        qrCodeUrl: finalQrUrl,
+        qrDataUrl: finalQrUrl
+      };
+    } catch (err: any) {
+      return { success: false, error: err.message || '网络连接超时' };
+    }
+  }
+
+  /**
+   * QR Code Login - Step 2: Poll QR code status (Scanned / Confirmed)
+   */
+  public async checkQrCodeStatus(loginUrl: string, lpUrl?: string): Promise<QrCodeStatusResult> {
+    try {
+      const pollUrl = lpUrl || (loginUrl.includes('/lp/') ? loginUrl : '');
+      const candidateUrls = [
+        pollUrl,
+        loginUrl
+      ].filter(Boolean);
+
+      let data: any = null;
+
+      for (const targetUrl of candidateUrls) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 2500);
+
+          const res = await fetch(targetUrl, {
+            headers: {
+              'User-Agent': this.webUserAgent,
+              'Accept': 'application/json, text/plain, */*'
+            },
+            signal: controller.signal
+          });
+          clearTimeout(timeoutId);
+
+          const raw = await res.text();
+          const clean = raw.replace('&&&START&&&', '');
+          try {
+            data = JSON.parse(clean);
+            if (data && (typeof data.code === 'number' || data.status || data.userId)) {
+              break;
+            }
+          } catch {}
+        } catch (pollErr: any) {
+          // If aborted due to long polling wait, it means still pending
+          if (pollErr.name === 'AbortError') {
+            return { success: true, status: 'pending' };
+          }
+        }
+      }
+
+      if (!data) {
+        return { success: true, status: 'pending' };
+      }
+
+      if (data.code === 0) {
+        // Confirmed! Extract token details
+        const userId = String(data.userId || data.cUserId || '').trim();
+        const ssecurity = data.ssecurity;
+        const passToken = data.passToken;
+        let serviceToken = data.serviceToken || '';
+
+        if (data.location) {
+          const sts = await this.exchangeStsToken(data.location, `userId=${userId}`);
+          if (sts.serviceToken) serviceToken = sts.serviceToken;
+        }
+
+        return {
+          success: true,
+          status: 'confirmed',
+          userId,
+          serviceToken,
+          ssecurity,
+          passToken
+        };
+      } else if (data.code === 70014) {
+        return { success: true, status: 'pending' };
+      } else if (data.code === 70013) {
+        return { success: true, status: 'scanned' };
+      } else if (data.code === 70015 || data.code === 70016) {
+        return { success: true, status: 'expired' };
+      }
+
+      return {
+        success: false,
+        status: 'failed',
+        error: data.description || `错误码: ${data.code}`
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        status: 'failed',
+        error: err.message || '轮询状态网络超时'
+      };
+    }
+  }
+}
+
+export const xiaomiPassport = new XiaomiPassport();

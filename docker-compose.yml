@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  tinglan-xiaomi:
+    image: tinglan-xiaomi:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tinglan-xiaomi
+    restart: unless-stopped
+    # NOTE for Xiaomi Speaker (小爱音箱):
+    # To enable smooth local network audio playback without NAT traversal issues,
+    # "network_mode: host" is strongly recommended on Linux / Synology / QNAP.
+    # On macOS or Windows Docker Desktop, use ports mapping below:
+    # network_mode: host
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      # Change this to your NAS or host local IP (e.g. http://192.168.1.100:3000)
+      # so the Xiaomi speaker can access the HTTP music stream directly.
+      - SERVER_HOST=http://192.168.31.100:3000
+      - MUSIC_DIR=/app/music
+      - DATA_DIR=/app/data
+      # Xiaomi Account (Optional, can also configure dynamically in Web UI)
+      - MI_USER=
+      - MI_PASS=
+      - MI_DID=
+    volumes:
+      # Mount your local music directory into the container
+      - ./music:/app/music:ro
+      # Mount persistent data directory (database, playlists, settings)
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

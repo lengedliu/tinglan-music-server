@@ -1,0 +1,11 @@
+[
+  {
+    "id": "usr-admin-001",
+    "username": "admin",
+    "email": "admin@tinglan.audio",
+    "passwordHash": "$2b$10$ZJGvgkRdDZ2qN4BWkJASkeMaY/xhfbHimmLlddjGQ19LAULF7DflS",
+    "role": "admin",
+    "avatarUrl": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80",
+    "createdAt": "2026-09-08T23:27:25.504Z"
+  }
+]
