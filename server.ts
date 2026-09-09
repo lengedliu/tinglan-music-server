@@ -2369,10 +2369,11 @@ app.post('/api/miot/config', (req: Request, res: Response) => {
 });
 
 // Helper to extract clean userId, serviceToken, and passToken even if raw cookie strings or .mi.token JSON are passed
-function parseServiceTokenAndUserId(inputUid: string, inputToken: string, inputPassToken?: string): { userId: string; serviceToken: string; passToken: string } {
+function parseServiceTokenAndUserId(inputUid: string, inputToken: string, inputPassToken?: string): { userId: string; serviceToken: string; passToken: string; cUserId?: string } {
   let userId = String(inputUid || '').trim();
   let serviceToken = String(inputToken || '').trim();
   let passToken = String(inputPassToken || '').trim();
+  let cUserId = '';
 
   // 1. Check if input is a JSON string (e.g. .mi.token format from xiaomusic / miservice)
   for (const raw of [inputUid, inputToken, inputPassToken]) {
@@ -2380,6 +2381,7 @@ function parseServiceTokenAndUserId(inputUid: string, inputToken: string, inputP
       try {
         const parsed = JSON.parse(raw);
         if (parsed.userId) userId = String(parsed.userId);
+        if (parsed.cUserId) cUserId = String(parsed.cUserId);
         if (parsed.passToken) passToken = String(parsed.passToken);
         if (parsed.micoapi?.serviceToken) serviceToken = String(parsed.micoapi.serviceToken);
         else if (parsed.serviceToken) serviceToken = String(parsed.serviceToken);
@@ -2390,9 +2392,22 @@ function parseServiceTokenAndUserId(inputUid: string, inputToken: string, inputP
 
   const combined = `${userId}; ${serviceToken}; ${passToken}`;
 
-  const uidMatch = combined.match(/(?:userId|cUserId|uid)\s*[:=]\s*["']?([^;\s,"'}{]+)/i);
-  if (uidMatch) {
-    userId = uidMatch[1];
+  // Extract cUserId if present (e.g. cUserId=JTq5lCGWX...)
+  const cUidMatch = combined.match(/\bcUserId\s*[:=]\s*["']?([^;\s,"'}{]+)/i);
+  if (cUidMatch) {
+    cUserId = cUidMatch[1].replace(/^["']|["']$/g, '').trim();
+  }
+
+  // Prioritize pure numeric userId: userId=12345678 or uid=12345678
+  const numericUidMatch = combined.match(/\b(?:userId|uid)\s*[:=]\s*["']?(\d{5,15})["']?/i);
+  if (numericUidMatch) {
+    userId = numericUidMatch[1];
+  } else {
+    // If no pure numeric userId in combined, check non-cUserId userId
+    const rawUidMatch = combined.match(/(?:^|[\s;,])userId\s*[:=]\s*["']?([^;\s,"'}{]+)/i);
+    if (rawUidMatch) {
+      userId = rawUidMatch[1];
+    }
   }
 
   const tokenMatch = combined.match(/(?:serviceToken)\s*[:=]\s*["']?([^;\s,"'}{]+)/i);
@@ -2409,7 +2424,7 @@ function parseServiceTokenAndUserId(inputUid: string, inputToken: string, inputP
   serviceToken = serviceToken.replace(/^["']|["']$/g, '').replace(/;$/, '').trim();
   passToken = passToken.replace(/^["']|["']$/g, '').replace(/;$/, '').trim();
 
-  return { userId, serviceToken, passToken };
+  return { userId, serviceToken, passToken, cUserId: cUserId || undefined };
 }
 
 // Helper to query Xiaomi smart speaker device list from Mina Cloud API & Xiaomi Home APIs
@@ -2570,11 +2585,13 @@ app.post('/api/miot/login', async (req: Request, res: Response) => {
 
   // Mode 2: ServiceToken / PassToken / Cookie Import (Direct without password)
   if (mode === 'cookie' || mode === 'passToken' || (serviceToken && userId) || (passToken && userId) || (req.body.passToken && req.body.userId)) {
-    const { userId: cleanUid, serviceToken: cleanToken, passToken: cleanPassToken } = parseServiceTokenAndUserId(
+    const { userId: parsedUid, serviceToken: cleanToken, passToken: cleanPassToken, cUserId: cleanCUserId } = parseServiceTokenAndUserId(
       userId || req.body.userId,
       serviceToken || req.body.serviceToken,
       passToken || req.body.passToken
     );
+
+    let cleanUid = parsedUid;
 
     if (!cleanUid || cleanUid === 'undefined') {
       return res.status(400).json({ success: false, error: '请输入有效的 User ID（支持从 Cookie 复制或粘贴完整 Cookie 字符串）' });
@@ -2585,11 +2602,14 @@ app.post('/api/miot/login', async (req: Request, res: Response) => {
     // If passToken is provided (e.g. from www.mi.com or account.xiaomi.com Cookie), automatically exchange it for the official micoapi serviceToken!
     if (cleanPassToken) {
       try {
-        const exchanged = await xiaomiPassport.fetchAdditionalStsToken(cleanUid, cleanPassToken, 'micoapi');
+        const exchanged = await xiaomiPassport.fetchAdditionalStsToken(cleanUid, cleanPassToken, 'micoapi', cleanCUserId);
         if (exchanged.serviceToken) {
           activeServiceToken = exchanged.serviceToken;
           if (exchanged.ssecurity) {
             (miotConfig as any).ssecurity = exchanged.ssecurity;
+          }
+          if (exchanged.userId && /^\d+$/.test(exchanged.userId)) {
+            cleanUid = exchanged.userId;
           }
         }
       } catch (err: any) {
@@ -2615,7 +2635,7 @@ app.post('/api/miot/login', async (req: Request, res: Response) => {
     try {
       const resolveResult = await xiaoaiResolverEngine.resolveDevices({
         userId: cleanUid,
-        serviceToken: cleanToken,
+        serviceToken: activeServiceToken,
         existingDevices: xiaomiDevices,
         activeStreamIps: Array.from(activeStreamIps)
       });

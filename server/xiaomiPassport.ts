@@ -356,8 +356,9 @@ export class XiaomiPassport {
   public async fetchAdditionalStsToken(
     userId: string,
     passToken: string,
-    targetSid: 'xiaomiio' | 'micoapi'
-  ): Promise<{ serviceToken?: string; ssecurity?: string }> {
+    targetSid: 'xiaomiio' | 'micoapi',
+    cUserId?: string
+  ): Promise<{ serviceToken?: string; ssecurity?: string; userId?: string }> {
     try {
       const params = await this.getServiceLoginParams(targetSid);
       const url = `https://account.xiaomi.com/pass/serviceLoginAuth2`;
@@ -370,13 +371,20 @@ export class XiaomiPassport {
         userId,
         passToken
       });
+      if (cUserId) {
+        body.append('cUserId', cUserId);
+      }
+
+      const cookieHeader = cUserId
+        ? `userId=${userId}; cUserId=${cUserId}; passToken=${passToken}`
+        : `userId=${userId}; passToken=${passToken}`;
 
       const res = await fetch(url, {
         method: 'POST',
         headers: {
           'User-Agent': this.userAgent,
           'Content-Type': 'application/x-www-form-urlencoded',
-          'Cookie': `userId=${userId}; passToken=${passToken}`
+          'Cookie': cookieHeader
         },
         body: body.toString()
       });
@@ -385,16 +393,20 @@ export class XiaomiPassport {
       const clean = raw.replace('&&&START&&&', '');
       const json = JSON.parse(clean);
 
+      const returnedUserId = json.userId ? String(json.userId) : (json.cUserId || userId);
+
       if (json.code === 0 && json.location) {
-        const sts = await this.exchangeStsToken(json.location, `userId=${userId}; passToken=${passToken}`, json.ssecurity);
+        const sts = await this.exchangeStsToken(json.location, cookieHeader, json.ssecurity);
         return {
           serviceToken: sts.serviceToken || json.serviceToken,
-          ssecurity: json.ssecurity
+          ssecurity: json.ssecurity,
+          userId: returnedUserId
         };
       }
       return {
         serviceToken: json.serviceToken,
-        ssecurity: json.ssecurity
+        ssecurity: json.ssecurity,
+        userId: returnedUserId
       };
     } catch {
       return {};

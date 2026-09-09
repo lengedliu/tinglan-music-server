@@ -311,7 +311,7 @@ export class XiaoAiResolverEngine {
   public async discoverCloudDevices(userId: string, serviceToken: string): Promise<CloudDiscoveredItem[]> {
     if (!userId || !serviceToken) return [];
 
-    const cleanUid = String(userId).replace(/^["']|["']$/g, '').replace(/;$/, '').trim();
+    const cleanUid = String(userId).replace(/^["']|["']$/g, '').replace(/^uid_/, '').replace(/;$/, '').trim();
     const cleanToken = String(serviceToken).replace(/^["']|["']$/g, '').replace(/;$/, '').trim();
 
     if (!cleanUid || cleanUid === 'undefined' || cleanUid === 'null' || !cleanToken || cleanToken === 'undefined' || cleanToken === 'null') {
