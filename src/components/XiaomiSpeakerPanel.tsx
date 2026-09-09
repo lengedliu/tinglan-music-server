@@ -1543,11 +1543,11 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                 <ul className="space-y-1.5 text-[11px] text-zinc-400">
                   <li className="flex items-start gap-1.5">
                     <span className="text-[#FF6700] font-bold">1.</span>
-                    <span><strong className="text-zinc-200">手动添加局域网 IP</strong>：直接点击下方「手动添加音箱」，填入音箱在路由器上的局域网 IP（例如 192.168.31.x）。</span>
+                    <span><strong className="text-emerald-300">扫码一键登录 (云端预览推荐 🌟)</strong>：在【协议配置】选择「方式二：手机扫码一键登录」，同步云端音箱后实现无缝推流。</span>
                   </li>
                   <li className="flex items-start gap-1.5">
                     <span className="text-[#FF6700] font-bold">2.</span>
-                    <span><strong className="text-zinc-200">局域网 Token 直连 (推荐)</strong>：在【协议配置】选择「方式三：局域网 Token 直连」，实现 0 延迟本地推流。</span>
+                    <span><strong className="text-purple-300">局域网 Token 直连 (本地部署推荐 🏠)</strong>：私有部署在本地 NAS / 树莓派 / 同网段电脑时，可选择「方式三：局域网 Token 直连」实现 0 延迟本地推流。</span>
                   </li>
                   <li className="flex items-start gap-1.5">
                     <span className="text-[#FF6700] font-bold">3.</span>
@@ -3103,6 +3103,20 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
 
               {bindMode === 'token' && (
                 <>
+                  <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/25 text-xs text-amber-200/90 space-y-1.5">
+                    <p className="font-semibold text-amber-300 flex items-center gap-1.5">
+                      <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                      运行环境网络须知 (局域网直连 vs 云端预览)
+                    </p>
+                    <p className="text-zinc-300 text-[11px] leading-relaxed">
+                      <strong>【局域网 Token 直连】</strong>要求本应用的<strong>后台 Node.js 服务</strong>与小爱音箱处于同一个局域网（同一路由器内）。
+                      <br />
+                      如果您当前正通过 <strong>Cloud Run 云端预览地址 (ais-dev-...run.app)</strong> 访问，公网云端服务器无法跨网穿透进入您的家庭局域网 (192.168.x.x)，因此 UDP 发送会提示超时。
+                      <br />
+                      💡 <strong>云端预览模式建议</strong>：请切换至上方<strong className="text-emerald-300">【方式二：手机扫码一键登录】</strong>通过小米官方云端通道下发指令；直连模式适合将本项目导出/部署在本地 NAS、树莓派或电脑上运行！
+                    </p>
+                  </div>
+
                   <div className="flex items-center justify-between">
                     <p className="text-xs text-zinc-400 leading-relaxed">
                       直接使用音箱局域网 IP 与 32 位通讯 Token 绑定，采用真实 miIO UDP 54321 协议直连，完全不受小米两步验证 (2FA) 影响。

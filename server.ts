@@ -3496,7 +3496,32 @@ async function callMinaCloudApi(
     return { success: false, error: '未检测到有效的小米服务令牌 (serviceToken)，请先绑定小米账号或输入令牌' };
   }
 
-  const deviceId = targetDid || miotConfig.activeDeviceId || '';
+  let deviceId = targetDid || miotConfig.activeDeviceId || '';
+
+  // Handle synthetic local DIDs (e.g., manual_... / detected_... / lan_...)
+  if (!deviceId || deviceId.startsWith('manual_') || deviceId.startsWith('detected_') || deviceId.startsWith('lan_') || deviceId.startsWith('miio_')) {
+    const matchedDev = xiaomiDevices.find(d => d.did === targetDid);
+    if (matchedDev && (matchedDev.cloudDid || matchedDev.deviceID)) {
+      deviceId = matchedDev.cloudDid || matchedDev.deviceID;
+    } else {
+      const realCloudDev = xiaomiDevices.find(d => 
+        d.did && !d.did.startsWith('manual_') && !d.did.startsWith('detected_') && !d.did.startsWith('lan_') && !d.did.startsWith('miio_')
+      );
+      if (realCloudDev) {
+        deviceId = realCloudDev.did;
+      } else if (miotConfig.activeDeviceId && !miotConfig.activeDeviceId.startsWith('manual_') && !miotConfig.activeDeviceId.startsWith('detected_')) {
+        deviceId = miotConfig.activeDeviceId;
+      }
+    }
+  }
+
+  if (!deviceId || deviceId.startsWith('manual_') || deviceId.startsWith('detected_') || deviceId.startsWith('lan_') || deviceId.startsWith('miio_')) {
+    return {
+      success: false,
+      error: '当前音箱为纯局域网手动添加设备，无关联的小米云端 DID。云端 Preview 容器因网络隔离无法直连 192.168.x.x，请先点击【同步云端音箱】拉取绑定账号下的小爱音箱即可通过云端成功投播！'
+    };
+  }
+
   const messageStr = typeof messageObj === 'string' ? messageObj : JSON.stringify(messageObj);
   const requestId = `app_ios_${Math.random().toString(36).substring(2, 12)}_${Date.now()}`;
 
