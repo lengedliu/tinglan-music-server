@@ -286,16 +286,30 @@ export class XiaomiPassport {
   ): Promise<{ serviceToken?: string; cookies?: string; rawLocation?: string }> {
     logDebug(`exchangeStsToken START`, { locationUrl, cookies });
     try {
-      let currentUrl = locationUrl;
-      let accumulatedCookies = cookies || '';
+      let currentUrl = locationUrl.startsWith('http://') ? locationUrl.replace('http://', 'https://') : locationUrl;
+      
+      const cookieKvMap = new Map<string, string>();
+      if (cookies) {
+        cookies.split(';').forEach(item => {
+          const eqIdx = item.indexOf('=');
+          if (eqIdx > 0) {
+            const k = item.slice(0, eqIdx).trim();
+            const v = item.slice(eqIdx + 1).trim();
+            if (k && !['domain', 'path', 'expires', 'httponly', 'samesite', 'secure'].includes(k.toLowerCase())) {
+              cookieKvMap.set(k, v);
+            }
+          }
+        });
+      }
 
       // 1. First check if serviceToken is embedded directly in the locationUrl search params
       try {
-        const u = new URL(locationUrl);
-        const st = u.searchParams.get('serviceToken') || u.searchParams.get('st') || u.searchParams.get('sts');
+        const u = new URL(currentUrl);
+        const st = u.searchParams.get('serviceToken') || u.searchParams.get('st') || u.searchParams.get('sts') || u.searchParams.get('service_token');
         if (st) {
           logDebug(`exchangeStsToken found serviceToken directly in URL params:`, st);
-          return { serviceToken: st, cookies: accumulatedCookies };
+          cookieKvMap.set('serviceToken', st);
+          return { serviceToken: st, cookies: Array.from(cookieKvMap.entries()).map(([k, v]) => `${k}=${v}`).join('; ') };
         }
       } catch {}
 
@@ -304,35 +318,52 @@ export class XiaomiPassport {
 
       while (hops < maxHops) {
         hops++;
+        if (currentUrl.startsWith('http://')) {
+          currentUrl = currentUrl.replace('http://', 'https://');
+        }
+
+        const cleanCookieHeader = Array.from(cookieKvMap.entries()).map(([k, v]) => `${k}=${v}`).join('; ');
+
         const res = await fetch(currentUrl, {
           headers: {
-            'User-Agent': this.userAgent,
-            'Cookie': accumulatedCookies
+            'User-Agent': this.webUserAgent,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Cookie': cleanCookieHeader
           },
           redirect: 'manual'
         });
 
         const setCookiesArr: string[] = typeof (res.headers as any).getSetCookie === 'function'
           ? (res.headers as any).getSetCookie()
-          : [res.headers.get('set-cookie') || ''];
-        const setCookieStr = setCookiesArr.filter(Boolean).join('; ');
+          : (res.headers.get('set-cookie') ? [res.headers.get('set-cookie')!] : []);
 
-        if (setCookieStr) {
-          accumulatedCookies = accumulatedCookies ? `${accumulatedCookies}; ${setCookieStr}` : setCookieStr;
+        for (const sc of setCookiesArr) {
+          if (!sc) continue;
+          const firstPart = sc.split(';')[0].trim();
+          const eqIdx = firstPart.indexOf('=');
+          if (eqIdx > 0) {
+            const k = firstPart.slice(0, eqIdx).trim();
+            const v = firstPart.slice(eqIdx + 1).trim();
+            if (k && !['domain', 'path', 'expires', 'httponly', 'samesite', 'secure'].includes(k.toLowerCase())) {
+              cookieKvMap.set(k, v);
+            }
+          }
         }
+
+        const updatedCookieHeader = Array.from(cookieKvMap.entries()).map(([k, v]) => `${k}=${v}`).join('; ');
 
         logDebug(`exchangeStsToken hop ${hops}`, {
           url: currentUrl,
           status: res.status,
-          setCookie: setCookieStr,
+          cookies: updatedCookieHeader,
           location: res.headers.get('location')
         });
 
-        // Check if serviceToken is in Set-Cookie header
-        const cookieMatch = accumulatedCookies.match(/serviceToken=([^;]+)/i);
-        if (cookieMatch) {
-          logDebug(`exchangeStsToken success at hop ${hops}:`, cookieMatch[1]);
-          return { serviceToken: cookieMatch[1], cookies: accumulatedCookies };
+        // Check if serviceToken is in Cookie map
+        if (cookieKvMap.has('serviceToken') && cookieKvMap.get('serviceToken')) {
+          const st = cookieKvMap.get('serviceToken')!;
+          logDebug(`exchangeStsToken success at hop ${hops}:`, st);
+          return { serviceToken: st, cookies: updatedCookieHeader };
         }
 
         // Check next location
@@ -340,10 +371,11 @@ export class XiaomiPassport {
         if (nextLoc) {
           try {
             const nextUrlObj = new URL(nextLoc, currentUrl);
-            const st = nextUrlObj.searchParams.get('serviceToken');
+            const st = nextUrlObj.searchParams.get('serviceToken') || nextUrlObj.searchParams.get('st') || nextUrlObj.searchParams.get('sts') || nextUrlObj.searchParams.get('service_token');
             if (st) {
               logDebug(`exchangeStsToken found serviceToken in redirect URL at hop ${hops}:`, st);
-              return { serviceToken: st, cookies: accumulatedCookies };
+              cookieKvMap.set('serviceToken', st);
+              return { serviceToken: st, cookies: Array.from(cookieKvMap.entries()).map(([k, v]) => `${k}=${v}`).join('; ') };
             }
             currentUrl = nextUrlObj.href;
           } catch {
@@ -352,17 +384,19 @@ export class XiaomiPassport {
         } else {
           // No more redirects. Check response body
           const bodyText = await res.text();
-          const bodyMatch = bodyText.match(/["']?serviceToken["']?\s*[:=]\s*["']?([^"';\s&]+)/i);
+          const bodyMatch = bodyText.match(/["']?(?:serviceToken|service_token|stsToken)["']?\s*[:=]\s*["']?([^"';\s&]+)/i);
           if (bodyMatch) {
             logDebug(`exchangeStsToken found serviceToken in response body at hop ${hops}:`, bodyMatch[1]);
-            return { serviceToken: bodyMatch[1], cookies: accumulatedCookies };
+            cookieKvMap.set('serviceToken', bodyMatch[1]);
+            return { serviceToken: bodyMatch[1], cookies: Array.from(cookieKvMap.entries()).map(([k, v]) => `${k}=${v}`).join('; ') };
           }
           break;
         }
       }
 
+      const finalCookieHeader = Array.from(cookieKvMap.entries()).map(([k, v]) => `${k}=${v}`).join('; ');
       logDebug(`exchangeStsToken finished with NO serviceToken found after ${hops} hops`);
-      return { cookies: accumulatedCookies };
+      return { cookies: finalCookieHeader };
     } catch (err: any) {
       logDebug(`exchangeStsToken ERROR`, err.message);
       console.warn('STS exchange failed:', err.message);
@@ -583,7 +617,7 @@ export class XiaomiPassport {
         const userId = String(data.userId || data.cUserId || '').trim();
         const ssecurity = data.ssecurity;
         const passToken = data.passToken;
-        let serviceToken = data.serviceToken || '';
+        let serviceToken = data.serviceToken || data.service_token || data.stsToken || data.micoToken || '';
 
         if (data.location) {
           const cookieStr = [
