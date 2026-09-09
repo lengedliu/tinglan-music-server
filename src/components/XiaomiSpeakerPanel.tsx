@@ -239,11 +239,12 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
     try {
       const res = await apiFetch('/api/miot/passport/qrcode/get');
       const data = await res.json();
-      if (data.success && (data.loginUrl || data.qrUrl)) {
+      if (data.success && (data.qr || data.loginUrl || data.qrUrl)) {
         let finalQrImage = data.qrUrl || data.qrCodeUrl || data.qrDataUrl || '';
-        if (!finalQrImage.startsWith('data:image') && data.loginUrl) {
+        const qrScanTarget = data.qr || data.loginUrl;
+        if (!finalQrImage.startsWith('data:image') && qrScanTarget) {
           try {
-            finalQrImage = await QRCode.toDataURL(data.loginUrl || data.qr, {
+            finalQrImage = await QRCode.toDataURL(qrScanTarget, {
               width: 320,
               margin: 1,
               color: { dark: '#000000', light: '#ffffff' }
@@ -255,7 +256,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
           loginUrl: data.loginUrl,
           lpUrl: data.lpUrl
         });
-        setQrStatusText('请使用【微信 / 系统相机 / 小米账号扫一扫】扫描');
+        setQrStatusText('请使用【米家 App / 手机相机 / 小米账号扫一扫】扫描');
         startQrCodePolling(data.loginUrl, data.lpUrl);
       } else {
         setLoginError(data.error || '获取登录二维码失败');
@@ -307,6 +308,11 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
           clearInterval(qrPollingTimerRef.current);
           setIsPollingQr(false);
           setQrStatusText('⌛ 二维码已过期，请点击重新刷新');
+        } else if (data.success === false || data.status === 'error') {
+          clearInterval(qrPollingTimerRef.current);
+          setIsPollingQr(false);
+          setLoginError(data.error || '扫码登录失败，请重试');
+          setQrStatusText(data.error || '登录失败，请刷新二维码重新扫码');
         }
       } catch {
         // continue polling

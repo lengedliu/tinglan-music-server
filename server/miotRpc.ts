@@ -70,6 +70,7 @@ export class MiotRpcEngine {
 
   /**
    * Compute MIoT Cloud API Request Signature (RC4 / HMAC-SHA1)
+   * Note: Reserved for future cloud requests requiring HMAC-SHA256 signature verification.
    */
   public generateCloudSignature(
     path: string,

@@ -191,6 +191,8 @@ export interface SecuritySettings {
   requireAuth: boolean;
   authScope: 'all' | 'wan_only';
   allowRegistration?: boolean;
+  allowUserMiotControl?: boolean;
+  allowUserMiotTts?: boolean;
   updatedAt?: string;
 }
 
@@ -200,6 +202,8 @@ export interface SecurityStatus {
   globalRequireAuth: boolean;
   authScope: 'all' | 'wan_only';
   allowRegistration?: boolean;
+  allowUserMiotControl?: boolean;
+  allowUserMiotTts?: boolean;
   clientIp: string;
   isLan: boolean;
   hasDefaultAdmin?: boolean;

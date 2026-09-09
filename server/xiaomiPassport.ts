@@ -1,5 +1,16 @@
 import crypto from 'crypto';
 import QRCode from 'qrcode';
+import fs from 'fs';
+
+function logDebug(message: string, data?: any) {
+  const timestamp = new Date().toISOString();
+  const logMsg = `[${timestamp}] ${message} ${data ? (typeof data === 'object' ? JSON.stringify(data, null, 2) : data) : ''}\n`;
+  try {
+    fs.appendFileSync('./passport_debug.log', logMsg);
+  } catch (err) {
+    console.error('Failed to write passport_debug.log:', err);
+  }
+}
 
 export interface XiaomiPassportResult {
   success: boolean;
@@ -273,6 +284,7 @@ export class XiaomiPassport {
     cookies: string,
     ssecurity?: string
   ): Promise<{ serviceToken?: string; cookies?: string; rawLocation?: string }> {
+    logDebug(`exchangeStsToken START`, { locationUrl, cookies });
     try {
       const res = await fetch(locationUrl, {
         headers: {
@@ -287,14 +299,22 @@ export class XiaomiPassport {
         : [res.headers.get('set-cookie') || ''];
       const combinedCookies = setCookiesArr.filter(Boolean).join('; ');
 
+      logDebug(`exchangeStsToken step 1 response`, {
+        status: res.status,
+        setCookie: combinedCookies,
+        location: res.headers.get('location')
+      });
+
       const tokenMatch = combinedCookies.match(/serviceToken=([^;]+)/i);
       if (tokenMatch) {
+        logDebug(`exchangeStsToken success in step 1`, tokenMatch[1]);
         return { serviceToken: tokenMatch[1], cookies: combinedCookies };
       }
 
       // If 302 redirect points to next hop
       const nextLocation = res.headers.get('location');
       if (nextLocation) {
+        logDebug(`exchangeStsToken following redirect`, { nextLocation });
         const nextRes = await fetch(nextLocation, {
           headers: {
             'User-Agent': this.userAgent,
@@ -308,14 +328,23 @@ export class XiaomiPassport {
           : [nextRes.headers.get('set-cookie') || ''];
         const nextCombined = nextCookiesArr.filter(Boolean).join('; ');
 
+        logDebug(`exchangeStsToken step 2 response`, {
+          status: nextRes.status,
+          setCookie: nextCombined,
+          location: nextRes.headers.get('location')
+        });
+
         const match2 = nextCombined.match(/serviceToken=([^;]+)/i);
         if (match2) {
+          logDebug(`exchangeStsToken success in step 2`, match2[1]);
           return { serviceToken: match2[1], cookies: `${combinedCookies}; ${nextCombined}` };
         }
       }
 
+      logDebug(`exchangeStsToken finished with NO serviceToken found`);
       return {};
     } catch (err: any) {
+      logDebug(`exchangeStsToken ERROR`, err.message);
       console.warn('STS exchange failed:', err.message);
       return {};
     }
@@ -375,7 +404,7 @@ export class XiaomiPassport {
   /**
    * QR Code Login - Step 1: Generate Login QR Code
    */
-  public async generateLoginQrCode(sid = 'micoapi'): Promise<QrCodeResult & { qrCodeUrl?: string; qrDataUrl?: string }> {
+  public async generateLoginQrCode(sid = 'micoapi'): Promise<QrCodeResult & { qrCodeUrl?: string; qrDataUrl?: string; qr?: string }> {
     try {
       const url = `https://account.xiaomi.com/longPolling/loginUrl?sid=${encodeURIComponent(sid)}&_json=true`;
       const res = await fetch(url, {
@@ -394,17 +423,18 @@ export class XiaomiPassport {
         return { success: false, error: `解析小米二维码响应异常: ${raw.slice(0, 100)}` };
       }
 
-      if (data.code !== 0 || !data.loginUrl) {
+      if (data.code !== 0 || (!data.qr && !data.loginUrl)) {
         return { success: false, error: data.description || data.desc || `生成二维码失败 (code: ${data.code})` };
       }
 
-      // Extract qrId/lp parameter from loginUrl
-      const lpMatch = data.loginUrl.match(/[?&]lp=([^&]+)/);
-      const ticketMatch = data.loginUrl.match(/[?&](?:ticket|lp|k)=([^&]+)/);
+      // Extract qrId/lp parameter from loginUrl or lp
+      const lpMatch = (data.lp || data.loginUrl || '').match(/[?&](?:lp|k)=([^&]+)/);
+      const ticketMatch = (data.loginUrl || '').match(/[?&](?:ticket|lp|k)=([^&]+)/);
       const qrId = lpMatch ? lpMatch[1] : (ticketMatch ? ticketMatch[1] : `qr_${Date.now()}`);
 
-      // The URL to encode into QR code: data.loginUrl is the authorization webpage URL
-      const qrTarget = data.loginUrl || data.qr;
+      // The URL to encode into QR code MUST be data.qr (the official Xiaomi QR scan authorization URL)
+      // CRITICAL: DO NOT use data.loginUrl for generating QR code image! data.loginUrl is a web ticket URL that returns code 70016!
+      const qrTarget = data.qr || data.loginUrl;
       let qrDataUrl = '';
       try {
         qrDataUrl = await QRCode.toDataURL(qrTarget, {
@@ -425,6 +455,7 @@ export class XiaomiPassport {
       return {
         success: true,
         qrId,
+        qr: data.qr,
         loginUrl: data.loginUrl,
         lpUrl: data.lp,
         qrUrl: finalQrUrl,
@@ -441,42 +472,36 @@ export class XiaomiPassport {
    */
   public async checkQrCodeStatus(loginUrl: string, lpUrl?: string): Promise<QrCodeStatusResult> {
     try {
-      const pollUrl = lpUrl || (loginUrl.includes('/lp/') ? loginUrl : '');
-      const candidateUrls = [
-        pollUrl,
-        loginUrl
-      ].filter(Boolean);
+      // STRICT RULE: Only long-poll the lpUrl (data.lp)! NEVER poll loginUrl because loginUrl returns 70016 expired error!
+      const targetPollUrl = lpUrl || (loginUrl && loginUrl.includes('/lp/') ? loginUrl : null);
+
+      if (!targetPollUrl) {
+        return { success: true, status: 'pending' };
+      }
 
       let data: any = null;
+      try {
+        const controller = new AbortController();
+        // Long-polling timeout: 8 seconds per status check
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-      for (const targetUrl of candidateUrls) {
+        const res = await fetch(targetPollUrl, {
+          headers: {
+            'User-Agent': this.webUserAgent,
+            'Accept': 'application/json, text/plain, */*'
+          },
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+
+        const raw = await res.text();
+        const clean = raw.replace('&&&START&&&', '');
         try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 2500);
-
-          const res = await fetch(targetUrl, {
-            headers: {
-              'User-Agent': this.webUserAgent,
-              'Accept': 'application/json, text/plain, */*'
-            },
-            signal: controller.signal
-          });
-          clearTimeout(timeoutId);
-
-          const raw = await res.text();
-          const clean = raw.replace('&&&START&&&', '');
-          try {
-            data = JSON.parse(clean);
-            if (data && (typeof data.code === 'number' || data.status || data.userId)) {
-              break;
-            }
-          } catch {}
-        } catch (pollErr: any) {
-          // If aborted due to long polling wait, it means still pending
-          if (pollErr.name === 'AbortError') {
-            return { success: true, status: 'pending' };
-          }
-        }
+          data = JSON.parse(clean);
+        } catch {}
+      } catch (pollErr: any) {
+        // AbortError or network timeout during long-polling is expected when no scan event occurred yet -> STILL PENDING
+        return { success: true, status: 'pending' };
       }
 
       if (!data) {
@@ -484,6 +509,7 @@ export class XiaomiPassport {
       }
 
       if (data.code === 0) {
+        logDebug(`checkQrCodeStatus code 0 CONFIRMED! Raw payload`, data);
         // Confirmed! Extract token details
         const userId = String(data.userId || data.cUserId || '').trim();
         const ssecurity = data.ssecurity;
@@ -491,11 +517,15 @@ export class XiaomiPassport {
         let serviceToken = data.serviceToken || '';
 
         if (data.location) {
-          const sts = await this.exchangeStsToken(data.location, `userId=${userId}`);
+          const cookieStr = [
+            `userId=${userId}`,
+            passToken ? `passToken=${passToken}` : ''
+          ].filter(Boolean).join('; ');
+          const sts = await this.exchangeStsToken(data.location, cookieStr, ssecurity);
           if (sts.serviceToken) serviceToken = sts.serviceToken;
         }
 
-        return {
+        const result: QrCodeStatusResult = {
           success: true,
           status: 'confirmed',
           userId,
@@ -503,24 +533,25 @@ export class XiaomiPassport {
           ssecurity,
           passToken
         };
+        logDebug(`checkQrCodeStatus return result`, result);
+        return result;
       } else if (data.code === 70014) {
         return { success: true, status: 'pending' };
       } else if (data.code === 70013) {
         return { success: true, status: 'scanned' };
       } else if (data.code === 70015 || data.code === 70016) {
+        // Explicit expiry from long-polling endpoint
         return { success: true, status: 'expired' };
       }
 
       return {
-        success: false,
-        status: 'failed',
-        error: data.description || `错误码: ${data.code}`
+        success: true,
+        status: 'pending'
       };
     } catch (err: any) {
       return {
-        success: false,
-        status: 'failed',
-        error: err.message || '轮询状态网络超时'
+        success: true,
+        status: 'pending'
       };
     }
   }

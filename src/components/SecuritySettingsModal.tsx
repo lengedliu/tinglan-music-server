@@ -43,6 +43,8 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
   // Settings form state
   const [requireAuth, setRequireAuth] = useState(false);
   const [authScope, setAuthScope] = useState<'all' | 'wan_only'>('all');
+  const [allowUserMiotControl, setAllowUserMiotControl] = useState(true);
+  const [allowUserMiotTts, setAllowUserMiotTts] = useState(false);
   
   // Change password state
   const [showPasswordChange, setShowPasswordChange] = useState(false);
@@ -72,6 +74,8 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
         setStatus(data);
         setRequireAuth(Boolean(data.globalRequireAuth ?? data.authRequired));
         setAuthScope(data.authScope || 'all');
+        setAllowUserMiotControl(data.allowUserMiotControl !== false);
+        setAllowUserMiotTts(Boolean(data.allowUserMiotTts));
       }
     } catch (err: any) {
       console.error('Failed to fetch security status:', err);
@@ -92,7 +96,9 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           requireAuth,
-          authScope
+          authScope,
+          allowUserMiotControl,
+          allowUserMiotTts
         })
       });
 
@@ -344,8 +350,55 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
             </div>
           </div>
 
+          {/* Smart Speaker Granular Authorization (Dual Toggles) */}
+          <div className="space-y-3.5 pt-4 border-t border-white/5">
+            <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider">
+              音箱授权控制策略 (Smart Speaker Access Controls)
+            </label>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+              {/* Playback Control Permission */}
+              <div className="p-4 rounded-2xl bg-zinc-950/80 border border-white/10 flex items-center justify-between gap-4">
+                <div className="space-y-0.5 pr-2">
+                  <span className="text-xs font-bold text-white block">允许普通用户切歌点歌</span>
+                  <p className="text-[11px] text-zinc-400 leading-relaxed">
+                    开启后，家庭普通成员也有权控制音箱的播放、暂停和调整音量。关闭则仅管理员可操作。
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer flex-shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={allowUserMiotControl}
+                    onChange={(e) => setAllowUserMiotControl(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#FF6700]"></div>
+                </label>
+              </div>
+
+              {/* TTS Announcement Permission */}
+              <div className="p-4 rounded-2xl bg-zinc-950/80 border border-white/10 flex items-center justify-between gap-4">
+                <div className="space-y-0.5 pr-2">
+                  <span className="text-xs font-bold text-white block">允许普通用户发送 TTS 播报</span>
+                  <p className="text-[11px] text-zinc-400 leading-relaxed">
+                    开启后，普通成员可以向音箱发起语音文字广播。建议默认关闭，避免非管理员进行夜间骚扰。
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer flex-shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={allowUserMiotTts}
+                    onChange={(e) => setAllowUserMiotTts(e.target.checked)}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#FF6700]"></div>
+                </label>
+              </div>
+            </div>
+          </div>
+
           {/* Save Settings Button */}
-          <div className="flex items-center justify-between pt-2 border-t border-white/5">
+          <div className="flex items-center justify-between pt-4 border-t border-white/5">
             <div className="text-xs text-zinc-400">
               {currentUser ? (
                 <span>当前操作身份: <strong className="text-white">{currentUser.username}</strong> ({currentUser.role === 'admin' ? '管理员' : '普通用户'})</span>

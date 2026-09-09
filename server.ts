@@ -233,6 +233,8 @@ interface SecuritySettings {
   requireAuth: boolean;
   authScope: 'all' | 'wan_only';
   allowRegistration?: boolean;
+  allowUserMiotControl?: boolean;
+  allowUserMiotTts?: boolean;
   updatedAt: string;
 }
 
@@ -240,6 +242,8 @@ const defaultSecuritySettings: SecuritySettings = {
   requireAuth: process.env.REQUIRE_AUTH !== 'false', // Enabled (true) by default
   authScope: 'all',
   allowRegistration: true, // Registration enabled by default
+  allowUserMiotControl: true, // Allowed for regular users by default
+  allowUserMiotTts: false, // Disallowed for regular users by default (admin only)
   updatedAt: new Date().toISOString()
 };
 
@@ -252,6 +256,12 @@ if (!securitySettings.authScope) {
 }
 if (typeof securitySettings.allowRegistration !== 'boolean') {
   securitySettings.allowRegistration = true;
+}
+if (typeof securitySettings.allowUserMiotControl !== 'boolean') {
+  securitySettings.allowUserMiotControl = true;
+}
+if (typeof securitySettings.allowUserMiotTts !== 'boolean') {
+  securitySettings.allowUserMiotTts = false;
 }
 // Ensure security.json exists on disk with active security settings
 saveJson(SECURITY_FILE, securitySettings);
@@ -524,6 +534,8 @@ app.get('/api/auth/status', (req: Request, res: Response) => {
     requireAuth: Boolean(securitySettings.requireAuth),
     authScope: securitySettings.authScope || 'all',
     allowRegistration,
+    allowUserMiotControl: securitySettings.allowUserMiotControl !== false,
+    allowUserMiotTts: Boolean(securitySettings.allowUserMiotTts),
     clientIp,
     isLan,
     hasDefaultAdmin: storedUsers.some(u => u.username === 'admin'),
@@ -535,6 +547,8 @@ app.get('/api/auth/status', (req: Request, res: Response) => {
       requireAuth: Boolean(securitySettings.requireAuth),
       authScope: securitySettings.authScope || 'all',
       allowRegistration,
+      allowUserMiotControl: securitySettings.allowUserMiotControl !== false,
+      allowUserMiotTts: Boolean(securitySettings.allowUserMiotTts),
       clientIp,
       isLan,
       hasDefaultAdmin: storedUsers.some(u => u.username === 'admin'),
@@ -562,6 +576,8 @@ app.get('/api/system/security', (req: Request, res: Response) => {
     requireAuth: Boolean(securitySettings.requireAuth),
     authScope: securitySettings.authScope || 'all',
     allowRegistration,
+    allowUserMiotControl: securitySettings.allowUserMiotControl !== false,
+    allowUserMiotTts: Boolean(securitySettings.allowUserMiotTts),
     clientIp,
     isLan,
     settings: {
@@ -575,6 +591,8 @@ app.get('/api/system/security', (req: Request, res: Response) => {
       requireAuth: Boolean(securitySettings.requireAuth),
       authScope: securitySettings.authScope || 'all',
       allowRegistration,
+      allowUserMiotControl: securitySettings.allowUserMiotControl !== false,
+      allowUserMiotTts: Boolean(securitySettings.allowUserMiotTts),
       clientIp,
       isLan,
       hasDefaultAdmin: storedUsers.some(u => u.username === 'admin'),
@@ -593,7 +611,7 @@ app.get('/api/system/security', (req: Request, res: Response) => {
 // Update System Security Settings
 app.post('/api/system/security', (req: Request, res: Response) => {
   try {
-    const { requireAuth, authScope, allowRegistration } = req.body;
+    const { requireAuth, authScope, allowRegistration, allowUserMiotControl, allowUserMiotTts } = req.body;
     
     // Changing security settings requires admin privileges
     const clientUser = (req as any).user;
@@ -609,6 +627,12 @@ app.post('/api/system/security', (req: Request, res: Response) => {
     }
     if (typeof allowRegistration === 'boolean') {
       securitySettings.allowRegistration = allowRegistration;
+    }
+    if (typeof allowUserMiotControl === 'boolean') {
+      securitySettings.allowUserMiotControl = allowUserMiotControl;
+    }
+    if (typeof allowUserMiotTts === 'boolean') {
+      securitySettings.allowUserMiotTts = allowUserMiotTts;
     }
     securitySettings.updatedAt = new Date().toISOString();
     saveJson(SECURITY_FILE, securitySettings);
@@ -627,6 +651,8 @@ app.post('/api/system/security', (req: Request, res: Response) => {
       requireAuth: Boolean(securitySettings.requireAuth),
       authScope: securitySettings.authScope || 'all',
       allowRegistration: currentAllowReg,
+      allowUserMiotControl: securitySettings.allowUserMiotControl !== false,
+      allowUserMiotTts: Boolean(securitySettings.allowUserMiotTts),
       clientIp,
       isLan,
       status: {
@@ -636,6 +662,8 @@ app.post('/api/system/security', (req: Request, res: Response) => {
         requireAuth: Boolean(securitySettings.requireAuth),
         authScope: securitySettings.authScope || 'all',
         allowRegistration: currentAllowReg,
+        allowUserMiotControl: securitySettings.allowUserMiotControl !== false,
+        allowUserMiotTts: Boolean(securitySettings.allowUserMiotTts),
         clientIp,
         isLan,
         hasDefaultAdmin: storedUsers.some(u => u.username === 'admin'),
@@ -2233,12 +2261,87 @@ app.delete('/api/playlists/:id', (req: Request, res: Response) => {
 
 // ---------------- MIOT & XIAOMI SPEAKER API ----------------
 
+/**
+ * Helper to check if the current request is authorized for smart speaker admin actions.
+ * If authentication is not globally or local network required, guests are allowed as admins.
+ * If explicitly logged in as a normal user, they are always blocked.
+ */
+function checkMiotAdminPermission(req: Request, res: Response): boolean {
+  const clientUser = (req as any).user;
+  const authRequired = isAuthRequiredForRequest(req);
+
+  if (authRequired) {
+    if (!clientUser || clientUser.role !== 'admin') {
+      res.status(200).json({ success: false, error: '权限不足：该操作仅系统管理员允许执行' });
+      return false;
+    }
+  } else {
+    if (clientUser && clientUser.role !== 'admin') {
+      res.status(200).json({ success: false, error: '权限不足：普通用户无权执行此操作' });
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Helper to check if the current request has permission to control speaker playback/casting.
+ */
+function checkMiotControlPermission(req: Request, res: Response): boolean {
+  const clientUser = (req as any).user;
+  const authRequired = isAuthRequiredForRequest(req);
+
+  if (authRequired) {
+    if (!clientUser) {
+      res.status(200).json({ success: false, error: '权限不足：请先登录账号后再控制音箱播放' });
+      return false;
+    }
+    if (clientUser.role !== 'admin' && securitySettings.allowUserMiotControl === false) {
+      res.status(200).json({ success: false, error: '权限不足：系统管理员已限制普通用户控制音箱播放' });
+      return false;
+    }
+  } else {
+    if (clientUser && clientUser.role !== 'admin' && securitySettings.allowUserMiotControl === false) {
+      res.status(200).json({ success: false, error: '权限不足：系统管理员已限制普通用户控制音箱播放' });
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Helper to check if the current request has permission to broadcast TTS.
+ */
+function checkMiotTtsPermission(req: Request, res: Response): boolean {
+  const clientUser = (req as any).user;
+  const authRequired = isAuthRequiredForRequest(req);
+
+  if (authRequired) {
+    if (!clientUser) {
+      res.status(200).json({ success: false, error: '权限不足：请先登录账号后再发送语音 TTS' });
+      return false;
+    }
+    if (clientUser.role !== 'admin' && securitySettings.allowUserMiotTts === false) {
+      res.status(200).json({ success: false, error: '权限不足：系统管理员已禁止普通用户发送语音 TTS 播报' });
+      return false;
+    }
+  } else {
+    if (clientUser && clientUser.role !== 'admin' && securitySettings.allowUserMiotTts === false) {
+      res.status(200).json({ success: false, error: '权限不足：系统管理员已禁止普通用户发送语音 TTS 播报' });
+      return false;
+    }
+  }
+  return true;
+}
+
 // MIoT Configuration
 app.get('/api/miot/config', (req: Request, res: Response) => {
   res.json(sanitizeMiotConfig(miotConfig));
 });
 
 app.post('/api/miot/config', (req: Request, res: Response) => {
+  if (!checkMiotAdminPermission(req, res)) return;
+
   const incoming = { ...req.body };
   // If serviceToken was not provided or masked with asterisks, keep current token
   if (incoming.serviceToken === undefined || (typeof incoming.serviceToken === 'string' && incoming.serviceToken.includes('****'))) {
@@ -2346,6 +2449,8 @@ async function authenticateXiaomiPassport(user: string, pass: string): Promise<{
 
 // Xiaomi Cloud / Account Login & Token Binding
 app.post('/api/miot/login', async (req: Request, res: Response) => {
+  if (!checkMiotAdminPermission(req, res)) return;
+
   const { username, password, mode, token, did, ip, serviceToken, userId } = req.body;
 
   // Mode 1: Direct Token / LAN Mode (For users avoiding 2FA)
@@ -2564,6 +2669,8 @@ app.post('/api/miot/login', async (req: Request, res: Response) => {
 
 // Logout / Unbind Xiaomi Account
 app.post('/api/miot/logout', (req: Request, res: Response) => {
+  if (!checkMiotAdminPermission(req, res)) return;
+
   try {
     minaWsClient.disconnect(true);
   } catch {}
@@ -2588,7 +2695,9 @@ app.post('/api/miot/logout', (req: Request, res: Response) => {
 
 // 1. QR Code Login Flow: Generate QR code
 app.get('/api/miot/passport/qrcode/get', async (req: Request, res: Response) => {
-  const qrRes = await xiaomiPassport.generateLoginQrCode('micoapi');
+  if (!checkMiotAdminPermission(req, res)) return;
+
+  const qrRes = await xiaomiPassport.generateLoginQrCode('xiaomiio');
   if (qrRes.success) {
     return res.json(qrRes);
   }
@@ -2597,15 +2706,40 @@ app.get('/api/miot/passport/qrcode/get', async (req: Request, res: Response) => 
 
 // 1. QR Code Login Flow: Check QR code scan & confirm status
 app.post('/api/miot/passport/qrcode/check', async (req: Request, res: Response) => {
+  if (!checkMiotAdminPermission(req, res)) return;
+
   const { loginUrl, lpUrl } = req.body;
   if (!loginUrl && !lpUrl) {
     return res.status(400).json({ success: false, error: '缺少 loginUrl 参数' });
   }
 
   const checkRes = await xiaomiPassport.checkQrCodeStatus(loginUrl || lpUrl, lpUrl);
-  if (checkRes.success && checkRes.status === 'confirmed' && checkRes.userId && checkRes.serviceToken) {
+  if (checkRes.success && checkRes.status === 'confirmed') {
+    let serviceToken = checkRes.serviceToken || '';
+
+    // Since we generated the QR code for 'xiaomiio' to ensure 100% compatibility with Mi Home App (米家 App) scanner,
+    // we must now perform a sub-exchange to obtain the 'micoapi' serviceToken using the confirmed passToken!
+    if (checkRes.userId && checkRes.passToken) {
+      try {
+        const micoToken = await xiaomiPassport.fetchAdditionalStsToken(checkRes.userId, checkRes.passToken, 'micoapi');
+        if (micoToken.serviceToken) {
+          serviceToken = micoToken.serviceToken;
+        }
+      } catch (err: any) {
+        console.warn('Failed to fetch additional micoapi token:', err.message);
+      }
+    }
+
+    if (!checkRes.userId || !serviceToken) {
+      return res.json({
+        success: false,
+        status: 'error',
+        error: '扫码确认成功，但未能成功获取到小爱音箱服务凭证 (micoapi serviceToken)，请刷新二维码重新扫码授权'
+      });
+    }
+
     miotConfig.userId = checkRes.userId;
-    miotConfig.serviceToken = checkRes.serviceToken;
+    miotConfig.serviceToken = serviceToken;
     miotConfig.miUser = `uid_${checkRes.userId}`;
     miotConfig.isLoggedIn = true;
     miotConfig.bindMode = 'account';
@@ -2613,7 +2747,7 @@ app.post('/api/miot/passport/qrcode/check', async (req: Request, res: Response) 
 
     // Auto connect Mina WS
     try {
-      minaWsClient.connect(checkRes.userId, checkRes.serviceToken, miotConfig.activeDeviceId || '');
+      minaWsClient.connect(checkRes.userId, serviceToken, miotConfig.activeDeviceId || '');
     } catch {}
 
     // Auto sync devices using the full Dual-Track Pipeline
@@ -2621,7 +2755,7 @@ app.post('/api/miot/passport/qrcode/check', async (req: Request, res: Response) 
     try {
       const resolveResult = await xiaoaiResolverEngine.resolveDevices({
         userId: checkRes.userId,
-        serviceToken: checkRes.serviceToken,
+        serviceToken: serviceToken,
         existingDevices: xiaomiDevices
       });
       devices = resolveResult.xiaoAiDevices;
@@ -2665,6 +2799,8 @@ app.post('/api/miot/passport/qrcode/check', async (req: Request, res: Response) 
 
 // 2. Mina WebSocket Status & Metrics
 app.get('/api/miot/ws/status', (req: Request, res: Response) => {
+  if (!checkMiotAdminPermission(req, res)) return;
+
   const status = minaWsClient.getStatus();
   const recentEvents = minaWsClient.getRecentEvents();
   res.json({ success: true, status, recentEvents });
@@ -2672,6 +2808,8 @@ app.get('/api/miot/ws/status', (req: Request, res: Response) => {
 
 // Mina WebSocket Manual Reconnect
 app.post('/api/miot/ws/reconnect', (req: Request, res: Response) => {
+  if (!checkMiotAdminPermission(req, res)) return;
+
   if (miotConfig.userId && miotConfig.serviceToken) {
     minaWsClient.connect(miotConfig.userId, miotConfig.serviceToken, miotConfig.activeDeviceId || '');
     return res.json({ success: true, message: '正在重新建立 Mina WebSocket 连接...' });
@@ -2681,6 +2819,8 @@ app.post('/api/miot/ws/reconnect', (req: Request, res: Response) => {
 
 // Mina Real-time Event Stream (Server-Sent Events)
 app.get('/api/miot/events', (req: Request, res: Response) => {
+  if (!checkMiotAdminPermission(req, res)) return;
+
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
@@ -2704,6 +2844,8 @@ app.get('/api/miot/events', (req: Request, res: Response) => {
 
 // 3. MIoT Spec RPC: Get Property
 app.post('/api/miot/rpc/prop/get', async (req: Request, res: Response) => {
+  if (!checkMiotAdminPermission(req, res)) return;
+
   const { did, siid, piid } = req.body;
   const targetDev = xiaomiDevices.find(d => d.did === String(did));
   if (!targetDev) {
@@ -2720,6 +2862,8 @@ app.post('/api/miot/rpc/prop/get', async (req: Request, res: Response) => {
 
 // 3. MIoT Spec RPC: Set Property
 app.post('/api/miot/rpc/prop/set', async (req: Request, res: Response) => {
+  if (!checkMiotAdminPermission(req, res)) return;
+
   const { did, siid, piid, value } = req.body;
   const targetDev = xiaomiDevices.find(d => d.did === String(did));
   if (!targetDev) {
@@ -2736,6 +2880,8 @@ app.post('/api/miot/rpc/prop/set', async (req: Request, res: Response) => {
 
 // 3. MIoT Spec RPC: Action
 app.post('/api/miot/rpc/action', async (req: Request, res: Response) => {
+  if (!checkMiotAdminPermission(req, res)) return;
+
   const { did, siid, aiid, in: inParams } = req.body;
   const targetDev = xiaomiDevices.find(d => d.did === String(did));
   if (!targetDev) {
@@ -2758,6 +2904,8 @@ app.post('/api/miot/rpc/action', async (req: Request, res: Response) => {
 
 // 3. MIoT Spec RPC: Raw Packet Execution (LAN / Cloud)
 app.post('/api/miot/rpc/raw', async (req: Request, res: Response) => {
+  if (!checkMiotAdminPermission(req, res)) return;
+
   const { ip, token, method, params, did } = req.body;
   if (ip && token) {
     const result = await miotRpcEngine.executeLocalMiio(ip, token, method || 'get_prop', params || []);
@@ -2784,6 +2932,8 @@ app.get('/api/miot/spec/:model', async (req: Request, res: Response) => {
 
 // 4. Enhanced Device Discovery: Subnet Scan via XiaoAi Resolver & MIoT Spec
 app.post('/api/miot/devices/scan-subnet', async (req: Request, res: Response) => {
+  if (!checkMiotAdminPermission(req, res)) return;
+
   const { subnetPrefix } = req.body;
   try {
     const result = await xiaoaiResolverEngine.resolveDevices({
@@ -2817,6 +2967,8 @@ app.post('/api/miot/devices/scan-subnet', async (req: Request, res: Response) =>
 
 // 4. Enhanced Device Discovery: SSDP UPnP Scan
 app.post('/api/miot/devices/scan-ssdp', async (req: Request, res: Response) => {
+  if (!checkMiotAdminPermission(req, res)) return;
+
   const discovered = await deviceDiscoveryEngine.scanSsdp(2500);
   res.json({ success: true, discovered });
 });
@@ -2828,6 +2980,8 @@ app.get('/api/miot/devices', (req: Request, res: Response) => {
 
 // Add custom Xiaomi Speaker
 app.post('/api/miot/devices', async (req: Request, res: Response) => {
+  if (!checkMiotAdminPermission(req, res)) return;
+
   const { name, ip, did, model, hardware, token } = req.body;
   if (!name || !ip) {
     return res.status(400).json({ error: 'Name and IP are required' });
@@ -2885,6 +3039,8 @@ app.post('/api/miot/devices', async (req: Request, res: Response) => {
 
 // Update / Edit Xiaomi Speaker
 app.put('/api/miot/devices/:did', async (req: Request, res: Response) => {
+  if (!checkMiotAdminPermission(req, res)) return;
+
   const { did } = req.params;
   const { name, ip, did: newDid, model, hardware, token } = req.body;
 
@@ -2940,6 +3096,8 @@ app.put('/api/miot/devices/:did', async (req: Request, res: Response) => {
 
 // Delete Xiaomi Speaker
 app.delete('/api/miot/devices/:did', (req: Request, res: Response) => {
+  if (!checkMiotAdminPermission(req, res)) return;
+
   const { did } = req.params;
   const didStr = String(did).trim();
 
@@ -2975,6 +3133,8 @@ app.delete('/api/miot/devices/:did', (req: Request, res: Response) => {
 
 // Clear all demo/sample Xiaomi Speakers
 app.post('/api/miot/devices/clear', (req: Request, res: Response) => {
+  if (!checkMiotAdminPermission(req, res)) return;
+
   xiaomiDevices = [];
   miotConfig.activeDeviceId = '';
   saveJson(CONFIG_FILE, miotConfig);
@@ -2995,6 +3155,8 @@ app.post('/api/miot/devices/clear', (req: Request, res: Response) => {
 
 // Reset to default sample Xiaomi Speakers
 app.post('/api/miot/devices/reset', (req: Request, res: Response) => {
+  if (!checkMiotAdminPermission(req, res)) return;
+
   xiaomiDevices = JSON.parse(JSON.stringify(DEFAULT_DEVICES)).map((d: any) => ({
     ...d,
     name: (d.name || '小米智能音箱').replace(/\s*[\(（]点击(右侧)?编辑[\)）]/g, '').trim()
@@ -3023,6 +3185,8 @@ app.post('/api/miot/devices/reset', (req: Request, res: Response) => {
 
 // Test Ping / Handshake to speaker IP (Prioritizes miIO UDP 54321 Hello, then TCP fallback)
 app.post('/api/miot/devices/ping', async (req: Request, res: Response) => {
+  if (!checkMiotAdminPermission(req, res)) return;
+
   const { ip } = req.body;
   if (!ip) {
     return res.status(400).json({ error: 'IP is required' });
@@ -3054,6 +3218,8 @@ app.post('/api/miot/devices/ping', async (req: Request, res: Response) => {
 // XiaoAi Device Discovery & Resolution Pipeline
 // Xiaomi Cloud + LAN miIO Hello -> Device Resolver -> MIoT Spec -> Filter XiaoAi Speaker vs Non-Speaker
 app.post('/api/miot/devices/resolve', async (req: Request, res: Response) => {
+  if (!checkMiotAdminPermission(req, res)) return;
+
   const { subnetPrefix } = req.body || {};
   try {
     const result = await xiaoaiResolverEngine.resolveDevices({
@@ -3097,6 +3263,8 @@ app.post('/api/miot/devices/resolve', async (req: Request, res: Response) => {
 
 // Add or discover device (Full Pipeline: Cloud + LAN miIO Hello -> Device Resolver -> MIoT Spec Filter)
 app.post('/api/miot/devices/scan', async (req: Request, res: Response) => {
+  if (!checkMiotAdminPermission(req, res)) return;
+
   const { subnetPrefix } = req.body || {};
   try {
     const result = await xiaoaiResolverEngine.resolveDevices({
@@ -3212,6 +3380,8 @@ async function callMinaCloudApi(
 
 // Cast Song to Xiaomi Speaker with Real Cloud UBUS Dispatch & Local miIO fallback
 app.post('/api/miot/cast', async (req: Request, res: Response) => {
+  if (!checkMiotControlPermission(req, res)) return;
+
   const startTime = Date.now();
   const { did, songId, songTitle, songArtist, streamUrl, duration } = req.body;
   const targetDevice = xiaomiDevices.find(d => d.did === did) || xiaomiDevices[0];
@@ -3390,6 +3560,8 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
 
 // Xiaomi Speaker Remote Control (play, pause, toggle, volume, mute, seek)
 app.post('/api/miot/control', async (req: Request, res: Response) => {
+  if (!checkMiotControlPermission(req, res)) return;
+
   const { did, action, value } = req.body;
   const targetDevice = xiaomiDevices.find(d => d.did === did) || xiaomiDevices[0];
 
@@ -3515,6 +3687,8 @@ app.post('/api/miot/control', async (req: Request, res: Response) => {
 
 // Text to Speech (TTS) broadcast to speaker
 app.post('/api/miot/tts', async (req: Request, res: Response) => {
+  if (!checkMiotTtsPermission(req, res)) return;
+
   const { did, text } = req.body;
   const targetDevice = xiaomiDevices.find(d => d.did === did) || xiaomiDevices[0];
 
