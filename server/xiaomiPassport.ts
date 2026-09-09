@@ -326,7 +326,14 @@ export class XiaomiPassport {
 
         const res = await fetch(currentUrl, {
           headers: {
-            'User-Agent': this.webUserAgent,
+            // 修复：这里此前用的是 webUserAgent（桌面浏览器 UA）。
+            // api2.mina.mi.com 是小爱音箱 App 后端专用域名，不是给浏览器访问的
+            // 网页，用浏览器 UA 请求会被直接拒绝（这正是你日志里看到的
+            // "status: 401, setCookie: '', location: null" ——服务器根本没有
+            // 走到"下发 serviceToken"这一步，第一步就把请求当成非法客户端拒了）。
+            // 密码登录那条路径里，凡是打到 App 域名的请求都用的是 this.userAgent
+            // （真实小米账App UA），这里改成保持一致。
+            'User-Agent': this.userAgent,
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
             'Cookie': cleanCookieHeader
           },
