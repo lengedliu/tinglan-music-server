@@ -964,37 +964,29 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                 播放协议控制中枢 (Cast Protocols Hub)
               </h1>
 
-              {/* Status Badges directly following the title */}
+              {/* Unified compact status badges: only 2 pills directly after title */}
               <span className="text-[11px] uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold flex items-center gap-1.5 shadow-sm shrink-0 whitespace-nowrap">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_6px_rgba(52,211,153,0.8)]" />
-                多协议路由在线
-              </span>
-
-              <span className={`text-[11px] uppercase tracking-wider px-2.5 py-0.5 rounded-full border font-semibold flex items-center gap-1.5 shadow-sm shrink-0 whitespace-nowrap ${
-                minaWsStatus.connected 
-                  ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' 
-                  : 'bg-zinc-900/90 text-zinc-400 border-white/10'
-              }`}>
-                <Activity className={`w-3.5 h-3.5 ${minaWsStatus.connected ? 'text-blue-400 animate-pulse' : 'text-zinc-500'}`} />
-                <span>Mina WS: {minaWsStatus.connected ? '长连接在线' : '离线/未连接'}</span>
+                多协议在线
               </span>
 
               {minaWsStatus.connected ? (
-                <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-blue-500/10 text-blue-300 border border-blue-500/20 flex items-center gap-1.5 shrink-0 whitespace-nowrap">
-                  <Radio className="w-3 h-3 text-blue-400 animate-pulse" />
-                  <span>已接收 {minaWsStatus.messageCount} 条事件</span>
+                <span
+                  className="text-[11px] uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30 font-semibold flex items-center gap-1.5 shadow-sm shrink-0 whitespace-nowrap"
+                  title={`Mina WS 长连接在线 (已接收 ${minaWsStatus.messageCount} 条小爱事件)`}
+                >
+                  <Activity className="w-3.5 h-3.5 text-blue-400 animate-pulse" />
+                  <span>Mina WS 在线</span>
                 </span>
               ) : (
-                miotConfig.isLoggedIn && (
-                  <button
-                    onClick={handleReconnectMinaWs}
-                    className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 text-[11px] font-semibold border border-blue-500/30 transition shadow-sm active:scale-95 shrink-0 whitespace-nowrap"
-                    title="重新建立 Mina WebSocket 长连接"
-                  >
-                    <Activity className="w-3 h-3" />
-                    <span>重连 WS</span>
-                  </button>
-                )
+                <button
+                  onClick={handleReconnectMinaWs}
+                  className="text-[11px] uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-zinc-900/90 hover:bg-blue-500/20 text-zinc-400 hover:text-blue-300 border border-white/10 hover:border-blue-500/30 font-semibold flex items-center gap-1.5 shadow-sm shrink-0 whitespace-nowrap transition active:scale-95 group cursor-pointer"
+                  title="Mina WS 离线，点击重新建立长连接"
+                >
+                  <Activity className="w-3.5 h-3.5 text-zinc-500 group-hover:text-blue-400" />
+                  <span>Mina WS 离线 <span className="text-blue-400/80 font-normal">· 重连</span></span>
+                </button>
               )}
             </div>
 
