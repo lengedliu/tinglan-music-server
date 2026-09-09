@@ -1536,9 +1536,11 @@ function sanitizeDevice(dev: any) {
 function sanitizeMiotConfig(config: any) {
   if (!config) return config;
   const { serviceToken, ssecurity, password, ...safeConfig } = config;
+  const hasToken = Boolean(serviceToken && String(serviceToken).trim().length > 0);
   return {
     ...safeConfig,
-    hasServiceToken: Boolean(serviceToken && String(serviceToken).trim().length > 0),
+    hasServiceToken: hasToken,
+    serviceToken: hasToken ? `${String(serviceToken).slice(0, 4)}••••••••` : '',
     miUserMasked: config.miUser ? (config.miUser.length > 4 ? `${config.miUser.slice(0, 2)}***${config.miUser.slice(-2)}` : '***') : ''
   };
 }
@@ -2366,27 +2368,48 @@ app.post('/api/miot/config', (req: Request, res: Response) => {
   res.json({ success: true, config: sanitizeMiotConfig(miotConfig) });
 });
 
-// Helper to extract clean userId and serviceToken even if raw cookie strings are passed
-function parseServiceTokenAndUserId(inputUid: string, inputToken: string): { userId: string; serviceToken: string } {
+// Helper to extract clean userId, serviceToken, and passToken even if raw cookie strings or .mi.token JSON are passed
+function parseServiceTokenAndUserId(inputUid: string, inputToken: string, inputPassToken?: string): { userId: string; serviceToken: string; passToken: string } {
   let userId = String(inputUid || '').trim();
   let serviceToken = String(inputToken || '').trim();
+  let passToken = String(inputPassToken || '').trim();
 
-  const combined = `${userId}; ${serviceToken}`;
+  // 1. Check if input is a JSON string (e.g. .mi.token format from xiaomusic / miservice)
+  for (const raw of [inputUid, inputToken, inputPassToken]) {
+    if (raw && (raw.startsWith('{') || raw.includes('"userId"') || raw.includes('"micoapi"') || raw.includes('"passToken"'))) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed.userId) userId = String(parsed.userId);
+        if (parsed.passToken) passToken = String(parsed.passToken);
+        if (parsed.micoapi?.serviceToken) serviceToken = String(parsed.micoapi.serviceToken);
+        else if (parsed.serviceToken) serviceToken = String(parsed.serviceToken);
+        else if (parsed.xiaomiio?.serviceToken) serviceToken = String(parsed.xiaomiio.serviceToken);
+      } catch {}
+    }
+  }
 
-  const uidMatch = combined.match(/userId=([^;\s"']+)/i);
+  const combined = `${userId}; ${serviceToken}; ${passToken}`;
+
+  const uidMatch = combined.match(/(?:userId|cUserId|uid)\s*[:=]\s*["']?([^;\s,"'}{]+)/i);
   if (uidMatch) {
     userId = uidMatch[1];
   }
 
-  const tokenMatch = combined.match(/serviceToken=([^;\s"']+)/i);
+  const tokenMatch = combined.match(/(?:serviceToken)\s*[:=]\s*["']?([^;\s,"'}{]+)/i);
   if (tokenMatch) {
     serviceToken = tokenMatch[1];
   }
 
+  const passMatch = combined.match(/(?:passToken)\s*[:=]\s*["']?([^;\s,"'}{]+)/i);
+  if (passMatch) {
+    passToken = passMatch[1];
+  }
+
   userId = userId.replace(/^["']|["']$/g, '').replace(/;$/, '').trim();
   serviceToken = serviceToken.replace(/^["']|["']$/g, '').replace(/;$/, '').trim();
+  passToken = passToken.replace(/^["']|["']$/g, '').replace(/;$/, '').trim();
 
-  return { userId, serviceToken };
+  return { userId, serviceToken, passToken };
 }
 
 // Helper to query Xiaomi smart speaker device list from Mina Cloud API & Xiaomi Home APIs
@@ -2463,7 +2486,7 @@ async function authenticateXiaomiPassport(user: string, pass: string): Promise<{
 app.post('/api/miot/login', async (req: Request, res: Response) => {
   if (!checkMiotAdminPermission(req, res)) return;
 
-  const { username, password, mode, token, did, ip, serviceToken, userId } = req.body;
+  const { username, password, mode, token, did, ip, serviceToken, userId, passToken } = req.body;
 
   // Mode 1: Direct Token / LAN Mode (For users avoiding 2FA)
   if (mode === 'token' || (token && ip)) {
@@ -2545,16 +2568,42 @@ app.post('/api/miot/login', async (req: Request, res: Response) => {
     });
   }
 
-  // Mode 2: ServiceToken / Cookie Import (Direct without password)
-  if (mode === 'cookie' || (serviceToken && userId)) {
-    const { userId: cleanUid, serviceToken: cleanToken } = parseServiceTokenAndUserId(userId, serviceToken);
+  // Mode 2: ServiceToken / PassToken / Cookie Import (Direct without password)
+  if (mode === 'cookie' || mode === 'passToken' || (serviceToken && userId) || (passToken && userId) || (req.body.passToken && req.body.userId)) {
+    const { userId: cleanUid, serviceToken: cleanToken, passToken: cleanPassToken } = parseServiceTokenAndUserId(
+      userId || req.body.userId,
+      serviceToken || req.body.serviceToken,
+      passToken || req.body.passToken
+    );
 
-    if (!cleanUid || cleanUid === 'undefined' || !cleanToken || cleanToken === 'undefined') {
-      return res.status(400).json({ success: false, error: '请输入有效的 UserID 和 ServiceToken（支持粘贴完整 Cookie 字符串自动提取）' });
+    if (!cleanUid || cleanUid === 'undefined') {
+      return res.status(400).json({ success: false, error: '请输入有效的 User ID（支持从 Cookie 复制或粘贴完整 Cookie 字符串）' });
+    }
+
+    let activeServiceToken = cleanToken;
+
+    // If passToken is provided (e.g. from www.mi.com or account.xiaomi.com Cookie), automatically exchange it for the official micoapi serviceToken!
+    if (cleanPassToken) {
+      try {
+        const exchanged = await xiaomiPassport.fetchAdditionalStsToken(cleanUid, cleanPassToken, 'micoapi');
+        if (exchanged.serviceToken) {
+          activeServiceToken = exchanged.serviceToken;
+          if (exchanged.ssecurity) {
+            (miotConfig as any).ssecurity = exchanged.ssecurity;
+          }
+        }
+      } catch (err: any) {
+        console.warn('Failed to exchange passToken for micoapi serviceToken:', err.message);
+      }
+    }
+
+    if (!activeServiceToken || activeServiceToken === 'undefined') {
+      return res.status(400).json({ success: false, error: '未能提取到有效的 ServiceToken 或 PassToken。请确认从 account.xiaomi.com 或 www.mi.com 复制的 Cookie 包含 passToken 或 serviceToken' });
     }
 
     miotConfig.userId = cleanUid;
-    miotConfig.serviceToken = cleanToken;
+    miotConfig.serviceToken = activeServiceToken;
+    if (cleanPassToken) (miotConfig as any).passToken = cleanPassToken;
     miotConfig.miUser = username || `uid_${cleanUid}`;
     miotConfig.isLoggedIn = true;
     miotConfig.bindMode = 'cookie';

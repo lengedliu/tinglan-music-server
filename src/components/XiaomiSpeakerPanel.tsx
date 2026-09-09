@@ -51,7 +51,8 @@ import {
   FileText,
   Download,
   Bug,
-  Database
+  Database,
+  Key
 } from 'lucide-react';
 import { XiaomiDevice, MiotConfig, CastLog, Song, DeviceCommandState } from '../types';
 import { apiFetch, getAuthToken } from '../utils/api';
@@ -116,6 +117,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
   const [directToken, setDirectToken] = useState('');
   const [directIp, setDirectIp] = useState('192.168.31.');
   const [serviceTokenInput, setServiceTokenInput] = useState(miotConfig.serviceToken || '');
+  const [passTokenInput, setPassTokenInput] = useState(miotConfig.passToken || '');
   const [userIdInput, setUserIdInput] = useState(miotConfig.userId || '');
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginSuccessMsg, setLoginSuccessMsg] = useState<string | null>(null);
@@ -756,17 +758,44 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
     setTimeout(() => setShowLoginSuccess(false), 3000);
   };
 
-  const handleCookieInputPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+  const handleCookieInputPaste = (e: React.ClipboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     const pastedText = e.clipboardData.getData('text');
-    if (pastedText && (pastedText.includes('userId=') || pastedText.includes('serviceToken='))) {
+    if (!pastedText) return;
+
+    // Check JSON .mi.token format
+    if (pastedText.startsWith('{') || pastedText.includes('"userId"') || pastedText.includes('"micoapi"') || pastedText.includes('"passToken"')) {
+      try {
+        const parsed = JSON.parse(pastedText);
+        if (parsed.userId) {
+          e.preventDefault();
+          setUserIdInput(String(parsed.userId).trim());
+        }
+        if (parsed.passToken) {
+          e.preventDefault();
+          setPassTokenInput(String(parsed.passToken).trim());
+        }
+        const sToken = parsed.micoapi?.serviceToken || parsed.serviceToken || parsed.xiaomiio?.serviceToken;
+        if (sToken) {
+          e.preventDefault();
+          setServiceTokenInput(String(sToken).trim());
+        }
+        return;
+      } catch {}
+    }
+
+    if (pastedText.includes('userId') || pastedText.includes('serviceToken') || pastedText.includes('passToken') || pastedText.includes('cUserId')) {
       e.preventDefault();
-      const uidMatch = pastedText.match(/userId=([^;\s"']+)/i);
-      const tokenMatch = pastedText.match(/serviceToken=([^;\s"']+)/i);
+      const uidMatch = pastedText.match(/(?:userId|cUserId|uid)\s*[:=]\s*["']?([^;\s,"'}{]+)/i);
+      const tokenMatch = pastedText.match(/(?:serviceToken)\s*[:=]\s*["']?([^;\s,"'}{]+)/i);
+      const passMatch = pastedText.match(/(?:passToken)\s*[:=]\s*["']?([^;\s,"'}{]+)/i);
       if (uidMatch) {
         setUserIdInput(uidMatch[1].trim());
       }
       if (tokenMatch) {
         setServiceTokenInput(tokenMatch[1].trim());
+      }
+      if (passMatch) {
+        setPassTokenInput(passMatch[1].trim());
       }
     }
   };
@@ -802,14 +831,20 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
           token: directToken.trim()
         };
       } else if (bindMode === 'cookie') {
-        if (!userIdInput.trim() || !serviceTokenInput.trim()) {
-          setLoginError('请输入小米 UserID 和 ServiceToken');
+        if (!userIdInput.trim()) {
+          setLoginError('请输入小米 User ID（Cookie 中的 userId）');
+          setIsLoggingIn(false);
+          return;
+        }
+        if (!passTokenInput.trim() && !serviceTokenInput.trim()) {
+          setLoginError('请输入 Pass Token（推荐）或 Service Token');
           setIsLoggingIn(false);
           return;
         }
         bodyData = {
           mode: 'cookie',
           userId: userIdInput.trim(),
+          passToken: passTokenInput.trim(),
           serviceToken: serviceTokenInput.trim()
         };
       }
@@ -2893,7 +2928,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                     : 'text-zinc-400 hover:text-zinc-200 bg-white/5'
                 }`}
               >
-                方式四：ServiceToken 快捷导入
+                方式四：手动 Token / PassToken (支持 www.mi.com Cookie)
               </button>
             </div>
 
@@ -3157,32 +3192,55 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
 
               {bindMode === 'cookie' && (
                 <>
-                  <p className="text-xs text-zinc-400 leading-relaxed">
-                    如果您的小米账号开启了短信二次安全验证，可直接填入浏览器抓取的 <code className="text-zinc-300 font-mono">serviceToken</code> 与 <code className="text-zinc-300 font-mono">userId</code>。
-                  </p>
+                  <div className="p-3.5 rounded-xl bg-purple-500/10 border border-purple-500/20 text-xs text-purple-200/90 space-y-1.5">
+                    <p className="font-semibold text-purple-300 flex items-center gap-1.5">
+                      <Key className="w-4 h-4 text-purple-400" />
+                      从浏览器 Cookie 中获取 userId 和 passToken (SongLoft / MIoT 标准模式)
+                    </p>
+                    <p className="text-zinc-300 text-[11px] leading-relaxed">
+                      支持直接从 <code className="text-white bg-white/10 px-1 py-0.5 rounded">https://www.mi.com/</code> 或 <code className="text-white bg-white/10 px-1 py-0.5 rounded">https://account.xiaomi.com/</code> 登录后的浏览器 Cookie 中获取 <strong className="text-white font-mono">userId</strong> 与 <strong className="text-white font-mono">passToken</strong>。
+                      系统收到后会自动完成 STS 令牌置换，<strong>完全免受云端机房风控与短信 2FA 拦截！</strong>
+                    </p>
+                  </div>
+
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs text-zinc-400 mb-1.5 font-medium">小米 User ID</label>
+                      <label className="block text-xs text-zinc-400 mb-1.5 font-medium">User ID (Cookie 中的 userId)</label>
                       <input
                         type="text"
                         value={userIdInput}
                         onChange={(e) => setUserIdInput(e.target.value)}
                         onPaste={handleCookieInputPaste}
-                        placeholder="例如: 1082938192 或直接粘贴 Cookie"
+                        placeholder="例如: 704875207 或直接粘贴整段 Cookie"
                         className="w-full px-4 py-2.5 bg-zinc-950/80 border border-white/10 rounded-xl text-sm text-zinc-100 focus:outline-none focus:border-[#FF6700] transition font-mono"
                       />
                     </div>
                     <div>
-                      <label className="block text-xs text-zinc-400 mb-1.5 font-medium">Mina serviceToken</label>
+                      <label className="block text-xs text-zinc-400 mb-1.5 font-medium">Pass Token (Cookie 中的 passToken，最推荐)</label>
                       <input
                         type="password"
-                        value={serviceTokenInput}
-                        onChange={(e) => setServiceTokenInput(e.target.value)}
+                        value={passTokenInput}
+                        onChange={(e) => setPassTokenInput(e.target.value)}
                         onPaste={handleCookieInputPaste}
-                        placeholder="从 mina.mi.com Cookie 提取或粘贴 Cookie"
+                        placeholder="Cookie 中的 passToken (例如: V1_xxx...)"
                         className="w-full px-4 py-2.5 bg-zinc-950/80 border border-white/10 rounded-xl text-sm text-zinc-100 focus:outline-none focus:border-[#FF6700] transition font-mono"
                       />
                     </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-zinc-500 mb-1 font-medium flex items-center justify-between">
+                      <span>或者直接输入 Mina serviceToken (可选备用)</span>
+                      <span className="text-[10px] text-zinc-600 font-normal">支持直接粘贴完整 Cookie / .mi.token JSON</span>
+                    </label>
+                    <input
+                      type="password"
+                      value={serviceTokenInput}
+                      onChange={(e) => setServiceTokenInput(e.target.value)}
+                      onPaste={handleCookieInputPaste}
+                      placeholder="若已有 serviceToken 可在此输入，或直接粘贴整段 Cookie 自动解析"
+                      className="w-full px-4 py-2 bg-zinc-950/50 border border-white/5 rounded-xl text-xs text-zinc-300 focus:outline-none focus:border-[#FF6700] transition font-mono"
+                    />
                   </div>
                 </>
               )}
@@ -3696,7 +3754,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                   登录态: <strong className={miotConfig.isLoggedIn ? 'text-emerald-400' : 'text-amber-400'}>{miotConfig.isLoggedIn ? '已授权' : '未登录'}</strong>
                 </span>
                 <span>
-                  Token: <strong className={miotConfig.serviceToken ? 'text-emerald-400' : 'text-rose-400'}>{miotConfig.serviceToken ? '已配置 (已脱敏)' : '未配置'}</strong>
+                  Token: <strong className={miotConfig.hasServiceToken || miotConfig.serviceToken ? 'text-emerald-400' : 'text-rose-400'}>{miotConfig.hasServiceToken || miotConfig.serviceToken ? '已配置 (已脱敏)' : '未配置'}</strong>
                 </span>
               </div>
 
