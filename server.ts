@@ -1462,7 +1462,10 @@ if (
 
 // Auto-connect Mina WebSocket in background if logged in
 minaWsClient.on('error', (err: any) => {
-  console.warn('[Mina WebSocket] Handled socket error:', err?.message || err);
+  const errMsg = err?.message || String(err);
+  if (!errMsg.includes('403') && !errMsg.includes('401')) {
+    console.warn('[Mina WebSocket] Handled socket error:', errMsg);
+  }
 });
 
 if (miotConfig.isLoggedIn && miotConfig.userId && miotConfig.serviceToken) {
@@ -2821,6 +2824,56 @@ app.get('/api/miot/ws/status', (req: Request, res: Response) => {
   res.json({ success: true, status, recentEvents });
 });
 
+// Cloud Device Query Raw Snapshots Inspector
+app.get('/api/miot/cloud/snapshots', (req: Request, res: Response) => {
+  if (!checkMiotAdminPermission(req, res)) return;
+
+  const snapshots = xiaoaiResolverEngine.getCloudSnapshots();
+  res.json({
+    success: true,
+    count: snapshots.length,
+    snapshots,
+    account: {
+      userId: miotConfig.userId,
+      miUser: miotConfig.miUser,
+      isLoggedIn: miotConfig.isLoggedIn,
+      hasServiceToken: Boolean(miotConfig.serviceToken && miotConfig.serviceToken.trim().length > 0)
+    }
+  });
+});
+
+// Clear Cloud Snapshots
+app.post('/api/miot/cloud/snapshots/clear', (req: Request, res: Response) => {
+  if (!checkMiotAdminPermission(req, res)) return;
+
+  xiaoaiResolverEngine.clearCloudSnapshots();
+  res.json({ success: true, message: '已清空云端抓包快照' });
+});
+
+// Export Complete Debug Bundle (JSON file download)
+app.get('/api/miot/cloud/export-debug', (req: Request, res: Response) => {
+  if (!checkMiotAdminPermission(req, res)) return;
+
+  const snapshots = xiaoaiResolverEngine.getCloudSnapshots();
+  const debugBundle = {
+    exportedAt: new Date().toISOString(),
+    account: {
+      userId: miotConfig.userId,
+      miUser: miotConfig.miUser,
+      isLoggedIn: miotConfig.isLoggedIn,
+      hasServiceToken: Boolean(miotConfig.serviceToken && miotConfig.serviceToken.trim().length > 0),
+      activeDeviceId: miotConfig.activeDeviceId
+    },
+    cloudSnapshots: snapshots,
+    devices: xiaomiDevices.map(sanitizeDevice),
+    castLogs: castLogs.slice(0, 30)
+  };
+
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Content-Disposition', `attachment; filename="tinglan-xiaomi-cloud-debug-${Date.now()}.json"`);
+  res.send(JSON.stringify(debugBundle, null, 2));
+});
+
 // Mina WebSocket Manual Reconnect
 app.post('/api/miot/ws/reconnect', (req: Request, res: Response) => {
   if (!checkMiotAdminPermission(req, res)) return;
@@ -3369,7 +3422,7 @@ async function callMinaCloudApi(
         headers: {
           'User-Agent': 'MISoundBox/1.4.0 (iPhone; iOS 14.4; Scale/3.00)',
           'Content-Type': 'application/x-www-form-urlencoded',
-          'Cookie': `userId=${miotConfig.userId}; serviceToken=${miotConfig.serviceToken}`
+          'Cookie': `userId=${miotConfig.userId}; serviceToken=${miotConfig.serviceToken}; deviceId=${deviceId || miotConfig.userId}; PassportDeviceId=${miotConfig.userId}`
         },
         body: postBody.toString()
       });
@@ -3385,7 +3438,14 @@ async function callMinaCloudApi(
       if (response.ok && (resJson.code === 0 || resJson.message === 'ok' || resJson.info === 'ok')) {
         return { success: true, data: resJson };
       } else {
-        const errorDesc = resJson.message || resJson.error || `HTTP ${response.status}: ${responseText}`;
+        if (response.status === 401 || responseText.includes('HTTP Status 401') || responseText.includes('Unauthorized')) {
+          return {
+            success: false,
+            error: '小米服务令牌 (serviceToken) 已过期或无此设备控制权限 (HTTP 401 Unauthorized)。请重新扫码/密码登录小米账号，或使用【局域网 IP / Token 直连】方式推流。',
+            raw: responseText
+          };
+        }
+        const errorDesc = resJson.message || resJson.error || `HTTP ${response.status}: ${responseText.slice(0, 120)}`;
         return { success: false, error: errorDesc, raw: responseText };
       }
     } catch (netErr: any) {
@@ -3881,6 +3941,9 @@ const streamAudioHandler = async (req: Request, res: Response) => {
       return res.end();
     }
 
+    const userAgent = String(req.headers['user-agent'] || '');
+    const isBrowserClient = /Mozilla|Chrome|Safari|Firefox|Edg|AppleWebKit/i.test(userAgent) && !/stagefright|Lavf|gstreamer|xm_player|mico|xiaomi|vlc/i.test(userAgent);
+
     const clientIp = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1').replace('::ffff:', '');
     const isPartial = Boolean(range);
     const nowStr = new Date().toLocaleTimeString();
@@ -3890,7 +3953,7 @@ const streamAudioHandler = async (req: Request, res: Response) => {
     const resolvedDid = matchedDev?.did || '';
     const resolvedModel = matchedDev?.model || 'wifispeaker';
 
-    if (clientIp && clientIp !== '127.0.0.1' && clientIp !== 'localhost') {
+    if (!isBrowserClient && clientIp && clientIp !== '127.0.0.1' && clientIp !== 'localhost') {
       activeStreamIps.add(clientIp);
     }
 
@@ -3899,10 +3962,11 @@ const streamAudioHandler = async (req: Request, res: Response) => {
       id: `log-stream-${Date.now()}`,
       timestamp: nowStr,
       type: 'sync' as const,
-      message: `音箱请求音频流: ${songId}`,
-      detail: `${isPartial ? 'HTTP 206 Partial Content (Range)' : 'HTTP 200 OK (Full Stream)'} | 来自: ${clientIp}`,
+      message: isBrowserClient ? `网页端试听拉取音频流: ${songId}` : `音箱请求音频流: ${songId}`,
+      detail: `${isPartial ? 'HTTP 206 Partial Content (Range)' : 'HTTP 200 OK (Full Stream)'} | 来自: ${clientIp} (${isBrowserClient ? '浏览器客户端' : '音频终端设备'})`,
       success: true,
       ip: clientIp,
+      isBrowser: isBrowserClient,
       did: resolvedDid,
       model: resolvedModel,
       protocol: 'HTTP Stream',
@@ -3923,7 +3987,7 @@ const streamAudioHandler = async (req: Request, res: Response) => {
           step: 'PLAYBACK_CHECK',
           status: 'OK',
           statusCode: 200,
-          message: '音箱已成功接管音频流并播放'
+          message: isBrowserClient ? '网页播放器正在缓冲/播放' : '音箱已成功接管音频流并播放'
         }
       ]
     };

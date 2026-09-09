@@ -160,14 +160,25 @@ export class MinaWebSocketClient extends EventEmitter {
       this.ws.on('error', (err: Error) => {
         const errMsg = err?.message || 'WebSocket error';
         this.lastError = errMsg;
-        console.warn(`[Mina WebSocket] Network or TLS error: ${errMsg}`);
+        
+        const isAuthRejection = errMsg.includes('403') || errMsg.includes('401');
+        if (isAuthRejection) {
+          // Stop aggressive reconnect loops on authentication/permission rejection
+          this.shouldRun = false;
+          console.log(`[Mina WebSocket] 小米 Mina 云端 WebSocket 握手返回 403/401 (Forbidden)。已自动转为标准 REST API 与局域网 MIIO/DLNA 模式（不影响音箱播放与控制）。`);
+        } else {
+          console.warn(`[Mina WebSocket] Network or TLS notice: ${errMsg}`);
+        }
+
         this.recordEvent({
           id: `evt-${Date.now()}`,
           type: 'raw',
           timestamp: new Date().toLocaleTimeString(),
           deviceId: this.deviceId || undefined,
-          data: { error: errMsg },
-          summary: `Mina 云端 WebSocket 网络连接波动: ${errMsg}`
+          data: { error: errMsg, isAuthRejection },
+          summary: isAuthRejection
+            ? 'Mina 云端长连接返回 403 (已降级为 REST API 轮询与局域网直连)'
+            : `Mina 云端 WebSocket 状态: ${errMsg}`
         });
         try {
           this.emit('error', err);
@@ -179,9 +190,10 @@ export class MinaWebSocketClient extends EventEmitter {
         this.connecting = false;
         this.emit('disconnected', { code, reason: reason.toString() });
 
-        if (this.shouldRun) {
+        // Only retry if not stopped by auth rejection (403/401) and retry count is within limit
+        if (this.shouldRun && this.reconnectCount < 5) {
           this.reconnectCount++;
-          const delay = Math.min(30000, 3000 * Math.pow(1.5, Math.min(this.reconnectCount, 6)));
+          const delay = Math.min(60000, 5000 * Math.pow(1.5, this.reconnectCount));
           this.reconnectTimeout = setTimeout(() => {
             if (this.shouldRun) this.initWebSocket();
           }, delay);

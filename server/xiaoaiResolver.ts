@@ -51,6 +51,8 @@ export interface IgnoredDevice {
   model: string;
   reason: string;
   source: DeviceSource;
+  ip?: string;
+  mac?: string;
 }
 
 export interface LanDiscoveredItem {
@@ -196,7 +198,38 @@ const miotSpecCache = new Map<string, any>();
  *                ▼               ▼
  *            XiaoAi设备         忽略
  */
+export interface CloudEndpointSnapshot {
+  id: string;
+  timestamp: string;
+  url: string;
+  service: 'mina' | 'mihome' | 'overseas';
+  status: number;
+  statusText: string;
+  durationMs: number;
+  rawResponse?: any;
+  rawResponseText?: string;
+  deviceCount: number;
+  extractedDevices?: any[];
+  error?: string;
+}
+
 export class XiaoAiResolverEngine {
+  private cloudSnapshots: CloudEndpointSnapshot[] = [];
+
+  public getCloudSnapshots(): CloudEndpointSnapshot[] {
+    return [...this.cloudSnapshots];
+  }
+
+  public clearCloudSnapshots(): void {
+    this.cloudSnapshots = [];
+  }
+
+  private recordSnapshot(snapshot: CloudEndpointSnapshot) {
+    this.cloudSnapshots.unshift(snapshot);
+    if (this.cloudSnapshots.length > 50) {
+      this.cloudSnapshots.pop();
+    }
+  }
   /**
    * 1. LAN Discovery: Send miIO Hello packets via UDP 54321
    * Extracts: did, ip, online status
@@ -303,6 +336,7 @@ export class XiaoAiResolverEngine {
     ];
 
     const queryMinaEndpoint = async (ep: string) => {
+      const startT = Date.now();
       try {
         const headers: Record<string, string> = {
           'User-Agent': 'MISoundBox/1.4.0 (iPhone; iOS 14.4; Scale/3.00)',
@@ -310,18 +344,17 @@ export class XiaoAiResolverEngine {
           'Accept': 'application/json, text/plain, */*'
         };
 
-        const res = await fetch(ep, { headers, signal: AbortSignal.timeout(3500) });
-        if (!res.ok) return;
-
+        const res = await fetch(ep, { headers, signal: AbortSignal.timeout(4000) });
         const text = await res.text();
-        let minaData: any;
+        const durationMs = Date.now() - startT;
+
+        let minaData: any = null;
         try {
           minaData = JSON.parse(text);
-        } catch {
-          return;
-        }
+        } catch {}
 
-        const list = extractDevicesFromMinaResponse(minaData);
+        const list = extractDevicesFromMinaResponse(minaData || text);
+        const extracted: any[] = [];
 
         if (Array.isArray(list) && list.length > 0) {
           for (const item of list) {
@@ -335,7 +368,7 @@ export class XiaoAiResolverEngine {
               item.mac || 
               ''
             );
-            if (!did || cloudMap.has(did)) continue;
+            if (!did) continue;
 
             const rawName = item.alias || item.name || item.device_name || item.nick_name || item.title || (item.hardware ? `小米智能音箱 (${item.hardware})` : '小米智能音箱');
             const cleanName = String(rawName).replace(/\s*[\(（]点击(右侧)?编辑[\)）]/g, '').trim() || '小米智能音箱';
@@ -351,7 +384,7 @@ export class XiaoAiResolverEngine {
               item.localip ||
               undefined;
 
-            cloudMap.set(did, {
+            const cloudItem: CloudDiscoveredItem = {
               did,
               model,
               name: cleanName,
@@ -361,11 +394,40 @@ export class XiaoAiResolverEngine {
               hardware,
               online: item.presence === 'online' || item.online === true || item.status === 1 || item.isOnline === true || (item.online !== false && item.presence !== 'offline'),
               raw: item
-            });
+            };
+
+            extracted.push(cloudItem);
+            if (!cloudMap.has(did)) {
+              cloudMap.set(did, cloudItem);
+            }
           }
         }
-      } catch {
-        // Individual endpoint error or timeout is safely ignored
+
+        this.recordSnapshot({
+          id: `snap-mina-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          timestamp: new Date().toLocaleTimeString(),
+          url: ep,
+          service: 'mina',
+          status: res.status,
+          statusText: res.statusText || (res.ok ? 'OK' : 'Error'),
+          durationMs,
+          rawResponse: minaData || text.slice(0, 500),
+          rawResponseText: text.slice(0, 2000),
+          deviceCount: extracted.length,
+          extractedDevices: extracted
+        });
+      } catch (err: any) {
+        this.recordSnapshot({
+          id: `snap-mina-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          timestamp: new Date().toLocaleTimeString(),
+          url: ep,
+          service: 'mina',
+          status: 0,
+          statusText: 'Network / Timeout Error',
+          durationMs: Date.now() - startT,
+          error: err.message,
+          deviceCount: 0
+        });
       }
     };
 
@@ -378,6 +440,7 @@ export class XiaoAiResolverEngine {
     ];
 
     const queryMiHomeEndpoint = async (epItem: { url: string; payload: any }) => {
+      const startT = Date.now();
       try {
         const bodyStr = `data=${encodeURIComponent(JSON.stringify(epItem.payload))}`;
         const headers: Record<string, string> = {
@@ -391,19 +454,18 @@ export class XiaoAiResolverEngine {
           method: 'POST',
           headers,
           body: bodyStr,
-          signal: AbortSignal.timeout(3500)
+          signal: AbortSignal.timeout(4000)
         });
-        if (!res.ok) return;
-
         const text = await res.text();
-        let miHomeData: any;
+        const durationMs = Date.now() - startT;
+
+        let miHomeData: any = null;
         try {
           miHomeData = JSON.parse(text);
-        } catch {
-          return;
-        }
+        } catch {}
 
-        const list = extractDevicesFromMinaResponse(miHomeData);
+        const list = extractDevicesFromMinaResponse(miHomeData || text);
+        const extracted: any[] = [];
 
         if (Array.isArray(list) && list.length > 0) {
           for (const item of list) {
@@ -416,7 +478,7 @@ export class XiaoAiResolverEngine {
               item.mac || 
               ''
             );
-            if (!did || cloudMap.has(did)) continue;
+            if (!did) continue;
 
             const rawName = item.name || item.alias || item.device_name || item.nick_name || item.title || '小米智能音箱';
             const cleanName = String(rawName).replace(/\s*[\(（]点击(右侧)?编辑[\)）]/g, '').trim() || '小米智能音箱';
@@ -425,7 +487,7 @@ export class XiaoAiResolverEngine {
 
             const ip = item.localip || item.ip || item.device_ip || item.currentIp || undefined;
 
-            cloudMap.set(did, {
+            const cloudItem: CloudDiscoveredItem = {
               did,
               model,
               name: cleanName,
@@ -435,11 +497,40 @@ export class XiaoAiResolverEngine {
               hardware,
               online: item.isOnline === true || item.online === true || item.presence === 'online',
               raw: item
-            });
+            };
+
+            extracted.push(cloudItem);
+            if (!cloudMap.has(did)) {
+              cloudMap.set(did, cloudItem);
+            }
           }
         }
-      } catch {
-        // Ignored
+
+        this.recordSnapshot({
+          id: `snap-mihome-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          timestamp: new Date().toLocaleTimeString(),
+          url: epItem.url,
+          service: 'mihome',
+          status: res.status,
+          statusText: res.statusText || (res.ok ? 'OK' : 'Error'),
+          durationMs,
+          rawResponse: miHomeData || text.slice(0, 500),
+          rawResponseText: text.slice(0, 2000),
+          deviceCount: extracted.length,
+          extractedDevices: extracted
+        });
+      } catch (err: any) {
+        this.recordSnapshot({
+          id: `snap-mihome-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+          timestamp: new Date().toLocaleTimeString(),
+          url: epItem.url,
+          service: 'mihome',
+          status: 0,
+          statusText: 'Network / Timeout Error',
+          durationMs: Date.now() - startT,
+          error: err.message,
+          deviceCount: 0
+        });
       }
     };
 
@@ -460,6 +551,7 @@ export class XiaoAiResolverEngine {
       ];
 
       for (const region of overseasRegions) {
+        const startT = Date.now();
         try {
           const bodyStr = `data=${encodeURIComponent(JSON.stringify({ getVirtualModel: false, getHuamiDevices: 0 }))}`;
           const res = await fetch(region.url, {
@@ -472,25 +564,25 @@ export class XiaoAiResolverEngine {
             body: bodyStr,
             signal: AbortSignal.timeout(2500)
           });
-          if (!res.ok) continue;
           const text = await res.text();
-          let data: any;
+          const durationMs = Date.now() - startT;
+          let data: any = null;
           try {
             data = JSON.parse(text);
-          } catch {
-            continue;
-          }
-          const list = extractDevicesFromMinaResponse(data);
+          } catch {}
+
+          const list = extractDevicesFromMinaResponse(data || text);
+          const extracted: any[] = [];
           if (Array.isArray(list) && list.length > 0) {
             console.log(`[XiaoAi Resolver] Auto-detected ${list.length} devices in overseas region: ${region.name} (${region.code})`);
             for (const item of list) {
               const did = String(item.did || item.miotDID || item.deviceID || item.id || item.mac || '');
-              if (!did || cloudMap.has(did)) continue;
+              if (!did) continue;
               const rawName = item.name || item.alias || item.device_name || '小米音箱';
               const cleanName = String(rawName).replace(/\s*[\(（]点击(右侧)?编辑[\)）]/g, '').trim();
               const hardware = item.hardware || item.model || 'XiaoAi';
               const model = item.model || (item.hardware ? `xiaomi.wifispeaker.${item.hardware.toLowerCase()}` : 'xiaomi.wifispeaker');
-              cloudMap.set(did, {
+              const cloudItem: CloudDiscoveredItem = {
                 did,
                 model,
                 name: `${cleanName} [${region.code.toUpperCase()}]`,
@@ -500,11 +592,44 @@ export class XiaoAiResolverEngine {
                 hardware,
                 online: item.isOnline === true || item.presence === 'online',
                 raw: item
-              });
+              };
+              extracted.push(cloudItem);
+              if (!cloudMap.has(did)) {
+                cloudMap.set(did, cloudItem);
+              }
             }
+          }
+
+          this.recordSnapshot({
+            id: `snap-overseas-${region.code}-${Date.now()}`,
+            timestamp: new Date().toLocaleTimeString(),
+            url: region.url,
+            service: 'overseas',
+            status: res.status,
+            statusText: `${res.statusText || 'OK'} (${region.name})`,
+            durationMs,
+            rawResponse: data || text.slice(0, 500),
+            rawResponseText: text.slice(0, 2000),
+            deviceCount: extracted.length,
+            extractedDevices: extracted
+          });
+
+          if (extracted.length > 0) {
             break; // Matched region successfully
           }
-        } catch {}
+        } catch (err: any) {
+          this.recordSnapshot({
+            id: `snap-overseas-${region.code}-${Date.now()}`,
+            timestamp: new Date().toLocaleTimeString(),
+            url: region.url,
+            service: 'overseas',
+            status: 0,
+            statusText: `Timeout (${region.name})`,
+            durationMs: Date.now() - startT,
+            error: err.message,
+            deviceCount: 0
+          });
+        }
       }
     }
 
@@ -889,7 +1014,9 @@ export class XiaoAiResolverEngine {
           name: item.name,
           model: item.model,
           reason: evaluation.reason,
-          source: item.source
+          source: item.source,
+          ip: item.ip,
+          mac: item.mac
         });
       }
     }
