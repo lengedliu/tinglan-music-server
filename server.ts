@@ -3783,13 +3783,23 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
         }
       }
 
-      // Send standard Mina UBUS player_play_url command
+      // Send standard Mina UBUS player_play_url command (type 0 for custom direct HTTP/HTTPS raw stream URL)
       cloudResult = await callMinaCloudApi(
         'mediaplayer',
         'player_play_url',
-        { url: resolvedStreamUrl, type: 1, media: 'app_ios' },
+        { url: resolvedStreamUrl, type: 0, media: 'app_ios' },
         targetDevice.did
       );
+
+      // Fallback: If type 0 didn't succeed, retry with type 1 for music cloud compatibility
+      if (!cloudResult?.success) {
+        cloudResult = await callMinaCloudApi(
+          'mediaplayer',
+          'player_play_url',
+          { url: resolvedStreamUrl, type: 1, media: 'app_ios' },
+          targetDevice.did
+        );
+      }
 
       // Track 3: MIoT Cloud Action RPC Fallback if Mina UBUS failed
       if (!cloudResult?.success && (miotConfig as any).ssecurity && miotConfig.userId) {
@@ -4144,9 +4154,36 @@ app.post('/api/miot/tts', async (req: Request, res: Response) => {
   }
 
   // 2. Send via Mina Cloud if logged in
-  if (miotConfig.isLoggedIn && miotConfig.serviceToken && miotConfig.userId) {
+  const activeMicoToken = (miotConfig as any).micoServiceToken || miotConfig.serviceToken;
+  const activeIoToken = (miotConfig as any).xiaomiioServiceToken || activeMicoToken;
+  const cloudAuth = (miotConfig.userId && activeIoToken) ? {
+    userId: String(miotConfig.userId),
+    serviceToken: activeIoToken,
+    ssecurity: (miotConfig as any).ssecurity
+  } : undefined;
+
+  if (miotConfig.isLoggedIn && activeMicoToken && miotConfig.userId) {
     try {
       cloudResult = await callMinaCloudApi('mibrain', 'text_to_speech', { text }, targetDevice.did);
+      
+      // Track 3: MIoT Cloud Action RPC Fallback (Service 5 Action 1: playText) if Mina UBUS returned 401 or failed
+      if (!cloudResult?.success && cloudAuth) {
+        try {
+          // Attempt Service 5 (Intelligent Speaker) Action 1 (playText)
+          let rpcRes = await miotRpcEngine.executeAction(targetDevice, 5, 1, [text], cloudAuth);
+          if (rpcRes.code === 0) {
+            cloudResult = { success: true, data: rpcRes.result, method: 'miot_cloud_rpc_5_1' };
+          } else {
+            // Fallback to Service 7 (TTS) Action 1
+            rpcRes = await miotRpcEngine.executeAction(targetDevice, 7, 1, [text], cloudAuth);
+            if (rpcRes.code === 0) {
+              cloudResult = { success: true, data: rpcRes.result, method: 'miot_cloud_rpc_7_1' };
+            }
+          }
+        } catch (rpcErr: any) {
+          console.warn('[TTS] MIoT Action Cloud fallback failed:', rpcErr.message);
+        }
+      }
     } catch (e: any) {
       cloudResult = { success: false, error: e.message };
     }

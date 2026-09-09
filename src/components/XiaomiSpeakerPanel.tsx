@@ -960,7 +960,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
               <span className="p-1.5 sm:p-2 rounded-xl bg-[#FF6700]/20 text-[#FF6700] border border-[#FF6700]/30 shadow-[0_0_10px_rgba(255,103,0,0.3)] shrink-0">
                 <Radio className="w-4 h-4 sm:w-5 sm:h-5" />
               </span>
-              <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight shrink-0 mr-1">
+              <h1 className="text-[1.4rem] font-bold text-white tracking-tight shrink-0 mr-1 leading-tight">
                 播放协议控制中枢 (Cast Protocols Hub)
               </h1>
 
