@@ -2741,7 +2741,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                 }`}
               >
                 <QrCode className="w-3.5 h-3.5" />
-                <span>方式二：米家 App 扫码一键登录</span>
+                <span>方式二：手机扫码一键登录 (免密安全)</span>
               </button>
               <button
                 type="button"
@@ -2775,15 +2775,18 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                     小米安全扫码授权登录
                   </h4>
 
-                  <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-200/90 text-left space-y-1.5">
-                    <p className="font-semibold flex items-center gap-1.5 text-amber-300 text-xs">
-                      <Info className="w-4 h-4 flex-shrink-0" />
-                      扫码登录指引（⚠️ 微信扫码若弹出 JSON 窗口）：
+                  <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-[11px] text-emerald-200/90 text-left space-y-1.5">
+                    <p className="font-semibold flex items-center gap-1.5 text-emerald-300 text-xs">
+                      <Check className="w-4 h-4 flex-shrink-0 text-emerald-400" />
+                      支持「米家 App」直接扫码授权
                     </p>
-                    <ul className="list-disc list-inside space-y-1 text-amber-200/80 pl-1 leading-relaxed">
-                      <li><strong>方案 A（推荐）</strong>：使用手机自带【系统相机】或【手机浏览器】直接扫描下方二维码，点击弹出的链接即可直接进入登录授权页。</li>
-                      <li><strong>方案 B（微信用户）</strong>：若微信扫码弹出了文本/JSON 窗口，可点击下方【复制授权登录链接】，发送到手机浏览器中粘贴打开并授权。</li>
-                      <li><strong>方案 C（小米/Redmi 手机）</strong>：进入系统【设置】➔ 顶部【小米账号】➔ 右上角【扫一扫】。</li>
+                    <p className="text-zinc-300 text-[11px] leading-relaxed">
+                      已切换为官方<strong>米家 (MIoT) 原生授权二维码</strong>，你可以通过以下方式扫码：
+                    </p>
+                    <ul className="list-disc list-inside space-y-1 text-emerald-200/80 pl-1 leading-relaxed">
+                      <li><strong>方式 1（推荐）</strong>：打开<strong>【米家 App】➔ 右上角「+」或「扫一扫」</strong>，扫描二维码并在手机上点击<strong>确认授权</strong>。</li>
+                      <li><strong>方式 2</strong>：使用手机自带<strong>【系统相机】</strong>或<strong>【微信扫一扫】</strong>对准二维码打开授权页。</li>
+                      <li><strong>方式 3（小米/Redmi 手机）</strong>：进入手机<strong>【设置】➔ 顶部【小米账号】➔ 右上角【扫一扫】</strong>。</li>
                     </ul>
                   </div>
 
@@ -2810,7 +2813,9 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                   <div className="space-y-2.5">
                     <div className="flex items-center justify-center gap-2 text-xs">
                       {isPollingQr && <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />}
-                      <span className="text-zinc-300 font-medium">{qrStatusText}</span>
+                      <span className="text-zinc-300 font-medium">
+                        {qrStatusText || '请使用米家 App 扫码'}
+                      </span>
                     </div>
 
                     <div className="flex items-center justify-center gap-2 flex-wrap">
@@ -2818,17 +2823,18 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                         type="button"
                         onClick={handleGenerateQrCode}
                         disabled={isGeneratingQr}
-                        className="px-3.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-zinc-200 border border-white/10 transition active:scale-95 disabled:opacity-50 flex items-center justify-center gap-1.5"
+                        className="px-3.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-zinc-200 border border-white/10 transition active:scale-95 disabled:opacity-50 flex items-center justify-center gap-1.5 cursor-pointer"
                       >
                         <RefreshCw className={`w-3.5 h-3.5 ${isGeneratingQr ? 'animate-spin text-[#FF6700]' : ''}`} />
                         <span>刷新二维码</span>
                       </button>
 
-                      {qrCodeData?.loginUrl && (
+                      {(qrCodeData?.qr || qrCodeData?.loginUrl) && (
                         <button
                           type="button"
-                          onClick={() => copyToClipboard(qrCodeData.loginUrl!, 'qr_link')}
-                          className="px-3.5 py-1.5 rounded-xl bg-[#FF6700]/20 hover:bg-[#FF6700]/30 text-xs font-semibold text-[#FF6700] border border-[#FF6700]/30 transition active:scale-95 flex items-center justify-center gap-1.5"
+                          onClick={() => copyToClipboard(qrCodeData.qr || qrCodeData.loginUrl!, 'qr_link')}
+                          className="px-3.5 py-1.5 rounded-xl bg-[#FF6700]/20 hover:bg-[#FF6700]/30 text-xs font-semibold text-[#FF6700] border border-[#FF6700]/30 transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+                          title="复制手机端授权登录网页链接"
                         >
                           {copiedKey === 'qr_link' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                           <span>{copiedKey === 'qr_link' ? '已复制登录链接' : '复制授权登录链接'}</span>

@@ -2699,7 +2699,8 @@ app.post('/api/miot/logout', (req: Request, res: Response) => {
 app.get('/api/miot/passport/qrcode/get', async (req: Request, res: Response) => {
   if (!checkMiotAdminPermission(req, res)) return;
 
-  const qrRes = await xiaomiPassport.generateLoginQrCode('xiaomiio');
+  const sid = (req.query.sid as string) || 'mijia';
+  const qrRes = await xiaomiPassport.generateLoginQrCode(sid);
   if (qrRes.success) {
     return res.json(qrRes);
   }
