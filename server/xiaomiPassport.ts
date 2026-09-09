@@ -424,34 +424,17 @@ export class XiaomiPassport {
       const cleanUid = String(userId || '').replace(/^uid_/, '').replace(/^["']|["']$/g, '').trim();
       const cleanPassToken = String(passToken || '').replace(/^["']|["']$/g, '').trim();
 
-      const params = await this.getServiceLoginParams(targetSid);
-      const url = `https://account.xiaomi.com/pass/serviceLoginAuth2`;
-      const body = new URLSearchParams({
-        sid: targetSid,
-        callback: params.callback,
-        qs: params.qs,
-        _sign: params._sign,
-        _json: 'true',
-        user: cleanUid,
-        userId: cleanUid,
-        passToken: cleanPassToken
-      });
-      if (cUserId) {
-        body.append('cUserId', cUserId);
-      }
+      // 1. Use standard Xiaomi passToken authorization via serviceLogin (GET)
+      // This correctly negotiates STS tokens without requiring password authentication or throwing code 70016
+      const loginUrl = `https://account.xiaomi.com/pass/serviceLogin?sid=${encodeURIComponent(targetSid)}&_json=true`;
+      const cookieHeader = `userId=${cleanUid}; passToken=${cleanPassToken}; uLocale=zh_CN; sdkVersion=3.9`;
 
-      const cookieHeader = params.cookies
-        ? `${params.cookies}; userId=${cleanUid}; passToken=${cleanPassToken}; uLocale=zh_CN`
-        : `userId=${cleanUid}; passToken=${cleanPassToken}; uLocale=zh_CN`;
-
-      const res = await fetch(url, {
-        method: 'POST',
+      const res = await fetch(loginUrl, {
+        method: 'GET',
         headers: {
-          'User-Agent': this.userAgent,
-          'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': 'APP/com.xiaomi.mihome APPV/11.3.203 iosPassportSDK/4.2.50 iOS/26.3.1 MK/aVBob25lMTcsMg== DEVT/aVBob25l DEVS/aU9T BRA/QXBwbGU= L/zh_CN',
           'Cookie': cookieHeader
-        },
-        body: body.toString()
+        }
       });
 
       const raw = await res.text();
@@ -464,17 +447,18 @@ export class XiaomiPassport {
         return { error: `无法解析小米认证响应: ${raw.slice(0, 100)}` };
       }
 
-      console.log(`[STS ${targetSid}] result code:`, json.code, json.desc || json.message || 'OK');
-
+      console.log(`[STS ${targetSid}] serviceLogin result:`, json.code, json.desc || json.message || 'OK');
       const returnedUserId = json.userId ? String(json.userId) : (json.cUserId || cleanUid);
 
       if (json.code === 0 && json.location) {
         const sts = await this.exchangeStsToken(json.location, cookieHeader, json.ssecurity);
-        return {
-          serviceToken: sts.serviceToken || json.serviceToken,
-          ssecurity: json.ssecurity,
-          userId: returnedUserId
-        };
+        if (sts.serviceToken) {
+          return {
+            serviceToken: sts.serviceToken,
+            ssecurity: json.ssecurity || (sts as any).ssecurity,
+            userId: returnedUserId
+          };
+        }
       }
 
       if (json.code === 0 && json.serviceToken) {
@@ -485,15 +469,8 @@ export class XiaomiPassport {
         };
       }
 
-      if (json.code === 70016) {
-        return {
-          error: '小米云端凭证校验失效 (错误码: 70016)。推荐使用【扫码登录】或【局域网 Token 直连】模式',
-          userId: returnedUserId
-        };
-      }
-
       return {
-        error: json.desc || json.message || `认证错误 (code: ${json.code})`,
+        error: json.desc || json.message || `认证流程未完成 (code: ${json.code})`,
         userId: returnedUserId
       };
     } catch (err: any) {
@@ -505,9 +482,16 @@ export class XiaomiPassport {
   /**
    * QR Code Login - Step 1: Generate Login QR Code
    */
-  public async generateLoginQrCode(sid = 'mijia'): Promise<QrCodeResult & { qrCodeUrl?: string; qrDataUrl?: string; qr?: string }> {
+  public async generateLoginQrCode(
+    sid = 'xiaomiio',
+    region = 'cn'
+  ): Promise<QrCodeResult & { qrCodeUrl?: string; qrDataUrl?: string; qr?: string }> {
     try {
-      const url = `https://account.xiaomi.com/longPolling/loginUrl?sid=${encodeURIComponent(sid)}&_json=true&_qrsize=280&_hasLogo=false`;
+      // For China Mainland, use cn.account.xiaomi.com to ensure dc=ak (China mainland datacenter),
+      // which is required for Mi Home (米家 App) and domestic Xiaomi account authorization.
+      const host = region === 'cn' ? 'cn.account.xiaomi.com' : 'account.xiaomi.com';
+      const cleanSid = sid === 'mijia' ? 'xiaomiio' : (sid || 'xiaomiio');
+      const url = `https://${host}/longPolling/loginUrl?sid=${encodeURIComponent(cleanSid)}&dc=ak&_json=true&_qrsize=280&_hasLogo=false`;
       const res = await fetch(url, {
         headers: {
           'User-Agent': this.webUserAgent,

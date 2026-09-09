@@ -269,33 +269,56 @@ export class MiotRpcEngine {
   }
 
   /**
-   * Execute Cloud MIoT API Call
+   * Execute Cloud MIoT API Call (with official HMAC-SHA256 ssecurity signature)
    */
   public async executeCloudMiot(
     endpointPath: string,
     params: any,
     userId: string,
-    serviceToken: string
+    serviceToken: string,
+    ssecurity?: string
   ): Promise<MiotRpcResult> {
     if (!userId || !serviceToken) {
       return { code: -1, error: '未提供小米云端 userId 或 serviceToken', exeMode: 'cloud_miot' };
     }
 
-    const url = `https://api.io.mi.com/app/${endpointPath.replace(/^\//, '')}`;
-    const dataStr = typeof params === 'string' ? params : JSON.stringify({ params });
-    const postBody = new URLSearchParams({
-      data: dataStr
-    });
+    const cleanEndpoint = endpointPath.replace(/^\//, '');
+    const url = `https://api.io.mi.com/app/${cleanEndpoint}`;
+    const uri = `/${cleanEndpoint}`;
+
+    // Normalize data object
+    const dataObj = (params && typeof params === 'object' && ('params' in params || 'list' in params))
+      ? params
+      : (typeof params === 'object' ? { params } : params);
+
+    const headers: Record<string, string> = {
+      'User-Agent': 'iOS-14.4-6.0.103-iPhone12,3--D7744744F7AF32F0544445285880DD63E47D9BE9-8816080-84A3F44E137B71AE-iPhone',
+      'x-xiaomi-protocal-flag-cli': 'PROTOCAL-HTTP2',
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Cookie': `userId=${userId}; serviceToken=${serviceToken}; PassportDeviceId=${userId}`
+    };
+
+    let postBodyStr = '';
+    if (ssecurity) {
+      const dataStr = typeof dataObj === 'string' ? dataObj : JSON.stringify(dataObj);
+      const rand8 = crypto.randomBytes(8);
+      const timeBuf = Buffer.alloc(4);
+      timeBuf.writeUInt32BE(Math.floor(Date.now() / 1000 / 60), 0);
+      const nonce = Buffer.concat([rand8, timeBuf]).toString('base64');
+      const hashNonce = crypto.createHash('sha256').update(Buffer.from(ssecurity, 'base64')).update(Buffer.from(nonce, 'base64')).digest('base64');
+      const msg = `${uri}&${hashNonce}&${nonce}&data=${dataStr}`;
+      const sign = crypto.createHmac('sha256', Buffer.from(hashNonce, 'base64')).update(msg).digest('base64');
+      postBodyStr = new URLSearchParams({ _nonce: nonce, data: dataStr, signature: sign }).toString();
+    } else {
+      const dataStr = typeof dataObj === 'string' ? dataObj : JSON.stringify(dataObj);
+      postBodyStr = new URLSearchParams({ data: dataStr }).toString();
+    }
 
     try {
       const res = await fetch(url, {
         method: 'POST',
-        headers: {
-          'User-Agent': 'MiHome/6.0.0 (com.xiaomi.mihome; build:20210219; iOS 14.4.0)',
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Cookie': `userId=${userId}; serviceToken=${serviceToken}; yetAnotherServiceToken=${serviceToken}`
-        },
-        body: postBody.toString()
+        headers,
+        body: postBodyStr
       });
 
       const resText = await res.text();
@@ -332,7 +355,7 @@ export class MiotRpcEngine {
     device: { ip?: string; token?: string; did: string },
     siid: number,
     piid: number,
-    cloudAuth?: { userId: string; serviceToken: string }
+    cloudAuth?: { userId: string; serviceToken: string; ssecurity?: string }
   ): Promise<MiotRpcResult> {
     // 1. Prefer Local miIO get_properties
     if (device.ip && device.token) {
@@ -343,7 +366,7 @@ export class MiotRpcEngine {
 
     // 2. Fallback to Cloud MIoT
     if (cloudAuth?.userId && cloudAuth?.serviceToken) {
-      return this.executeCloudMiot('miotspec/prop/get', { params: [{ did: device.did, siid, piid }] }, cloudAuth.userId, cloudAuth.serviceToken);
+      return this.executeCloudMiot('miotspec/prop/get', { params: [{ did: device.did, siid, piid }] }, cloudAuth.userId, cloudAuth.serviceToken, cloudAuth.ssecurity);
     }
 
     return { code: -1, error: '设备未配置局域网 Token 且未登录云端账号' };
@@ -357,7 +380,7 @@ export class MiotRpcEngine {
     siid: number,
     piid: number,
     value: any,
-    cloudAuth?: { userId: string; serviceToken: string }
+    cloudAuth?: { userId: string; serviceToken: string; ssecurity?: string }
   ): Promise<MiotRpcResult> {
     // 1. Prefer Local miIO set_properties
     if (device.ip && device.token) {
@@ -368,7 +391,7 @@ export class MiotRpcEngine {
 
     // 2. Fallback to Cloud MIoT
     if (cloudAuth?.userId && cloudAuth?.serviceToken) {
-      return this.executeCloudMiot('miotspec/prop/set', { params: [{ did: device.did, siid, piid, value }] }, cloudAuth.userId, cloudAuth.serviceToken);
+      return this.executeCloudMiot('miotspec/prop/set', { params: [{ did: device.did, siid, piid, value }] }, cloudAuth.userId, cloudAuth.serviceToken, cloudAuth.ssecurity);
     }
 
     return { code: -1, error: '设备未配置局域网 Token 且未登录云端账号' };
@@ -382,7 +405,7 @@ export class MiotRpcEngine {
     siid: number,
     aiid: number,
     inParams: any[] = [],
-    cloudAuth?: { userId: string; serviceToken: string }
+    cloudAuth?: { userId: string; serviceToken: string; ssecurity?: string }
   ): Promise<MiotRpcResult> {
     // 1. Prefer Local miIO action
     if (device.ip && device.token) {
@@ -393,7 +416,7 @@ export class MiotRpcEngine {
 
     // 2. Fallback to Cloud MIoT
     if (cloudAuth?.userId && cloudAuth?.serviceToken) {
-      return this.executeCloudMiot('miotspec/action', { params: { did: device.did, siid, aiid, in: inParams } }, cloudAuth.userId, cloudAuth.serviceToken);
+      return this.executeCloudMiot('miotspec/action', { params: { did: device.did, siid, aiid, in: inParams } }, cloudAuth.userId, cloudAuth.serviceToken, cloudAuth.ssecurity);
     }
 
     return { code: -1, error: '设备未配置局域网 Token 且未登录云端账号' };

@@ -52,7 +52,8 @@ import {
   Download,
   Bug,
   Database,
-  Key
+  Key,
+  AlertTriangle
 } from 'lucide-react';
 import { XiaomiDevice, MiotConfig, CastLog, Song, DeviceCommandState } from '../types';
 import { apiFetch, getAuthToken } from '../utils/api';
@@ -242,14 +243,28 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
     };
   }, []);
 
-  // Fetch QR Code for Login
-  const handleGenerateQrCode = async () => {
+  // QR Code Channel selection: 'xiaomiio' (米家 App 授权 - 推荐) vs 'micoapi' (小爱音箱 App 授权)
+  const [qrChannel, setQrChannel] = useState<'xiaomiio' | 'micoapi'>('xiaomiio');
+
+  // Fetch QR Code for Login with Channel Support (sid=xiaomiio & dc=ak vs micoapi)
+  const handleGenerateQrCode = async (channel?: 'xiaomiio' | 'micoapi') => {
+    const targetChannel = channel || qrChannel;
+    if (channel && channel !== qrChannel) {
+      setQrChannel(channel);
+    }
+    if (qrPollingTimerRef.current) {
+      clearInterval(qrPollingTimerRef.current);
+    }
     setIsGeneratingQr(true);
     setLoginError(null);
     setQrSyncSuccess(null);
-    setQrStatusText('正在向小米认证中心申请安全登录二维码...');
+    setQrStatusText(
+      targetChannel === 'xiaomiio'
+        ? '正在向国内认证中心 (cn.account.xiaomi.com) 申请米家原生登录二维码...'
+        : '正在向小米认证中心申请小爱音箱服务授权二维码...'
+    );
     try {
-      const res = await apiFetch('/api/miot/passport/qrcode/get');
+      const res = await apiFetch(`/api/miot/passport/qrcode/get?sid=${encodeURIComponent(targetChannel)}&region=cn`);
       const data = await res.json();
       if (data.success && (data.qr || data.loginUrl || data.qrUrl)) {
         let finalQrImage = data.qrUrl || data.qrCodeUrl || data.qrDataUrl || '';
@@ -268,8 +283,12 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
           loginUrl: data.loginUrl,
           lpUrl: data.lpUrl
         });
-        setQrStatusText('请使用【米家 App / 手机相机 / 小米账号扫一扫】扫描');
-        startQrCodePolling(data.loginUrl, data.lpUrl);
+        setQrStatusText(
+          targetChannel === 'xiaomiio'
+            ? '请使用【米家 App】扫码，或点击下方【在浏览器打开授权】'
+            : '请使用【小爱音箱 App】扫码，或点击下方【在浏览器打开授权】'
+        );
+        startQrCodePolling(data.loginUrl, data.lpUrl, targetChannel);
       } else {
         setLoginError(data.error || '获取登录二维码失败');
         setQrStatusText(data.error || '获取二维码失败，请点击重试');
@@ -283,7 +302,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
   };
 
   // Poll QR Code Login Status
-  const startQrCodePolling = (loginUrl: string, lpUrl?: string) => {
+  const startQrCodePolling = (loginUrl: string, lpUrl?: string, channel?: string) => {
     if (qrPollingTimerRef.current) {
       clearInterval(qrPollingTimerRef.current);
     }
@@ -294,12 +313,12 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
         const res = await apiFetch('/api/miot/passport/qrcode/check', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ loginUrl, lpUrl })
+          body: JSON.stringify({ loginUrl, lpUrl, sid: channel || qrChannel })
         });
         const data = await res.json();
 
         if (data.status === 'scanned') {
-          setQrStatusText('📱 手机已扫码！请在手机端点击【确认登录】');
+          setQrStatusText('📱 手机已扫码！请在手机端点击【确认授权登录】');
         } else if (data.status === 'confirmed' && data.success) {
           clearInterval(qrPollingTimerRef.current);
           setIsPollingQr(false);
@@ -308,7 +327,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
           
           setQrSyncSuccess({ user: userStr, count: deviceCount });
           setQrStatusText(`✅ 登录与同步完成！共发现 ${deviceCount} 台小爱音箱设备`);
-          setLoginSuccessMsg(`小米账号绑定成功 (${userStr})，已同步 ${deviceCount} 台音箱设备`);
+          setLoginSuccessMsg(`小米账号授权绑定成功 (${userStr})，已全自动换取双 STS 凭证，同步 ${deviceCount} 台音箱设备`);
           
           onUpdateConfig({
             isLoggedIn: true,
@@ -2908,7 +2927,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => { setBindMode('qrcode'); setLoginError(null); if (!qrCodeData) handleGenerateQrCode(); }}
+                onClick={() => { setBindMode('qrcode'); setLoginError(null); if (!qrCodeData) handleGenerateQrCode(qrChannel); }}
                 className={`px-3 py-1.5 rounded-xl transition flex items-center gap-1.5 ${
                   bindMode === 'qrcode'
                     ? 'bg-[#FF6700] text-white font-semibold'
@@ -2944,11 +2963,55 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
 
             {bindMode === 'qrcode' && (
               <div className="p-6 rounded-2xl bg-zinc-950/80 border border-white/5 space-y-4 text-center">
-                <div className="max-w-md mx-auto space-y-3">
-                  <h4 className="text-sm font-bold text-white flex items-center justify-center gap-2">
-                    <QrCode className="w-4 h-4 text-[#FF6700]" />
-                    小米安全扫码授权登录
-                  </h4>
+                <div className="max-w-md mx-auto space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                      <QrCode className="w-4 h-4 text-[#FF6700]" />
+                      小米安全扫码与免扫码直达授权
+                    </h4>
+                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium">
+                      双 STS 全自动换取
+                    </span>
+                  </div>
+
+                  {/* 通道切换：米家 App 授权 (推荐) vs 小爱音箱 App 授权 */}
+                  <div className="grid grid-cols-2 p-1 rounded-xl bg-zinc-900/90 border border-white/10 gap-1 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (qrChannel !== 'xiaomiio') {
+                          handleGenerateQrCode('xiaomiio');
+                        }
+                      }}
+                      className={`py-2 px-3 rounded-lg font-semibold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                        qrChannel === 'xiaomiio'
+                          ? 'bg-[#FF6700] text-white shadow-sm'
+                          : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
+                      }`}
+                    >
+                      <Smartphone className="w-3.5 h-3.5 flex-shrink-0" />
+                      <span className="truncate">米家 App 授权</span>
+                      <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-normal ${
+                        qrChannel === 'xiaomiio' ? 'bg-black/25 text-white' : 'bg-emerald-500/20 text-emerald-400'
+                      }`}>推荐</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (qrChannel !== 'micoapi') {
+                          handleGenerateQrCode('micoapi');
+                        }
+                      }}
+                      className={`py-2 px-3 rounded-lg font-semibold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                        qrChannel === 'micoapi'
+                          ? 'bg-[#FF6700] text-white shadow-sm'
+                          : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
+                      }`}
+                    >
+                      <Radio className="w-3.5 h-3.5 flex-shrink-0" />
+                      <span className="truncate">小爱音箱 App 授权</span>
+                    </button>
+                  </div>
 
                   {qrSyncSuccess || (qrStatusText && (qrStatusText.includes('登录成功') || qrStatusText.includes('同步完成'))) ? (
                     <div className="p-6 rounded-2xl bg-gradient-to-b from-emerald-500/15 to-emerald-500/5 border border-emerald-500/30 text-center space-y-4 my-2">
@@ -2984,7 +3047,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                         </button>
                         <button
                           type="button"
-                          onClick={handleGenerateQrCode}
+                          onClick={() => handleGenerateQrCode(qrChannel)}
                           className="text-xs text-zinc-400 hover:text-zinc-200 transition py-1"
                         >
                           重新扫码更换账号
@@ -2996,26 +3059,29 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                       <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-[11px] text-emerald-200/90 text-left space-y-1.5">
                         <p className="font-semibold flex items-center gap-1.5 text-emerald-300 text-xs">
                           <Check className="w-4 h-4 flex-shrink-0 text-emerald-400" />
-                          支持「米家 App」直接扫码授权
+                          {qrChannel === 'xiaomiio' 
+                            ? '米家官方原生授权通道 (sid=xiaomiio & dc=ak)'
+                            : '小爱音箱服务授权通道 (sid=micoapi)'}
                         </p>
                         <p className="text-zinc-300 text-[11px] leading-relaxed">
-                          已切换为官方<strong>米家 (MIoT) 原生授权二维码</strong>，你可以通过以下方式扫码：
+                          {qrChannel === 'xiaomiio' ? (
+                            <>已通过国内认证中心 (cn.account.xiaomi.com) 生成米家原生授权二维码。米家 App 扫码后将准确识别为<strong>【小米账号 / 米家授权登录】</strong>弹窗，点击「确认授权」即可自动完成双 STS 凭证换取（同步设备 + 播放控制）。</>
+                          ) : (
+                            <>使用小爱音箱 App 专用授权服务，扫码后将直接获取小爱多媒体与语音推流权限。</>
+                          )}
                         </p>
                         <ul className="list-disc list-inside space-y-1 text-emerald-200/80 pl-1 leading-relaxed">
-                          <li><strong>方式 1（推荐）</strong>：打开<strong>【米家 App】➔ 右上角「+」或「扫一扫」</strong>，扫描二维码并在手机上点击<strong>确认授权</strong>。</li>
-                          <li><strong>方式 2</strong>：使用手机自带<strong>【系统相机】</strong>或<strong>【微信扫一扫】</strong>对准二维码打开授权页。</li>
-                          <li><strong>方式 3（小米/Redmi 手机）</strong>：进入手机<strong>【设置】➔ 顶部【小米账号】➔ 右上角【扫一扫】</strong>。</li>
+                          <li><strong>扫码方式</strong>：打开<strong>【米家 App】➔ 右上角「+」或「扫一扫」</strong>，扫描二维码点击<strong>确认授权</strong>。</li>
+                          <li><strong>免扫码直达</strong>：若手机不方便扫码，可直接点击下方<strong>【在浏览器打开授权】</strong>一键登录。</li>
                         </ul>
-                        <p className="text-amber-300/90 text-[10.5px] pt-1 border-t border-emerald-500/20">
-                          💡 <strong>地区设置提示</strong>：小爱音箱语音云端服务 (`micoapi`) 主要部署在中国大陆。若米家 App 地区设为日本、新加坡等非大陆地区，可能会触发 70016 鉴权错误。建议检查：<strong>【米家 App】➔【我的】➔【更多设置】➔【关于米家】➔【地区】</strong>设为<strong>「中国大陆」</strong>。
-                        </p>
                       </div>
 
-                      <div className="p-4 bg-white rounded-2xl inline-block shadow-lg relative my-2">
+                      {/* 二维码展示区 */}
+                      <div className="p-4 bg-white rounded-2xl inline-block shadow-lg relative my-1">
                         {isGeneratingQr ? (
                           <div className="w-56 h-56 flex flex-col items-center justify-center gap-2 text-zinc-600">
                             <RefreshCw className="w-8 h-8 animate-spin text-[#FF6700]" />
-                            <span className="text-xs">正在申请二维码...</span>
+                            <span className="text-xs">正在申请安全二维码...</span>
                           </div>
                         ) : qrCodeData?.qrUrl ? (
                           <img
@@ -3031,37 +3097,56 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                         )}
                       </div>
 
-                      <div className="space-y-2.5">
+                      <div className="space-y-3">
                         <div className="flex items-center justify-center gap-2 text-xs">
                           {isPollingQr && <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />}
                           <span className="text-zinc-300 font-medium">
-                            {qrStatusText || '请使用米家 App 扫码'}
+                            {qrStatusText || (qrChannel === 'xiaomiio' ? '请使用米家 App 扫码或在浏览器中打开授权' : '请使用小爱音箱 App 扫码')}
                           </span>
                         </div>
 
-                        <div className="flex items-center justify-center gap-2 flex-wrap">
+                        {/* 免扫码直达与快捷操作按钮组 */}
+                        <div className="flex flex-col sm:flex-row items-center justify-center gap-2 pt-1">
+                          {qrCodeData?.loginUrl && (
+                            <a
+                              href={qrCodeData.loginUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="w-full sm:w-auto px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-semibold shadow-md transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer no-underline"
+                              title="在手机或电脑浏览器中直接打开小米官方授权页，免扫码一键登录"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                              <span>在浏览器打开授权</span>
+                            </a>
+                          )}
+
+                          {(qrCodeData?.loginUrl || qrCodeData?.qr) && (
+                            <button
+                              type="button"
+                              onClick={() => copyToClipboard(qrCodeData.loginUrl || qrCodeData.qr!, 'qr_link')}
+                              className="w-full sm:w-auto px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold border border-white/10 transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+                              title="复制授权链接，可在微信/手机浏览器中直接粘贴打开"
+                            >
+                              {copiedKey === 'qr_link' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5 text-zinc-400" />}
+                              <span>{copiedKey === 'qr_link' ? '已复制授权链接' : '复制授权链接'}</span>
+                            </button>
+                          )}
+
                           <button
                             type="button"
-                            onClick={handleGenerateQrCode}
+                            onClick={() => handleGenerateQrCode(qrChannel)}
                             disabled={isGeneratingQr}
-                            className="px-3.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-zinc-200 border border-white/10 transition active:scale-95 disabled:opacity-50 flex items-center justify-center gap-1.5 cursor-pointer"
+                            className="w-full sm:w-auto px-3.5 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-xs font-medium border border-white/10 transition active:scale-95 disabled:opacity-50 flex items-center justify-center gap-1.5 cursor-pointer"
+                            title="重新获取授权二维码"
                           >
                             <RefreshCw className={`w-3.5 h-3.5 ${isGeneratingQr ? 'animate-spin text-[#FF6700]' : ''}`} />
                             <span>刷新二维码</span>
                           </button>
-
-                          {(qrCodeData?.qr || qrCodeData?.loginUrl) && (
-                            <button
-                              type="button"
-                              onClick={() => copyToClipboard(qrCodeData.qr || qrCodeData.loginUrl!, 'qr_link')}
-                              className="px-3.5 py-1.5 rounded-xl bg-[#FF6700]/20 hover:bg-[#FF6700]/30 text-xs font-semibold text-[#FF6700] border border-[#FF6700]/30 transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
-                              title="复制手机端授权登录网页链接"
-                            >
-                              {copiedKey === 'qr_link' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                              <span>{copiedKey === 'qr_link' ? '已复制登录链接' : '复制授权登录链接'}</span>
-                            </button>
-                          )}
                         </div>
+
+                        <p className="text-[11px] text-zinc-400 max-w-sm mx-auto leading-relaxed">
+                          💡 <strong>免扫码提示</strong>：点击<strong>【在浏览器打开授权】</strong>可直接在浏览器登录小米账号完成授权；或点击<strong>【复制授权链接】</strong>发送到微信/手机浏览器中打开确认。
+                        </p>
                       </div>
                     </>
                   )}

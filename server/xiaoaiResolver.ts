@@ -1,5 +1,6 @@
 import dgram from 'dgram';
 import os from 'os';
+import crypto from 'crypto';
 import { miotRpcEngine } from './miotRpc';
 
 export interface DeviceCapabilities {
@@ -150,6 +151,7 @@ const KNOWN_XIAOAI_MODELS: Record<string, Partial<DeviceCapabilities>> = {
   'xiaomi.wifispeaker.art': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false, supportsDlna: true },
   'xiaomi.wifispeaker.play': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false },
   'xiaomi.wifispeaker.pro': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false, supportsDlna: true },
+  'xiaomi.wifispeaker.oh2p': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false, supportsDlna: true },
   'xiaomi.wifispeaker.mdz28da': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false },
   'xiaomi.speaker.x08e': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: true, supportsDlna: true },
   'xiaomi.speaker.l07a': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false },
@@ -311,13 +313,14 @@ export class XiaoAiResolverEngine {
   public async discoverCloudDevices(
     userId: string,
     serviceToken: string,
-    options?: { xiaomiioServiceToken?: string }
+    options?: { xiaomiioServiceToken?: string; ssecurity?: string }
   ): Promise<CloudDiscoveredItem[]> {
     if (!userId || !serviceToken) return [];
 
     const cleanUid = String(userId).replace(/^["']|["']$/g, '').replace(/^uid_/, '').replace(/;$/, '').trim();
     const cleanToken = String(serviceToken).replace(/^["']|["']$/g, '').replace(/;$/, '').trim();
     const cleanMiioToken = String(options?.xiaomiioServiceToken || serviceToken).replace(/^["']|["']$/g, '').replace(/;$/, '').trim();
+    const cleanSsecurity = options?.ssecurity ? String(options.ssecurity).trim() : '';
 
     if (!cleanUid || cleanUid === 'undefined' || cleanUid === 'null' || !cleanToken || cleanToken === 'undefined' || cleanToken === 'null') {
       return [];
@@ -436,24 +439,41 @@ export class XiaoAiResolverEngine {
       }
     };
 
-    // 2.2 MiHome Cloud Endpoints (POST with URL-encoded JSON payload)
+    // 2.2 MiHome Cloud Endpoints (POST with URL-encoded JSON payload or official HMAC-SHA256 signature)
     const mihomeEndpoints = [
+      { url: 'https://api.io.mi.com/app/home/device_list', payload: { getVirtualModel: false, getHuamiDevices: 0 } },
       { url: 'https://api.io.mi.com/app/v2/home/device_list', payload: { getVirtualModel: false, getHuamiDevices: 0 } },
-      { url: 'https://api.io.mi.com/app/v2/home/device_list', payload: { limit: 300 } },
       { url: 'https://api.io.mi.com/app/home/device_list', payload: {} },
+      { url: 'https://api.io.mi.com/app/v2/home/device_list', payload: { limit: 300 } },
       { url: 'https://api.io.mi.com/app/v2/home/get_interconnection_device_list', payload: {} }
     ];
 
     const queryMiHomeEndpoint = async (epItem: { url: string; payload: any }) => {
       const startT = Date.now();
       try {
-        const bodyStr = `data=${encodeURIComponent(JSON.stringify(epItem.payload))}`;
+        let bodyStr = `data=${encodeURIComponent(JSON.stringify(epItem.payload))}`;
         const headers: Record<string, string> = {
           'User-Agent': 'MiHome/6.0.0 (com.xiaomi.mihome; build:20210219; iOS 14.4.0)',
           'Content-Type': 'application/x-www-form-urlencoded',
           'Cookie': `userId=${cleanUid}; serviceToken=${cleanMiioToken}; PassportDeviceId=${cleanUid}`,
           'Accept': 'application/json, text/plain, */*'
         };
+
+        if (cleanSsecurity) {
+          const rand8 = crypto.randomBytes(8);
+          const timeBuf = Buffer.alloc(4);
+          timeBuf.writeUInt32BE(Math.floor(Date.now() / 1000 / 60), 0);
+          const nonce = Buffer.concat([rand8, timeBuf]).toString('base64');
+          const hashNonce = crypto.createHash('sha256').update(Buffer.from(cleanSsecurity, 'base64')).update(Buffer.from(nonce, 'base64')).digest('base64');
+          const dataStr = JSON.stringify(epItem.payload);
+          const uri = new URL(epItem.url).pathname.replace(/^\/app/, '');
+          const msg = `${uri}&${hashNonce}&${nonce}&data=${dataStr}`;
+          const sign = crypto.createHmac('sha256', Buffer.from(hashNonce, 'base64')).update(msg).digest('base64');
+
+          headers['User-Agent'] = 'iOS-14.4-6.0.103-iPhone12,3--D7744744F7AF32F0544445285880DD63E47D9BE9-8816080-84A3F44E137B71AE-iPhone';
+          headers['x-xiaomi-protocal-flag-cli'] = 'PROTOCAL-HTTP2';
+          bodyStr = new URLSearchParams({ _nonce: nonce, data: dataStr, signature: sign }).toString();
+        }
 
         const res = await fetch(epItem.url, {
           method: 'POST',
@@ -799,6 +819,7 @@ export class XiaoAiResolverEngine {
     userId?: string;
     serviceToken?: string;
     xiaomiioServiceToken?: string;
+    ssecurity?: string;
     subnetPrefix?: string;
     existingDevices?: any[];
     activeStreamIps?: string[];
@@ -813,12 +834,12 @@ export class XiaoAiResolverEngine {
       nonSpeakerIgnored: number;
     };
   }> {
-    const { userId = '', serviceToken = '', xiaomiioServiceToken, subnetPrefix, existingDevices = [], activeStreamIps = [] } = options;
+    const { userId = '', serviceToken = '', xiaomiioServiceToken, ssecurity, subnetPrefix, existingDevices = [], activeStreamIps = [] } = options;
 
     // Run LAN Discovery and Cloud Discovery in parallel
     const [lanList, cloudList] = await Promise.all([
       this.discoverLanDevices(subnetPrefix, 2000),
-      this.discoverCloudDevices(userId, serviceToken, { xiaomiioServiceToken })
+      this.discoverCloudDevices(userId, serviceToken, { xiaomiioServiceToken, ssecurity })
     ]);
 
     const lanMap = new Map<string, LanDiscoveredItem>();
