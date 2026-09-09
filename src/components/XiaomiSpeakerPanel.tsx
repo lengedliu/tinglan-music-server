@@ -3205,11 +3205,10 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                   <div className="p-3.5 rounded-xl bg-purple-500/10 border border-purple-500/20 text-xs text-purple-200/90 space-y-1.5">
                     <p className="font-semibold text-purple-300 flex items-center gap-1.5">
                       <Key className="w-4 h-4 text-purple-400" />
-                      从浏览器 Cookie 中获取 userId 和 passToken (SongLoft / MIoT 标准模式)
+                      Token / Cookie 直连模式 (建议使用二维码扫码或 mina.mi.com 凭据)
                     </p>
                     <p className="text-zinc-300 text-[11px] leading-relaxed">
-                      支持直接从 <code className="text-white bg-white/10 px-1 py-0.5 rounded">https://www.mi.com/</code> 或 <code className="text-white bg-white/10 px-1 py-0.5 rounded">https://account.xiaomi.com/</code> 登录后的浏览器 Cookie 中获取 <strong className="text-white font-mono">userId</strong> 与 <strong className="text-white font-mono">passToken</strong>。
-                      系统收到后会自动完成 STS 令牌置换，<strong>完全免受云端机房风控与短信 2FA 拦截！</strong>
+                      小爱音箱云端需使用 <code className="text-white bg-white/10 px-1 py-0.5 rounded">micoapi</code> 专属令牌。推荐最便捷方式：直接使用<strong className="text-white">【方式二：二维码扫码登录】</strong>或<strong className="text-white">【方式一：账号密码登录】</strong>（由小米 Passport 自动签发全套令牌）。若需使用 Cookie，请在登录 <code className="text-white bg-white/10 px-1 py-0.5 rounded">https://mina.mi.com</code> 小爱官网后复制 Cookie 中的 <strong className="text-white font-mono">serviceToken</strong> 与 <strong className="text-white font-mono">userId</strong>。
                     </p>
                   </div>
 

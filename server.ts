@@ -2600,12 +2600,16 @@ app.post('/api/miot/login', async (req: Request, res: Response) => {
     let activeServiceToken = cleanToken;
     let xiaomiioServiceToken = '';
 
-    // If passToken is provided (e.g. from www.mi.com or account.xiaomi.com Cookie), automatically exchange it for the official micoapi & xiaomiio serviceTokens!
-    if (cleanPassToken) {
+    // Candidate passToken for STS exchange: cleanPassToken or cleanToken if cleanPassToken is empty
+    const candidatePassToken = cleanPassToken || cleanToken;
+
+    // If candidate passToken is provided (e.g. from www.mi.com / account.xiaomi.com Cookie or PassToken field),
+    // automatically exchange it for official micoapi & xiaomiio serviceTokens!
+    if (candidatePassToken) {
       try {
         const [micoResult, miioResult] = await Promise.allSettled([
-          xiaomiPassport.fetchAdditionalStsToken(cleanUid, cleanPassToken, 'micoapi', cleanCUserId),
-          xiaomiPassport.fetchAdditionalStsToken(cleanUid, cleanPassToken, 'xiaomiio', cleanCUserId)
+          xiaomiPassport.fetchAdditionalStsToken(cleanUid, candidatePassToken, 'micoapi', cleanCUserId),
+          xiaomiPassport.fetchAdditionalStsToken(cleanUid, candidatePassToken, 'xiaomiio', cleanCUserId)
         ]);
 
         if (micoResult.status === 'fulfilled' && micoResult.value.serviceToken) {
@@ -2621,13 +2625,14 @@ app.post('/api/miot/login', async (req: Request, res: Response) => {
           xiaomiioServiceToken = miioResult.value.serviceToken;
         }
 
-        if (!activeServiceToken && !xiaomiioServiceToken) {
+        // If explicitly cleanPassToken was passed but exchange failed for both micoapi and xiaomiio
+        if (cleanPassToken && !activeServiceToken && !xiaomiioServiceToken) {
           const errMsg = (micoResult.status === 'fulfilled' && micoResult.value.error)
             ? micoResult.value.error
             : 'PassToken 置换失败，凭据可能已失效或需要二次验证';
           return res.status(401).json({
             success: false,
-            error: `小米安全授权失败: ${errMsg}。请在浏览器重新登录 www.mi.com 获取最新 Cookie，或使用账号密码登录。`
+            error: `小米安全授权失败: ${errMsg}。提示：www.mi.com 网站的 PassToken/Cookie 包含跨域与 IP 风控限制，小爱音箱需要专属的 micoapi 令牌。强力推荐使用【二维码扫码登录】或【账号密码登录】（自动生成全套专有令牌），或登录 https://mina.mi.com 复制小爱官网 Cookie。`
           });
         }
       } catch (err: any) {
@@ -2804,7 +2809,7 @@ app.post('/api/miot/logout', (req: Request, res: Response) => {
 app.get('/api/miot/passport/qrcode/get', async (req: Request, res: Response) => {
   if (!checkMiotAdminPermission(req, res)) return;
 
-  const sid = (req.query.sid as string) || 'mijia';
+  const sid = (req.query.sid as string) || 'micoapi';
   const qrRes = await xiaomiPassport.generateLoginQrCode(sid);
   if (qrRes.success) {
     return res.json(qrRes);
@@ -2825,9 +2830,8 @@ app.post('/api/miot/passport/qrcode/check', async (req: Request, res: Response) 
   if (checkRes.success && checkRes.status === 'confirmed') {
     let serviceToken = checkRes.serviceToken || '';
 
-    // Since we generated the QR code for 'xiaomiio' to ensure 100% compatibility with Mi Home App (米家 App) scanner,
-    // we must now perform a sub-exchange to obtain the 'micoapi' serviceToken using the confirmed passToken!
-    if (checkRes.userId && checkRes.passToken) {
+    // Fallback: If serviceToken was empty, attempt sub-exchange
+    if (!serviceToken && checkRes.userId && checkRes.passToken) {
       try {
         const micoToken = await xiaomiPassport.fetchAdditionalStsToken(checkRes.userId, checkRes.passToken, 'micoapi');
         if (micoToken.serviceToken) {
