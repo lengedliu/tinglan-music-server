@@ -2598,22 +2598,40 @@ app.post('/api/miot/login', async (req: Request, res: Response) => {
     }
 
     let activeServiceToken = cleanToken;
+    let xiaomiioServiceToken = '';
 
-    // If passToken is provided (e.g. from www.mi.com or account.xiaomi.com Cookie), automatically exchange it for the official micoapi serviceToken!
+    // If passToken is provided (e.g. from www.mi.com or account.xiaomi.com Cookie), automatically exchange it for the official micoapi & xiaomiio serviceTokens!
     if (cleanPassToken) {
       try {
-        const exchanged = await xiaomiPassport.fetchAdditionalStsToken(cleanUid, cleanPassToken, 'micoapi', cleanCUserId);
-        if (exchanged.serviceToken) {
-          activeServiceToken = exchanged.serviceToken;
-          if (exchanged.ssecurity) {
-            (miotConfig as any).ssecurity = exchanged.ssecurity;
+        const [micoResult, miioResult] = await Promise.allSettled([
+          xiaomiPassport.fetchAdditionalStsToken(cleanUid, cleanPassToken, 'micoapi', cleanCUserId),
+          xiaomiPassport.fetchAdditionalStsToken(cleanUid, cleanPassToken, 'xiaomiio', cleanCUserId)
+        ]);
+
+        if (micoResult.status === 'fulfilled' && micoResult.value.serviceToken) {
+          activeServiceToken = micoResult.value.serviceToken;
+          if (micoResult.value.ssecurity) {
+            (miotConfig as any).ssecurity = micoResult.value.ssecurity;
           }
-          if (exchanged.userId && /^\d+$/.test(exchanged.userId)) {
-            cleanUid = exchanged.userId;
+          if (micoResult.value.userId && /^\d+$/.test(micoResult.value.userId)) {
+            cleanUid = micoResult.value.userId;
           }
         }
+        if (miioResult.status === 'fulfilled' && miioResult.value.serviceToken) {
+          xiaomiioServiceToken = miioResult.value.serviceToken;
+        }
+
+        if (!activeServiceToken && !xiaomiioServiceToken) {
+          const errMsg = (micoResult.status === 'fulfilled' && micoResult.value.error)
+            ? micoResult.value.error
+            : 'PassToken 置换失败，凭据可能已失效或需要二次验证';
+          return res.status(401).json({
+            success: false,
+            error: `小米安全授权失败: ${errMsg}。请在浏览器重新登录 www.mi.com 获取最新 Cookie，或使用账号密码登录。`
+          });
+        }
       } catch (err: any) {
-        console.warn('Failed to exchange passToken for micoapi serviceToken:', err.message);
+        console.warn('Failed to exchange passToken for micoapi/xiaomiio serviceTokens:', err.message);
       }
     }
 
@@ -2623,6 +2641,12 @@ app.post('/api/miot/login', async (req: Request, res: Response) => {
 
     miotConfig.userId = cleanUid;
     miotConfig.serviceToken = activeServiceToken;
+    if (xiaomiioServiceToken) {
+      (miotConfig as any).stsTokens = {
+        micoapi: activeServiceToken,
+        xiaomiio: xiaomiioServiceToken
+      };
+    }
     if (cleanPassToken) (miotConfig as any).passToken = cleanPassToken;
     miotConfig.miUser = username || `uid_${cleanUid}`;
     miotConfig.isLoggedIn = true;
@@ -2636,6 +2660,7 @@ app.post('/api/miot/login', async (req: Request, res: Response) => {
       const resolveResult = await xiaoaiResolverEngine.resolveDevices({
         userId: cleanUid,
         serviceToken: activeServiceToken,
+        xiaomiioServiceToken: xiaomiioServiceToken || activeServiceToken,
         existingDevices: xiaomiDevices,
         activeStreamIps: Array.from(activeStreamIps)
       });

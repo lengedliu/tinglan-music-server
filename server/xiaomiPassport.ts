@@ -358,8 +358,11 @@ export class XiaomiPassport {
     passToken: string,
     targetSid: 'xiaomiio' | 'micoapi',
     cUserId?: string
-  ): Promise<{ serviceToken?: string; ssecurity?: string; userId?: string }> {
+  ): Promise<{ serviceToken?: string; ssecurity?: string; userId?: string; error?: string }> {
     try {
+      const cleanUid = String(userId || '').replace(/^uid_/, '').replace(/^["']|["']$/g, '').trim();
+      const cleanPassToken = String(passToken || '').replace(/^["']|["']$/g, '').trim();
+
       const params = await this.getServiceLoginParams(targetSid);
       const url = `https://account.xiaomi.com/pass/serviceLoginAuth2`;
       const body = new URLSearchParams({
@@ -368,16 +371,17 @@ export class XiaomiPassport {
         qs: params.qs,
         _sign: params._sign,
         _json: 'true',
-        userId,
-        passToken
+        user: cleanUid,
+        userId: cleanUid,
+        passToken: cleanPassToken
       });
       if (cUserId) {
         body.append('cUserId', cUserId);
       }
 
-      const cookieHeader = cUserId
-        ? `userId=${userId}; cUserId=${cUserId}; passToken=${passToken}`
-        : `userId=${userId}; passToken=${passToken}`;
+      const cookieHeader = params.cookies
+        ? `${params.cookies}; userId=${cleanUid}; passToken=${cleanPassToken}; uLocale=zh_CN`
+        : `userId=${cleanUid}; passToken=${cleanPassToken}; uLocale=zh_CN`;
 
       const res = await fetch(url, {
         method: 'POST',
@@ -391,9 +395,17 @@ export class XiaomiPassport {
 
       const raw = await res.text();
       const clean = raw.replace('&&&START&&&', '');
-      const json = JSON.parse(clean);
+      let json: any = {};
+      try {
+        json = JSON.parse(clean);
+      } catch {
+        console.warn(`[STS ${targetSid}] Failed to parse response:`, raw);
+        return { error: `无法解析小米认证响应: ${raw.slice(0, 100)}` };
+      }
 
-      const returnedUserId = json.userId ? String(json.userId) : (json.cUserId || userId);
+      console.log(`[STS ${targetSid}] result code:`, json.code, json.desc || json.message || 'OK');
+
+      const returnedUserId = json.userId ? String(json.userId) : (json.cUserId || cleanUid);
 
       if (json.code === 0 && json.location) {
         const sts = await this.exchangeStsToken(json.location, cookieHeader, json.ssecurity);
@@ -403,13 +415,22 @@ export class XiaomiPassport {
           userId: returnedUserId
         };
       }
+
+      if (json.code === 0 && json.serviceToken) {
+        return {
+          serviceToken: json.serviceToken,
+          ssecurity: json.ssecurity,
+          userId: returnedUserId
+        };
+      }
+
       return {
-        serviceToken: json.serviceToken,
-        ssecurity: json.ssecurity,
+        error: json.desc || json.message || `认证错误 (code: ${json.code})`,
         userId: returnedUserId
       };
-    } catch {
-      return {};
+    } catch (err: any) {
+      console.warn(`[STS ${targetSid}] exception:`, err.message);
+      return { error: err.message };
     }
   }
 

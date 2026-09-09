@@ -308,11 +308,16 @@ export class XiaoAiResolverEngine {
    * 2. Xiaomi Cloud Discovery: Query Mina and MiHome device APIs
    * Extracts: did, model, name, mac, token, online
    */
-  public async discoverCloudDevices(userId: string, serviceToken: string): Promise<CloudDiscoveredItem[]> {
+  public async discoverCloudDevices(
+    userId: string,
+    serviceToken: string,
+    options?: { xiaomiioServiceToken?: string }
+  ): Promise<CloudDiscoveredItem[]> {
     if (!userId || !serviceToken) return [];
 
     const cleanUid = String(userId).replace(/^["']|["']$/g, '').replace(/^uid_/, '').replace(/;$/, '').trim();
     const cleanToken = String(serviceToken).replace(/^["']|["']$/g, '').replace(/;$/, '').trim();
+    const cleanMiioToken = String(options?.xiaomiioServiceToken || serviceToken).replace(/^["']|["']$/g, '').replace(/;$/, '').trim();
 
     if (!cleanUid || cleanUid === 'undefined' || cleanUid === 'null' || !cleanToken || cleanToken === 'undefined' || cleanToken === 'null') {
       return [];
@@ -446,7 +451,7 @@ export class XiaoAiResolverEngine {
         const headers: Record<string, string> = {
           'User-Agent': 'MiHome/6.0.0 (com.xiaomi.mihome; build:20210219; iOS 14.4.0)',
           'Content-Type': 'application/x-www-form-urlencoded',
-          'Cookie': `userId=${cleanUid}; serviceToken=${cleanToken}; PassportDeviceId=${cleanUid}`,
+          'Cookie': `userId=${cleanUid}; serviceToken=${cleanMiioToken}; PassportDeviceId=${cleanUid}`,
           'Accept': 'application/json, text/plain, */*'
         };
 
@@ -559,7 +564,7 @@ export class XiaoAiResolverEngine {
             headers: {
               'User-Agent': 'MiHome/6.0.0 (com.xiaomi.mihome; build:20210219; iOS 14.4.0)',
               'Content-Type': 'application/x-www-form-urlencoded',
-              'Cookie': `userId=${cleanUid}; serviceToken=${cleanToken}; PassportDeviceId=${cleanUid}`
+              'Cookie': `userId=${cleanUid}; serviceToken=${cleanMiioToken}; PassportDeviceId=${cleanUid}`
             },
             body: bodyStr,
             signal: AbortSignal.timeout(2500)
@@ -793,6 +798,7 @@ export class XiaoAiResolverEngine {
   public async resolveDevices(options: {
     userId?: string;
     serviceToken?: string;
+    xiaomiioServiceToken?: string;
     subnetPrefix?: string;
     existingDevices?: any[];
     activeStreamIps?: string[];
@@ -807,12 +813,12 @@ export class XiaoAiResolverEngine {
       nonSpeakerIgnored: number;
     };
   }> {
-    const { userId = '', serviceToken = '', subnetPrefix, existingDevices = [], activeStreamIps = [] } = options;
+    const { userId = '', serviceToken = '', xiaomiioServiceToken, subnetPrefix, existingDevices = [], activeStreamIps = [] } = options;
 
     // Run LAN Discovery and Cloud Discovery in parallel
     const [lanList, cloudList] = await Promise.all([
       this.discoverLanDevices(subnetPrefix, 2000),
-      this.discoverCloudDevices(userId, serviceToken)
+      this.discoverCloudDevices(userId, serviceToken, { xiaomiioServiceToken })
     ]);
 
     const lanMap = new Map<string, LanDiscoveredItem>();

@@ -785,12 +785,22 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
 
     if (pastedText.includes('userId') || pastedText.includes('serviceToken') || pastedText.includes('passToken') || pastedText.includes('cUserId')) {
       e.preventDefault();
-      const uidMatch = pastedText.match(/(?:userId|cUserId|uid)\s*[:=]\s*["']?([^;\s,"'}{]+)/i);
+      // Prioritize pure numeric userId: userId=12345678 or uid=12345678
+      const numericUidMatch = pastedText.match(/\b(?:userId|uid)\s*[:=]\s*["']?(\d{5,15})["']?/i);
+      const rawUidMatch = pastedText.match(/(?:^|[\s;,])userId\s*[:=]\s*["']?([^;\s,"'}{]+)/i);
+      const fallbackUidMatch = pastedText.match(/(?:uid)\s*[:=]\s*["']?([^;\s,"'}{]+)/i);
+
       const tokenMatch = pastedText.match(/(?:serviceToken)\s*[:=]\s*["']?([^;\s,"'}{]+)/i);
       const passMatch = pastedText.match(/(?:passToken)\s*[:=]\s*["']?([^;\s,"'}{]+)/i);
-      if (uidMatch) {
-        setUserIdInput(uidMatch[1].trim());
+
+      if (numericUidMatch) {
+        setUserIdInput(numericUidMatch[1].trim());
+      } else if (rawUidMatch) {
+        setUserIdInput(rawUidMatch[1].trim());
+      } else if (fallbackUidMatch) {
+        setUserIdInput(fallbackUidMatch[1].trim());
       }
+
       if (tokenMatch) {
         setServiceTokenInput(tokenMatch[1].trim());
       }
