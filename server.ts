@@ -3616,11 +3616,17 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
   const responseTimeMs = Date.now() - startTime;
 
   const errorMessage = !isSuccess
-    ? (localMiioResult?.error ||
-       cloudResult?.error ||
-       (!targetDevice.ip && !targetDevice.token && !miotConfig.isLoggedIn
-         ? '设备缺少可用投播通道（无局域网 IP/Token 且未登录米家云端）'
-         : '投播指令执行失败，音箱未响应或网络断开'))
+    ? (
+        cloudResult?.error
+          ? `云端投播失败: ${cloudResult.error}${localMiioResult?.error ? ` (局域网 UDP ${targetDevice.ip}:54321 亦超时)` : ''}`
+          : (localMiioResult?.error
+              ? (miotConfig.isLoggedIn
+                  ? `局域网 UDP 超时 (${targetDevice.ip}:54321，远程云端容器无法直接访问家庭局域网 IP)。请确认小米账号已正常绑定`
+                  : `局域网 UDP 超时 (${targetDevice.ip}:54321，远程云端容器无法直接访问家庭局域网 IP)。请先在【扫码登录】页面完成米家账号绑定以使用云端投播`)
+              : (!targetDevice.ip && !targetDevice.token && !miotConfig.isLoggedIn
+                  ? '设备缺少可用投播通道（无局域网 IP/Token 且未登录米家云端）'
+                  : '投播指令执行失败，音箱未响应或网络断开'))
+      )
     : undefined;
 
   const nowTime = new Date().toLocaleTimeString();
@@ -3822,7 +3828,7 @@ app.post('/api/miot/control', async (req: Request, res: Response) => {
     : (Boolean(localMiioResult?.success) || Boolean(cloudResult?.success));
 
   const controlError = !isControlSuccess
-    ? (localMiioResult?.error || cloudResult?.error || '无可用控制通道（音箱无 IP/Token 且未登录小米云端）')
+    ? (cloudResult?.error || localMiioResult?.error || '无可用控制通道（音箱无 IP/Token 且未登录小米云端）')
     : undefined;
 
   const logEntry = {
@@ -3903,7 +3909,7 @@ app.post('/api/miot/tts', async (req: Request, res: Response) => {
 
   const isTtsSuccess = Boolean(localMiioResult?.success) || Boolean(cloudResult?.success);
   const errorMessage = !isTtsSuccess
-    ? (localMiioResult?.error || cloudResult?.error || '无可用通道发送 TTS 指令（音箱未配置 IP/Token 且未登录小米云端）')
+    ? (cloudResult?.error || localMiioResult?.error || '无可用通道发送 TTS 指令（音箱未配置 IP/Token 且未登录小米云端）')
     : undefined;
 
   const logEntry = {
