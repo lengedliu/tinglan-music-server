@@ -588,7 +588,9 @@ export class XiaomiPassport {
         if (data.location) {
           const cookieStr = [
             `userId=${userId}`,
-            passToken ? `passToken=${passToken}` : ''
+            data.cUserId ? `cUserId=${data.cUserId}` : '',
+            passToken ? `passToken=${passToken}` : '',
+            'uLocale=zh_CN'
           ].filter(Boolean).join('; ');
           const sts = await this.exchangeStsToken(data.location, cookieStr, ssecurity);
           if (sts.serviceToken) serviceToken = sts.serviceToken;
