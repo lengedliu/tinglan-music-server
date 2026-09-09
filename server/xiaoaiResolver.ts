@@ -124,22 +124,38 @@ export function extractDevicesFromMinaResponse(minaData: any): any[] {
 const KNOWN_XIAOAI_MODELS: Record<string, Partial<DeviceCapabilities>> = {
   'xiaomi.wifispeaker.l05c': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: true },
   'xiaomi.wifispeaker.l05b': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false },
+  'xiaomi.wifispeaker.l05g': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false },
   'xiaomi.wifispeaker.lx06': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false, supportsDlna: true },
   'xiaomi.wifispeaker.lx04': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: true, supportsDlna: true },
   'xiaomi.wifispeaker.lx01': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false },
+  'xiaomi.wifispeaker.lx05': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false },
   'xiaomi.wifispeaker.l06a': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false, supportsDlna: true },
+  'xiaomi.wifispeaker.l07a': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false },
+  'xiaomi.wifispeaker.l09a': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false, supportsDlna: true },
+  'xiaomi.wifispeaker.l09g': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false, supportsDlna: true },
   'xiaomi.wifispeaker.l15a': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false, supportsDlna: true },
   'xiaomi.wifispeaker.l16a': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false, supportsDlna: true },
+  'xiaomi.wifispeaker.l17a': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false, supportsDlna: true },
   'xiaomi.wifispeaker.s12': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false },
   'xiaomi.wifispeaker.s12a': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false },
   'xiaomi.wifispeaker.sound': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false, supportsDlna: true },
   'xiaomi.wifispeaker.soundpro': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false, supportsDlna: true },
+  'xiaomi.wifispeaker.soundmove': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false, supportsDlna: true },
   'xiaomi.wifispeaker.m03a': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false },
   'xiaomi.wifispeaker.x08a': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: true, supportsDlna: true },
   'xiaomi.wifispeaker.x08c': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: true, supportsDlna: true },
   'xiaomi.wifispeaker.x10a': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: true, supportsDlna: true },
+  'xiaomi.wifispeaker.art': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false, supportsDlna: true },
+  'xiaomi.wifispeaker.play': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false },
+  'xiaomi.wifispeaker.pro': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false, supportsDlna: true },
+  'xiaomi.wifispeaker.mdz28da': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false },
   'xiaomi.speaker.x08e': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: true, supportsDlna: true },
-  'xiaomi.speaker.l07a': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false }
+  'xiaomi.speaker.l07a': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false },
+  'xiaomi.speaker.l05b': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false },
+  'xiaomi.speaker.l05c': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: true },
+  'xiaomi.speaker.play': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false },
+  'xiaomi.speaker.pro': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false, supportsDlna: true },
+  'wifispeaker': { hasPlayControl: true, hasTts: true, hasVolumeControl: true, hasClock: false }
 };
 
 /**
@@ -271,6 +287,8 @@ export class XiaoAiResolverEngine {
 
     const cloudMap = new Map<string, CloudDiscoveredItem>();
     const reqId = Date.now();
+
+    // 2.1 Mina (XiaoAi SoundBox) Cloud Endpoints (GET)
     const minaEndpoints = [
       `https://api2.mina.mi.com/admin/v2/device_list?master=0&requestId=app_ios_${reqId}`,
       `https://api2.mina.mi.com/admin/v2/device_list?master=1&requestId=app_ios_${reqId}`,
@@ -281,22 +299,18 @@ export class XiaoAiResolverEngine {
       `https://api2.mina.mi.com/open/device/list`,
       `https://api2.mina.mi.com/admin/v2/device_list`,
       `https://api.mina.mi.com/admin/v2/device_list`,
-      `https://api2.pv.mina.mi.com/admin/v2/device_list`,
-      `https://api.io.mi.com/app/v2/home/device_list`
+      `https://api2.pv.mina.mi.com/admin/v2/device_list`
     ];
 
-    // Query Mina & MiHome Cloud APIs in parallel with a 3-second timeout per endpoint
-    const queryEndpoint = async (ep: string) => {
+    const queryMinaEndpoint = async (ep: string) => {
       try {
-        const isMiot = ep.includes('io.mi.com');
         const headers: Record<string, string> = {
-          'User-Agent': isMiot 
-            ? 'MiHome/6.0.0 (com.xiaomi.mihome; build:20210219; iOS 14.4.0)'
-            : 'MISoundBox/1.4.0 (iPhone; iOS 14.4; Scale/3.00)',
-          'Cookie': `userId=${cleanUid}; serviceToken=${cleanToken}`
+          'User-Agent': 'MISoundBox/1.4.0 (iPhone; iOS 14.4; Scale/3.00)',
+          'Cookie': `userId=${cleanUid}; serviceToken=${cleanToken}; deviceId=${cleanUid}`,
+          'Accept': 'application/json, text/plain, */*'
         };
 
-        const res = await fetch(ep, { headers, signal: AbortSignal.timeout(3000) });
+        const res = await fetch(ep, { headers, signal: AbortSignal.timeout(3500) });
         if (!res.ok) return;
 
         const text = await res.text();
@@ -355,7 +369,85 @@ export class XiaoAiResolverEngine {
       }
     };
 
-    await Promise.allSettled(minaEndpoints.map(ep => queryEndpoint(ep)));
+    // 2.2 MiHome Cloud Endpoints (POST with URL-encoded JSON payload)
+    const mihomeEndpoints = [
+      { url: 'https://api.io.mi.com/app/v2/home/device_list', payload: { getVirtualModel: false, getHuamiDevices: 0 } },
+      { url: 'https://api.io.mi.com/app/v2/home/device_list', payload: { limit: 300 } },
+      { url: 'https://api.io.mi.com/app/home/device_list', payload: {} },
+      { url: 'https://api.io.mi.com/app/v2/home/get_interconnection_device_list', payload: {} }
+    ];
+
+    const queryMiHomeEndpoint = async (epItem: { url: string; payload: any }) => {
+      try {
+        const bodyStr = `data=${encodeURIComponent(JSON.stringify(epItem.payload))}`;
+        const headers: Record<string, string> = {
+          'User-Agent': 'MiHome/6.0.0 (com.xiaomi.mihome; build:20210219; iOS 14.4.0)',
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Cookie': `userId=${cleanUid}; serviceToken=${cleanToken}; PassportDeviceId=${cleanUid}`,
+          'Accept': 'application/json, text/plain, */*'
+        };
+
+        const res = await fetch(epItem.url, {
+          method: 'POST',
+          headers,
+          body: bodyStr,
+          signal: AbortSignal.timeout(3500)
+        });
+        if (!res.ok) return;
+
+        const text = await res.text();
+        let miHomeData: any;
+        try {
+          miHomeData = JSON.parse(text);
+        } catch {
+          return;
+        }
+
+        const list = extractDevicesFromMinaResponse(miHomeData);
+
+        if (Array.isArray(list) && list.length > 0) {
+          for (const item of list) {
+            const did = String(
+              item.did || 
+              item.miotDID || 
+              item.deviceID || 
+              item.device_id || 
+              item.id || 
+              item.mac || 
+              ''
+            );
+            if (!did || cloudMap.has(did)) continue;
+
+            const rawName = item.name || item.alias || item.device_name || item.nick_name || item.title || '小米智能音箱';
+            const cleanName = String(rawName).replace(/\s*[\(（]点击(右侧)?编辑[\)）]/g, '').trim() || '小米智能音箱';
+            const hardware = item.hardware || item.model || 'XiaoAi';
+            const model = item.model || 'xiaomi.wifispeaker';
+
+            const ip = item.localip || item.ip || item.device_ip || item.currentIp || undefined;
+
+            cloudMap.set(did, {
+              did,
+              model,
+              name: cleanName,
+              ip,
+              mac: item.mac || item.mac_address || undefined,
+              token: item.token || item.device_token || undefined,
+              hardware,
+              online: item.isOnline === true || item.online === true || item.presence === 'online',
+              raw: item
+            });
+          }
+        }
+      } catch {
+        // Ignored
+      }
+    };
+
+    // Run Mina and MiHome Cloud Queries in Parallel
+    await Promise.allSettled([
+      ...minaEndpoints.map(ep => queryMinaEndpoint(ep)),
+      ...mihomeEndpoints.map(epItem => queryMiHomeEndpoint(epItem))
+    ]);
 
     // Auto-detect overseas regions if China region returned 0 devices
     if (cloudMap.size === 0) {
@@ -369,11 +461,15 @@ export class XiaoAiResolverEngine {
 
       for (const region of overseasRegions) {
         try {
+          const bodyStr = `data=${encodeURIComponent(JSON.stringify({ getVirtualModel: false, getHuamiDevices: 0 }))}`;
           const res = await fetch(region.url, {
+            method: 'POST',
             headers: {
               'User-Agent': 'MiHome/6.0.0 (com.xiaomi.mihome; build:20210219; iOS 14.4.0)',
-              'Cookie': `userId=${cleanUid}; serviceToken=${cleanToken}`
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'Cookie': `userId=${cleanUid}; serviceToken=${cleanToken}; PassportDeviceId=${cleanUid}`
             },
+            body: bodyStr,
             signal: AbortSignal.timeout(2500)
           });
           if (!res.ok) continue;
@@ -388,9 +484,9 @@ export class XiaoAiResolverEngine {
           if (Array.isArray(list) && list.length > 0) {
             console.log(`[XiaoAi Resolver] Auto-detected ${list.length} devices in overseas region: ${region.name} (${region.code})`);
             for (const item of list) {
-              const did = String(item.miotDID || item.deviceID || item.did || item.id || item.mac || '');
+              const did = String(item.did || item.miotDID || item.deviceID || item.id || item.mac || '');
               if (!did || cloudMap.has(did)) continue;
-              const rawName = item.alias || item.name || item.device_name || '小米音箱';
+              const rawName = item.name || item.alias || item.device_name || '小米音箱';
               const cleanName = String(rawName).replace(/\s*[\(（]点击(右侧)?编辑[\)）]/g, '').trim();
               const hardware = item.hardware || item.model || 'XiaoAi';
               const model = item.model || (item.hardware ? `xiaomi.wifispeaker.${item.hardware.toLowerCase()}` : 'xiaomi.wifispeaker');
@@ -398,7 +494,7 @@ export class XiaoAiResolverEngine {
                 did,
                 model,
                 name: `${cleanName} [${region.code.toUpperCase()}]`,
-                ip: item.currentIp || item.localip || undefined,
+                ip: item.localip || item.currentIp || undefined,
                 mac: item.mac || undefined,
                 token: item.token || undefined,
                 hardware,
@@ -419,12 +515,34 @@ export class XiaoAiResolverEngine {
    * 3. MIoT Spec Evaluation: 判断是不是音箱
    * Queries MIoT Spec or checks model capabilities against official schema.
    */
-  public async evaluateMiotSpec(model: string): Promise<{ isSpeaker: boolean; capabilities: DeviceCapabilities; reason: string }> {
+  public async evaluateMiotSpec(model: string, name?: string, hardware?: string): Promise<{ isSpeaker: boolean; capabilities: DeviceCapabilities; reason: string }> {
     const normalizedModel = (model || '').toLowerCase().trim();
+    const normalizedName = (name || '').toLowerCase().trim();
+    const normalizedHardware = (hardware || '').toLowerCase().trim();
+
+    // 0. Quick speaker match by hardware or name
+    if (
+      normalizedName.includes('小爱') ||
+      normalizedName.includes('音箱') ||
+      normalizedName.includes('soundbox') ||
+      normalizedName.includes('speaker') ||
+      /^(lx|l05|l06|l07|l09|l15|l16|l17|s12|x08|x10|mdz)/i.test(normalizedHardware)
+    ) {
+      return {
+        isSpeaker: true,
+        reason: '设备名称或硬件特征匹配小爱音箱系列 (XiaoAi Hardware/Name Match)',
+        capabilities: {
+          hasPlayControl: true,
+          hasTts: true,
+          hasVolumeControl: true,
+          hasClock: /clock|c01|x08|lx04|l05c/i.test(normalizedModel + normalizedHardware),
+          supportsDlna: /lx06|pro|sound|l16a/i.test(normalizedModel + normalizedHardware),
+          supportsLocalMiio: true
+        }
+      };
+    }
 
     // 0. miIO UDP 54321 packet alone does NOT mean the device is an XiaoAi speaker!
-    // Many Xiaomi IoT devices (air purifiers, vacuum robots, smart plugs, light bulbs, gateways, cameras)
-    // respond to miIO UDP 54321. Without cloud model resolution or token-based miIO.info, model is unknown.
     if (
       !normalizedModel ||
       normalizedModel === 'miio.device.unknown' ||
@@ -466,7 +584,7 @@ export class XiaoAiResolverEngine {
     }
 
     // 3. Check model keywords for speaker/xiaoai
-    if (/wifispeaker|speaker|xiaoai|soundbox|sound/i.test(normalizedModel)) {
+    if (/wifispeaker|speaker|xiaoai|soundbox|sound|mico|audioplayer|lx0|lx1|lx5|l05|l06|l07|l09|l15|l16|l17|s12|x08|x10|x6a/i.test(normalizedModel)) {
       return {
         isSpeaker: true,
         reason: '设备型号归属于小爱音频设备系列 (Xiaomi Speaker Family)',
@@ -552,6 +670,7 @@ export class XiaoAiResolverEngine {
     serviceToken?: string;
     subnetPrefix?: string;
     existingDevices?: any[];
+    activeStreamIps?: string[];
   }): Promise<{
     xiaoAiDevices: XiaoAiDevice[];
     ignoredDevices: IgnoredDevice[];
@@ -563,7 +682,7 @@ export class XiaoAiResolverEngine {
       nonSpeakerIgnored: number;
     };
   }> {
-    const { userId = '', serviceToken = '', subnetPrefix, existingDevices = [] } = options;
+    const { userId = '', serviceToken = '', subnetPrefix, existingDevices = [], activeStreamIps = [] } = options;
 
     // Run LAN Discovery and Cloud Discovery in parallel
     const [lanList, cloudList] = await Promise.all([
@@ -644,9 +763,6 @@ export class XiaoAiResolverEngine {
     }
 
     // 2. Process LAN-only devices
-    // IMPORTANT: miIO UDP 54321 response alone only indicates a miIO device exists on the LAN.
-    // It could be an air purifier, vacuum robot, light bulb, smart plug, gateway, etc.
-    // It is NEVER automatically assumed to be an XiaoAi speaker!
     for (const [did, lDev] of lanMap.entries()) {
       if (!mergedMap.has(did)) {
         const exDev = existingMap.get(did);
@@ -663,7 +779,7 @@ export class XiaoAiResolverEngine {
           } catch {}
         }
 
-        // If still no model, mark it as unknown miIO device (DO NOT fake or assume it is a speaker!)
+        // If still no model, mark it as unknown miIO device
         if (!model) {
           model = 'miio.device.unknown';
           name = `局域网 miIO 设备 (${lDev.ip})`;
@@ -690,26 +806,53 @@ export class XiaoAiResolverEngine {
       if (!mergedMap.has(did)) {
         mergedMap.set(did, {
           did,
-          model: exDev.model || 'miio.device.unknown',
-          name: exDev.name || '小米智能设备',
+          model: exDev.model || 'xiaomi.wifispeaker',
+          name: exDev.name || '小米智能音箱',
           ip: exDev.ip,
           mac: exDev.mac,
           token: exDev.token,
           source: exDev.source || (exDev.ip ? 'lan' : 'cloud'),
           platform: exDev.platform || (exDev.token && exDev.ip ? 'miio' : 'mina'),
           online: exDev.isOnline ?? exDev.online ?? false,
-          hardware: exDev.hardware,
+          hardware: exDev.hardware || 'XiaoAi',
           existingStatus: exDev.status
         });
       }
     }
 
-    // 4. Pass through MIoT Spec: 判断是不是音箱
+    // 4. Incorporate active stream IPs (e.g. speakers requesting audio streams like 192.168.50.120)
+    for (const ip of activeStreamIps) {
+      if (ip && ip !== '127.0.0.1' && ip !== 'localhost') {
+        const cleanIp = ip.trim();
+        const existingWithIp = Array.from(mergedMap.values()).find(d => d.ip === cleanIp);
+        if (!existingWithIp) {
+          const autoDid = `detected_${cleanIp.replace(/[^0-9]/g, '')}`;
+          mergedMap.set(autoDid, {
+            did: autoDid,
+            model: 'xiaomi.wifispeaker.sound',
+            name: `小爱音箱 (局域网 ${cleanIp})`,
+            ip: cleanIp,
+            source: 'lan',
+            platform: 'miio',
+            online: true,
+            hardware: 'XiaoAi Smart Speaker',
+            existingStatus: {
+              playing: true,
+              volume: 50,
+              muted: false,
+              updatedAt: new Date().toISOString()
+            }
+          });
+        }
+      }
+    }
+
+    // 5. Pass through MIoT Spec: 判断是不是音箱
     const xiaoAiDevices: XiaoAiDevice[] = [];
     const ignoredDevices: IgnoredDevice[] = [];
 
     for (const item of mergedMap.values()) {
-      const evaluation = await this.evaluateMiotSpec(item.model);
+      const evaluation = await this.evaluateMiotSpec(item.model, item.name, item.hardware);
 
       if (evaluation.isSpeaker) {
         // 是 -> XiaoAi 设备

@@ -1441,6 +1441,7 @@ let xiaomiDevices: any[] = rawXiaomiDevices.map((d: any) => {
   };
 });
 let miotConfig = loadJson(CONFIG_FILE, DEFAULT_CONFIG);
+const activeStreamIps = new Set<string>();
 
 // Clean up any corrupt state from previous sessions (e.g. userId="undefined" or empty serviceToken while isLoggedIn=true)
 if (
@@ -2388,7 +2389,12 @@ function parseServiceTokenAndUserId(inputUid: string, inputToken: string): { use
 // Helper to query Xiaomi smart speaker device list from Mina Cloud API & Xiaomi Home APIs
 async function queryXiaomiMinaDevices(userId: string, serviceToken: string): Promise<any[]> {
   try {
-    const res = await xiaoaiResolverEngine.resolveDevices({ userId, serviceToken, existingDevices: xiaomiDevices });
+    const res = await xiaoaiResolverEngine.resolveDevices({
+      userId,
+      serviceToken,
+      existingDevices: xiaomiDevices,
+      activeStreamIps: Array.from(activeStreamIps)
+    });
     return res.xiaoAiDevices;
   } catch (err: any) {
     console.warn('queryXiaomiMinaDevices pipeline error:', err.message);
@@ -2433,7 +2439,8 @@ async function authenticateXiaomiPassport(user: string, pass: string): Promise<{
     const resolveResult = await xiaoaiResolverEngine.resolveDevices({
       userId: result.userId,
       serviceToken: result.serviceToken,
-      existingDevices: xiaomiDevices
+      existingDevices: xiaomiDevices,
+      activeStreamIps: Array.from(activeStreamIps)
     });
     devices = resolveResult.xiaoAiDevices;
   } catch (devErr: any) {
@@ -2557,7 +2564,8 @@ app.post('/api/miot/login', async (req: Request, res: Response) => {
       const resolveResult = await xiaoaiResolverEngine.resolveDevices({
         userId: cleanUid,
         serviceToken: cleanToken,
-        existingDevices: xiaomiDevices
+        existingDevices: xiaomiDevices,
+        activeStreamIps: Array.from(activeStreamIps)
       });
       syncedDevices = resolveResult.xiaoAiDevices;
       if (syncedDevices && syncedDevices.length > 0) {
@@ -2759,7 +2767,8 @@ app.post('/api/miot/passport/qrcode/check', async (req: Request, res: Response) 
       const resolvePromise = xiaoaiResolverEngine.resolveDevices({
         userId: checkRes.userId,
         serviceToken: serviceToken,
-        existingDevices: xiaomiDevices
+        existingDevices: xiaomiDevices,
+        activeStreamIps: Array.from(activeStreamIps)
       });
       const timeoutPromise = new Promise<any>((resolve) => 
         setTimeout(() => resolve({ xiaoAiDevices: xiaomiDevices }), 6000)
@@ -2946,7 +2955,8 @@ app.post('/api/miot/devices/scan-subnet', async (req: Request, res: Response) =>
       userId: miotConfig.userId,
       serviceToken: miotConfig.serviceToken,
       subnetPrefix: subnetPrefix ? String(subnetPrefix).trim() : undefined,
-      existingDevices: xiaomiDevices
+      existingDevices: xiaomiDevices,
+      activeStreamIps: Array.from(activeStreamIps)
     });
 
     if (result.xiaoAiDevices.length > 0) {
@@ -3232,7 +3242,8 @@ app.post('/api/miot/devices/resolve', async (req: Request, res: Response) => {
       userId: miotConfig.userId,
       serviceToken: miotConfig.serviceToken,
       subnetPrefix,
-      existingDevices: xiaomiDevices
+      existingDevices: xiaomiDevices,
+      activeStreamIps: Array.from(activeStreamIps)
     });
 
     if (result.xiaoAiDevices.length > 0) {
@@ -3277,7 +3288,8 @@ app.post('/api/miot/devices/scan', async (req: Request, res: Response) => {
       userId: miotConfig.userId,
       serviceToken: miotConfig.serviceToken,
       subnetPrefix,
-      existingDevices: xiaomiDevices
+      existingDevices: xiaomiDevices,
+      activeStreamIps: Array.from(activeStreamIps)
     });
 
     if (result.xiaoAiDevices.length > 0) {
@@ -3877,6 +3889,10 @@ const streamAudioHandler = async (req: Request, res: Response) => {
       (miotConfig.activeDeviceId ? xiaomiDevices.find(d => d.did === miotConfig.activeDeviceId) : null);
     const resolvedDid = matchedDev?.did || '';
     const resolvedModel = matchedDev?.model || 'wifispeaker';
+
+    if (clientIp && clientIp !== '127.0.0.1' && clientIp !== 'localhost') {
+      activeStreamIps.add(clientIp);
+    }
 
     // Diagnostic Stream Fetch Log Entry
     const streamLogEntry = {
