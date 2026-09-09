@@ -1443,25 +1443,60 @@ let xiaomiDevices: any[] = rawXiaomiDevices.map((d: any) => {
 let miotConfig = loadJson(CONFIG_FILE, DEFAULT_CONFIG);
 const activeStreamIps = new Set<string>();
 
-// Auto-recover session from passToken on startup if available
-if ((miotConfig as any).passToken && (!miotConfig.serviceToken || !miotConfig.userId || !miotConfig.isLoggedIn)) {
+// Auto-recover session and speaker devices from passToken on startup if available
+if ((miotConfig as any).passToken) {
   const candidateUid = miotConfig.userId || (miotConfig as any).cUserId || '0';
-  xiaomiPassport.fetchAdditionalStsToken(candidateUid, (miotConfig as any).passToken, 'micoapi')
-    .then((sts) => {
-      if (sts.serviceToken) {
-        miotConfig.serviceToken = sts.serviceToken;
-        (miotConfig as any).micoServiceToken = sts.serviceToken;
-        if (sts.ssecurity) (miotConfig as any).ssecurity = sts.ssecurity;
-        if (sts.userId) {
-          miotConfig.userId = sts.userId;
-          miotConfig.miUser = `uid_${sts.userId}`;
-        }
-        miotConfig.isLoggedIn = true;
-        saveJson(CONFIG_FILE, miotConfig);
-        console.log('[Auth] Restored active session via stored passToken for user:', miotConfig.userId);
+  Promise.allSettled([
+    xiaomiPassport.fetchAdditionalStsToken(candidateUid, (miotConfig as any).passToken, 'micoapi'),
+    xiaomiPassport.fetchAdditionalStsToken(candidateUid, (miotConfig as any).passToken, 'xiaomiio')
+  ]).then(async ([micoRes, ioRes]) => {
+    let micoToken = micoRes.status === 'fulfilled' ? micoRes.value.serviceToken : '';
+    let ioToken = ioRes.status === 'fulfilled' ? ioRes.value.serviceToken : '';
+    let recoveredUid = (micoRes.status === 'fulfilled' && micoRes.value.userId) || (ioRes.status === 'fulfilled' && ioRes.value.userId) || candidateUid;
+    let ssec = (micoRes.status === 'fulfilled' && micoRes.value.ssecurity) || (ioRes.status === 'fulfilled' && ioRes.value.ssecurity) || (miotConfig as any).ssecurity;
+
+    if (micoToken || ioToken) {
+      miotConfig.serviceToken = micoToken || ioToken;
+      (miotConfig as any).micoServiceToken = micoToken || miotConfig.serviceToken;
+      (miotConfig as any).xiaomiioServiceToken = ioToken || miotConfig.serviceToken;
+      if (ssec) (miotConfig as any).ssecurity = ssec;
+      if (recoveredUid && recoveredUid !== '0') {
+        miotConfig.userId = recoveredUid;
+        miotConfig.miUser = `uid_${recoveredUid}`;
       }
-    })
-    .catch((err) => console.warn('[Auth] passToken startup recovery skipped:', err.message));
+      miotConfig.isLoggedIn = true;
+      saveJson(CONFIG_FILE, miotConfig);
+      console.log('[Auth] Restored active dual-channel session via stored passToken for user:', miotConfig.userId);
+
+      // Auto resolve XiaoAi devices
+      try {
+        const resolveResult = await xiaoaiResolverEngine.resolveDevices({
+          userId: miotConfig.userId,
+          serviceToken: micoToken || miotConfig.serviceToken,
+          xiaomiioServiceToken: ioToken || miotConfig.serviceToken,
+          ssecurity: ssec,
+          existingDevices: xiaomiDevices,
+          activeStreamIps: Array.from(activeStreamIps)
+        });
+        if (resolveResult.xiaoAiDevices && resolveResult.xiaoAiDevices.length > 0) {
+          xiaomiDevices = resolveResult.xiaoAiDevices;
+          if (!miotConfig.activeDeviceId || !xiaomiDevices.some(d => d.did === miotConfig.activeDeviceId)) {
+            miotConfig.activeDeviceId = xiaomiDevices[0].did;
+          }
+          saveJson(DEVICES_FILE, xiaomiDevices);
+          saveJson(CONFIG_FILE, miotConfig);
+          console.log(`[Discovery] Auto-restored ${xiaomiDevices.length} XiaoAi speakers from cloud`);
+        }
+      } catch (err: any) {
+        console.warn('[Discovery] Device auto-resolution warning:', err.message);
+      }
+
+      // Connect Mina WS
+      try {
+        minaWsClient.connect(miotConfig.userId, micoToken || miotConfig.serviceToken, miotConfig.activeDeviceId || '');
+      } catch {}
+    }
+  }).catch((err) => console.warn('[Auth] passToken startup recovery skipped:', err.message));
 }
 
 // Auto-connect Mina WebSocket in background if logged in
@@ -2367,11 +2402,21 @@ app.post('/api/miot/config', (req: Request, res: Response) => {
   if (!checkMiotAdminPermission(req, res)) return;
 
   const incoming = { ...req.body };
-  // If serviceToken was not provided or masked with asterisks, keep current token
-  if (incoming.serviceToken === undefined || (typeof incoming.serviceToken === 'string' && incoming.serviceToken.includes('****'))) {
-    incoming.serviceToken = miotConfig.serviceToken;
+  // Never overwrite real tokens if incoming contains masked bullets or asterisks or empty string
+  if (!incoming.serviceToken || incoming.serviceToken.includes('****') || incoming.serviceToken.includes('••••')) {
+    delete incoming.serviceToken;
   }
+  // Never wipe internal tokens unless explicitly provided
+  if (!incoming.passToken && (miotConfig as any).passToken) delete incoming.passToken;
+  if (!incoming.ssecurity && (miotConfig as any).ssecurity) delete incoming.ssecurity;
+  if (!incoming.xiaomiioServiceToken && (miotConfig as any).xiaomiioServiceToken) delete incoming.xiaomiioServiceToken;
+  if (!incoming.micoServiceToken && (miotConfig as any).micoServiceToken) delete incoming.micoServiceToken;
+  if (!incoming.userId && miotConfig.userId) delete incoming.userId;
+
   miotConfig = { ...miotConfig, ...incoming };
+  if ((miotConfig as any).passToken || (miotConfig.serviceToken && miotConfig.userId)) {
+    miotConfig.isLoggedIn = true;
+  }
   saveJson(CONFIG_FILE, miotConfig);
   castLogs.unshift({
     id: `log-${Date.now()}`,
