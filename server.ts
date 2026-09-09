@@ -2753,27 +2753,30 @@ app.post('/api/miot/passport/qrcode/check', async (req: Request, res: Response) 
       minaWsClient.connect(checkRes.userId, serviceToken, miotConfig.activeDeviceId || '');
     } catch {}
 
-    // Auto sync devices using the full Dual-Track Pipeline
+    // Auto sync devices using the full Dual-Track Pipeline (with 6s timeout guard)
     let devices: any[] = [];
     try {
-      const resolveResult = await xiaoaiResolverEngine.resolveDevices({
+      const resolvePromise = xiaoaiResolverEngine.resolveDevices({
         userId: checkRes.userId,
         serviceToken: serviceToken,
         existingDevices: xiaomiDevices
       });
-      devices = resolveResult.xiaoAiDevices;
+      const timeoutPromise = new Promise<any>((resolve) => 
+        setTimeout(() => resolve({ xiaoAiDevices: xiaomiDevices }), 6000)
+      );
+      const resolveResult = await Promise.race([resolvePromise, timeoutPromise]);
+      devices = resolveResult.xiaoAiDevices || [];
       if (devices && devices.length > 0) {
         xiaomiDevices = devices;
         if (!miotConfig.activeDeviceId || !xiaomiDevices.some(d => d.did === miotConfig.activeDeviceId)) {
           miotConfig.activeDeviceId = xiaomiDevices[0].did;
         }
-      } else {
-        xiaomiDevices = [];
-        miotConfig.activeDeviceId = '';
       }
       saveJson(DEVICES_FILE, xiaomiDevices);
       saveJson(CONFIG_FILE, miotConfig);
-    } catch {}
+    } catch (err: any) {
+      console.warn('Auto resolve devices error:', err.message);
+    }
 
     const qrSyncDetail = devices.length > 0
       ? `用户ID: ${checkRes.userId} | 成功建立 Mina 长连接并同步 ${devices.length} 台音箱`
@@ -3870,6 +3873,11 @@ const streamAudioHandler = async (req: Request, res: Response) => {
     const isPartial = Boolean(range);
     const nowStr = new Date().toLocaleTimeString();
 
+    const matchedDev = xiaomiDevices.find(d => d.ip && clientIp.includes(d.ip)) || 
+      (miotConfig.activeDeviceId ? xiaomiDevices.find(d => d.did === miotConfig.activeDeviceId) : null);
+    const resolvedDid = matchedDev?.did || '';
+    const resolvedModel = matchedDev?.model || 'wifispeaker';
+
     // Diagnostic Stream Fetch Log Entry
     const streamLogEntry = {
       id: `log-stream-${Date.now()}`,
@@ -3879,6 +3887,8 @@ const streamAudioHandler = async (req: Request, res: Response) => {
       detail: `${isPartial ? 'HTTP 206 Partial Content (Range)' : 'HTTP 200 OK (Full Stream)'} | 来自: ${clientIp}`,
       success: true,
       ip: clientIp,
+      did: resolvedDid,
+      model: resolvedModel,
       protocol: 'HTTP Stream',
       requestMethod: `GET /api/stream/${songId}`,
       httpStatus: isPartial ? 206 : 200,

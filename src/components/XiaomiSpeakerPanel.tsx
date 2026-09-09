@@ -46,7 +46,8 @@ import {
   Zap,
   Sliders,
   Eye,
-  Layers
+  Layers,
+  ArrowRight
 } from 'lucide-react';
 import { XiaomiDevice, MiotConfig, CastLog, Song, DeviceCommandState } from '../types';
 import { apiFetch, getAuthToken } from '../utils/api';
@@ -124,6 +125,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
   const [qrStatusText, setQrStatusText] = useState<string>('等待生成二维码');
   const [isGeneratingQr, setIsGeneratingQr] = useState(false);
   const [isPollingQr, setIsPollingQr] = useState(false);
+  const [qrSyncSuccess, setQrSyncSuccess] = useState<{ user: string; count: number } | null>(null);
   const qrPollingTimerRef = useRef<any>(null);
 
   // Mina WebSocket Live Monitor State
@@ -148,6 +150,9 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
   const [subnetPrefix, setSubnetPrefix] = useState('192.168.31');
   const [isScanningSubnet, setIsScanningSubnet] = useState(false);
   const [subnetScanResult, setSubnetScanResult] = useState<string | null>(null);
+
+  // Auto-detected active speaker from recent stream logs
+  const detectedStreamLog = castLogs?.find(l => l.ip && l.ip !== '127.0.0.1' && !devices.some(d => d.ip === l.ip));
 
   // Dual-Track & MIoT Spec Resolution State
   const [isResolving, setIsResolving] = useState(false);
@@ -235,6 +240,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
   const handleGenerateQrCode = async () => {
     setIsGeneratingQr(true);
     setLoginError(null);
+    setQrSyncSuccess(null);
     setQrStatusText('正在向小米认证中心申请安全登录二维码...');
     try {
       const res = await apiFetch('/api/miot/passport/qrcode/get');
@@ -291,11 +297,16 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
         } else if (data.status === 'confirmed' && data.success) {
           clearInterval(qrPollingTimerRef.current);
           setIsPollingQr(false);
-          setQrStatusText('✅ 登录成功！正在同步音箱设备...');
-          setLoginSuccessMsg(`小米扫码绑定成功: ${data.user || '已授权'}`);
+          const deviceCount = Array.isArray(data.devices) ? data.devices.length : 0;
+          const userStr = data.user || '已授权用户';
+          
+          setQrSyncSuccess({ user: userStr, count: deviceCount });
+          setQrStatusText(`✅ 登录与同步完成！共发现 ${deviceCount} 台小爱音箱设备`);
+          setLoginSuccessMsg(`小米账号绑定成功 (${userStr})，已同步 ${deviceCount} 台音箱设备`);
+          
           onUpdateConfig({
             isLoggedIn: true,
-            miUser: data.user,
+            miUser: userStr,
             bindMode: 'account',
             ...(data.config || {})
           });
@@ -303,7 +314,13 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
             onDevicesUpdated?.(data.devices);
           }
           setShowLoginSuccess(true);
-          setTimeout(() => setShowLoginSuccess(false), 4000);
+          
+          // Auto switch to devices tab after 1.8s so user directly sees the speakers!
+          setTimeout(() => {
+            setBindMode('account');
+            setActiveSubTab('devices');
+            setShowLoginSuccess(false);
+          }, 1800);
         } else if (data.status === 'expired') {
           clearInterval(qrPollingTimerRef.current);
           setIsPollingQr(false);
@@ -1367,6 +1384,37 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                   )}
                 </p>
               </div>
+
+              {/* Detected Speaker from Audio Stream Log Banner */}
+              {detectedStreamLog && (
+                <div className="max-w-lg mx-auto p-4 rounded-2xl bg-gradient-to-r from-emerald-500/15 via-teal-500/10 to-emerald-500/15 border border-emerald-500/30 text-left space-y-3 shadow-lg animate-fadeIn">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+                      <span className="text-xs font-bold text-emerald-300">📡 捕获到活跃小爱音箱连接</span>
+                    </div>
+                    <span className="text-[10px] text-zinc-400 font-mono">{detectedStreamLog.timestamp}</span>
+                  </div>
+                  <p className="text-xs text-zinc-300 leading-relaxed">
+                    检测到来自 <strong className="text-emerald-300 font-mono">{detectedStreamLog.ip}</strong> 的音频流请求（<code className="text-emerald-400">HTTP 206</code> 接管成功），音箱已在拉取播放！可直接一键添加至受控列表：
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onAddDevice?.({
+                        name: `小爱音箱 (${detectedStreamLog.ip})`,
+                        ip: detectedStreamLog.ip!,
+                        model: detectedStreamLog.model || 'wifispeaker',
+                        hardware: 'XiaoAi Smart Speaker'
+                      });
+                    }}
+                    className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold text-xs shadow transition active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>一键收录此音箱 (IP: {detectedStreamLog.ip})</span>
+                  </button>
+                </div>
+              )}
 
               {/* Suggestions / Guidance */}
               <div className="max-w-lg mx-auto p-4 rounded-2xl bg-zinc-950/60 border border-white/5 text-left space-y-2.5 text-xs">
@@ -2775,73 +2823,118 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                     小米安全扫码授权登录
                   </h4>
 
-                  <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-[11px] text-emerald-200/90 text-left space-y-1.5">
-                    <p className="font-semibold flex items-center gap-1.5 text-emerald-300 text-xs">
-                      <Check className="w-4 h-4 flex-shrink-0 text-emerald-400" />
-                      支持「米家 App」直接扫码授权
-                    </p>
-                    <p className="text-zinc-300 text-[11px] leading-relaxed">
-                      已切换为官方<strong>米家 (MIoT) 原生授权二维码</strong>，你可以通过以下方式扫码：
-                    </p>
-                    <ul className="list-disc list-inside space-y-1 text-emerald-200/80 pl-1 leading-relaxed">
-                      <li><strong>方式 1（推荐）</strong>：打开<strong>【米家 App】➔ 右上角「+」或「扫一扫」</strong>，扫描二维码并在手机上点击<strong>确认授权</strong>。</li>
-                      <li><strong>方式 2</strong>：使用手机自带<strong>【系统相机】</strong>或<strong>【微信扫一扫】</strong>对准二维码打开授权页。</li>
-                      <li><strong>方式 3（小米/Redmi 手机）</strong>：进入手机<strong>【设置】➔ 顶部【小米账号】➔ 右上角【扫一扫】</strong>。</li>
-                    </ul>
-                  </div>
-
-                  <div className="p-4 bg-white rounded-2xl inline-block shadow-lg relative my-2">
-                    {isGeneratingQr ? (
-                      <div className="w-56 h-56 flex flex-col items-center justify-center gap-2 text-zinc-600">
-                        <RefreshCw className="w-8 h-8 animate-spin text-[#FF6700]" />
-                        <span className="text-xs">正在申请二维码...</span>
+                  {qrSyncSuccess || (qrStatusText && (qrStatusText.includes('登录成功') || qrStatusText.includes('同步完成'))) ? (
+                    <div className="p-6 rounded-2xl bg-gradient-to-b from-emerald-500/15 to-emerald-500/5 border border-emerald-500/30 text-center space-y-4 my-2">
+                      <div className="w-16 h-16 rounded-full bg-emerald-500/20 border-2 border-emerald-500/60 flex items-center justify-center mx-auto text-emerald-400 shadow-[0_0_25px_rgba(16,185,129,0.35)]">
+                        <Check className="w-8 h-8 stroke-[3]" />
                       </div>
-                    ) : qrCodeData?.qrUrl ? (
-                      <img
-                        src={qrCodeData.qrUrl}
-                        alt="Xiaomi QR Code"
-                        className="w-56 h-56 rounded-lg object-contain mx-auto"
-                      />
-                    ) : (
-                      <div className="w-56 h-56 flex flex-col items-center justify-center gap-2 text-zinc-600">
-                        <QrCode className="w-10 h-10 text-zinc-400" />
-                        <span className="text-xs">暂无可用二维码</span>
+                      <div className="space-y-1">
+                        <h4 className="text-base font-bold text-white flex items-center justify-center gap-1.5">
+                          <span>小米账号授权成功</span>
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-normal">已连接</span>
+                        </h4>
+                        <p className="text-xs text-zinc-300">
+                          账号：<span className="text-emerald-300 font-semibold">{qrSyncSuccess?.user || miotConfig.miUser || '已授权'}</span>
+                        </p>
+                        <p className="text-xs text-zinc-400 mt-1">
+                          {(qrSyncSuccess?.count ?? devices.length) > 0 
+                            ? `已成功同步 ${(qrSyncSuccess?.count ?? devices.length)} 台小爱音箱设备` 
+                            : '已完成账号绑定，云端与长连接准备就绪'}
+                        </p>
                       </div>
-                    )}
-                  </div>
 
-                  <div className="space-y-2.5">
-                    <div className="flex items-center justify-center gap-2 text-xs">
-                      {isPollingQr && <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />}
-                      <span className="text-zinc-300 font-medium">
-                        {qrStatusText || '请使用米家 App 扫码'}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center justify-center gap-2 flex-wrap">
-                      <button
-                        type="button"
-                        onClick={handleGenerateQrCode}
-                        disabled={isGeneratingQr}
-                        className="px-3.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-zinc-200 border border-white/10 transition active:scale-95 disabled:opacity-50 flex items-center justify-center gap-1.5 cursor-pointer"
-                      >
-                        <RefreshCw className={`w-3.5 h-3.5 ${isGeneratingQr ? 'animate-spin text-[#FF6700]' : ''}`} />
-                        <span>刷新二维码</span>
-                      </button>
-
-                      {(qrCodeData?.qr || qrCodeData?.loginUrl) && (
+                      <div className="pt-2 flex flex-col gap-2.5">
                         <button
                           type="button"
-                          onClick={() => copyToClipboard(qrCodeData.qr || qrCodeData.loginUrl!, 'qr_link')}
-                          className="px-3.5 py-1.5 rounded-xl bg-[#FF6700]/20 hover:bg-[#FF6700]/30 text-xs font-semibold text-[#FF6700] border border-[#FF6700]/30 transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
-                          title="复制手机端授权登录网页链接"
+                          onClick={() => {
+                            setBindMode('account');
+                            setActiveSubTab('devices');
+                          }}
+                          className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-semibold text-xs shadow-lg transition active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
                         >
-                          {copiedKey === 'qr_link' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-                          <span>{copiedKey === 'qr_link' ? '已复制登录链接' : '复制授权登录链接'}</span>
+                          <span>立即前往音箱设备列表</span>
+                          <ArrowRight className="w-4 h-4" />
                         </button>
-                      )}
+                        <button
+                          type="button"
+                          onClick={handleGenerateQrCode}
+                          className="text-xs text-zinc-400 hover:text-zinc-200 transition py-1"
+                        >
+                          重新扫码更换账号
+                        </button>
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <>
+                      <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-[11px] text-emerald-200/90 text-left space-y-1.5">
+                        <p className="font-semibold flex items-center gap-1.5 text-emerald-300 text-xs">
+                          <Check className="w-4 h-4 flex-shrink-0 text-emerald-400" />
+                          支持「米家 App」直接扫码授权
+                        </p>
+                        <p className="text-zinc-300 text-[11px] leading-relaxed">
+                          已切换为官方<strong>米家 (MIoT) 原生授权二维码</strong>，你可以通过以下方式扫码：
+                        </p>
+                        <ul className="list-disc list-inside space-y-1 text-emerald-200/80 pl-1 leading-relaxed">
+                          <li><strong>方式 1（推荐）</strong>：打开<strong>【米家 App】➔ 右上角「+」或「扫一扫」</strong>，扫描二维码并在手机上点击<strong>确认授权</strong>。</li>
+                          <li><strong>方式 2</strong>：使用手机自带<strong>【系统相机】</strong>或<strong>【微信扫一扫】</strong>对准二维码打开授权页。</li>
+                          <li><strong>方式 3（小米/Redmi 手机）</strong>：进入手机<strong>【设置】➔ 顶部【小米账号】➔ 右上角【扫一扫】</strong>。</li>
+                        </ul>
+                      </div>
+
+                      <div className="p-4 bg-white rounded-2xl inline-block shadow-lg relative my-2">
+                        {isGeneratingQr ? (
+                          <div className="w-56 h-56 flex flex-col items-center justify-center gap-2 text-zinc-600">
+                            <RefreshCw className="w-8 h-8 animate-spin text-[#FF6700]" />
+                            <span className="text-xs">正在申请二维码...</span>
+                          </div>
+                        ) : qrCodeData?.qrUrl ? (
+                          <img
+                            src={qrCodeData.qrUrl}
+                            alt="Xiaomi QR Code"
+                            className="w-56 h-56 rounded-lg object-contain mx-auto"
+                          />
+                        ) : (
+                          <div className="w-56 h-56 flex flex-col items-center justify-center gap-2 text-zinc-600">
+                            <QrCode className="w-10 h-10 text-zinc-400" />
+                            <span className="text-xs">暂无可用二维码</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="space-y-2.5">
+                        <div className="flex items-center justify-center gap-2 text-xs">
+                          {isPollingQr && <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />}
+                          <span className="text-zinc-300 font-medium">
+                            {qrStatusText || '请使用米家 App 扫码'}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-center gap-2 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={handleGenerateQrCode}
+                            disabled={isGeneratingQr}
+                            className="px-3.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-zinc-200 border border-white/10 transition active:scale-95 disabled:opacity-50 flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            <RefreshCw className={`w-3.5 h-3.5 ${isGeneratingQr ? 'animate-spin text-[#FF6700]' : ''}`} />
+                            <span>刷新二维码</span>
+                          </button>
+
+                          {(qrCodeData?.qr || qrCodeData?.loginUrl) && (
+                            <button
+                              type="button"
+                              onClick={() => copyToClipboard(qrCodeData.qr || qrCodeData.loginUrl!, 'qr_link')}
+                              className="px-3.5 py-1.5 rounded-xl bg-[#FF6700]/20 hover:bg-[#FF6700]/30 text-xs font-semibold text-[#FF6700] border border-[#FF6700]/30 transition active:scale-95 flex items-center justify-center gap-1.5 cursor-pointer"
+                              title="复制手机端授权登录网页链接"
+                            >
+                              {copiedKey === 'qr_link' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                              <span>{copiedKey === 'qr_link' ? '已复制登录链接' : '复制授权登录链接'}</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             )}
@@ -3317,6 +3410,32 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                       </React.Fragment>
                     ))}
                   </div>
+
+                  {/* Inline One-Click Add Action if IP is not yet in devices */}
+                  {log.ip && log.ip !== '127.0.0.1' && !devices.some(d => d.ip === log.ip) && (
+                    <div className="mt-3 pt-2.5 border-t border-white/5 flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-1.5 text-xs text-zinc-400">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                        <span>检测到局域网音箱活跃 IP: <strong className="text-emerald-300 font-mono">{log.ip}</strong></span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onAddDevice?.({
+                            name: `小爱音箱 (${log.ip})`,
+                            ip: log.ip!,
+                            model: log.model || 'wifispeaker',
+                            hardware: 'XiaoAi Smart Speaker'
+                          });
+                          setActiveSubTab('devices');
+                        }}
+                        className="px-3 py-1 rounded-xl bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 text-xs font-semibold border border-emerald-500/30 flex items-center gap-1.5 transition active:scale-95 cursor-pointer shadow-sm"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>一键添加此音箱至列表</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))
             )}

@@ -285,8 +285,8 @@ export class XiaoAiResolverEngine {
       `https://api.io.mi.com/app/v2/home/device_list`
     ];
 
-    // Query Mina & MiHome Cloud APIs (China Region first)
-    for (const ep of minaEndpoints) {
+    // Query Mina & MiHome Cloud APIs in parallel with a 3-second timeout per endpoint
+    const queryEndpoint = async (ep: string) => {
       try {
         const isMiot = ep.includes('io.mi.com');
         const headers: Record<string, string> = {
@@ -296,15 +296,15 @@ export class XiaoAiResolverEngine {
           'Cookie': `userId=${cleanUid}; serviceToken=${cleanToken}`
         };
 
-        const res = await fetch(ep, { headers });
-        if (!res.ok) continue;
+        const res = await fetch(ep, { headers, signal: AbortSignal.timeout(3000) });
+        if (!res.ok) return;
 
         const text = await res.text();
         let minaData: any;
         try {
           minaData = JSON.parse(text);
         } catch {
-          continue;
+          return;
         }
 
         const list = extractDevicesFromMinaResponse(minaData);
@@ -350,10 +350,12 @@ export class XiaoAiResolverEngine {
             });
           }
         }
-      } catch (err: any) {
-        console.warn(`[XiaoAi Resolver] Cloud query error (${ep}):`, err.message);
+      } catch {
+        // Individual endpoint error or timeout is safely ignored
       }
-    }
+    };
+
+    await Promise.allSettled(minaEndpoints.map(ep => queryEndpoint(ep)));
 
     // Auto-detect overseas regions if China region returned 0 devices
     if (cloudMap.size === 0) {
