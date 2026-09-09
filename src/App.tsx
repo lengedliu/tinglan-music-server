@@ -263,8 +263,9 @@ export default function App() {
     } else {
       audioRef.current?.play().catch(() => {});
       setIsPlaying(true);
-      if (isCasting && activeDevice) {
-        handleControlDevice(activeDevice.did, 'play');
+      if (isCasting && activeDevice && currentSong) {
+        // Explicitly re-cast the current song stream URL to guarantee the exact track plays
+        castSongToDevice(currentSong, activeDevice);
       }
     }
   };

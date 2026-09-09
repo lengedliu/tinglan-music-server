@@ -1556,6 +1556,18 @@ let castLogs: Array<{
   message: string;
   detail?: string;
   success: boolean;
+  did?: string;
+  ip?: string;
+  model?: string;
+  protocol?: string;
+  requestMethod?: string;
+  httpStatus?: number;
+  miioStatus?: string;
+  minaStatus?: string;
+  errorCode?: string | number;
+  responseTimeMs?: number;
+  streamUrl?: string;
+  steps?: any[];
 }> = [
   {
     id: 'log-1',
@@ -3725,6 +3737,35 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
 
   if (!targetDevice) {
     return res.status(404).json({ success: false, error: '未找到指定音箱设备' });
+  }
+
+  // Reject placeholder/mock device if neither local IP/Token nor Cloud DID exists
+  const isDummyDevice = (!targetDevice.ip && !targetDevice.token && (targetDevice.did === 'wifispeaker' || !targetDevice.did || !targetDevice.did.match(/^\d+$/)));
+  if (isDummyDevice && !miotConfig.isLoggedIn) {
+    const errorMsg = '当前选中的为预设示例音箱，尚未关联真实硬件。请先在【设置】中绑定米家账号，并在【播放协议控制中枢】点击【重新扫描设备】同步真实音箱！';
+    castLogs.unshift({
+      id: `log-${Date.now()}`,
+      timestamp: new Date().toLocaleTimeString(),
+      type: 'error',
+      message: `投放失败【${targetDevice.name}】`,
+      detail: `✕ ${errorMsg}`,
+      success: false,
+      did: targetDevice.did,
+      ip: '未配置',
+      model: targetDevice.model,
+      protocol: 'MIoT / miIO',
+      requestMethod: 'POST /api/miot/cast',
+      httpStatus: 400,
+      errorCode: 'ERR_DUMMY_DEVICE',
+      responseTimeMs: 2
+    });
+    if (castLogs.length > 50) castLogs.pop();
+
+    return res.status(400).json({
+      success: false,
+      error: errorMsg,
+      message: errorMsg
+    });
   }
 
   // 1. Resolve absolute public stream URL
