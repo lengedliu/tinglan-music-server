@@ -1443,21 +1443,25 @@ let xiaomiDevices: any[] = rawXiaomiDevices.map((d: any) => {
 let miotConfig = loadJson(CONFIG_FILE, DEFAULT_CONFIG);
 const activeStreamIps = new Set<string>();
 
-// Clean up any corrupt state from previous sessions (e.g. userId="undefined" or empty serviceToken while isLoggedIn=true)
-if (
-  miotConfig.userId === 'undefined' ||
-  miotConfig.userId === 'null' ||
-  miotConfig.serviceToken === 'undefined' ||
-  miotConfig.serviceToken === 'null' ||
-  (miotConfig.bindMode === 'account' && (!miotConfig.serviceToken || !miotConfig.userId || miotConfig.userId === 'undefined'))
-) {
-  if (miotConfig.bindMode === 'account') {
-    miotConfig.isLoggedIn = false;
-    miotConfig.userId = '';
-    miotConfig.serviceToken = '';
-    miotConfig.miUser = '';
-    saveJson(CONFIG_FILE, miotConfig);
-  }
+// Auto-recover session from passToken on startup if available
+if ((miotConfig as any).passToken && (!miotConfig.serviceToken || !miotConfig.userId || !miotConfig.isLoggedIn)) {
+  const candidateUid = miotConfig.userId || (miotConfig as any).cUserId || '0';
+  xiaomiPassport.fetchAdditionalStsToken(candidateUid, (miotConfig as any).passToken, 'micoapi')
+    .then((sts) => {
+      if (sts.serviceToken) {
+        miotConfig.serviceToken = sts.serviceToken;
+        (miotConfig as any).micoServiceToken = sts.serviceToken;
+        if (sts.ssecurity) (miotConfig as any).ssecurity = sts.ssecurity;
+        if (sts.userId) {
+          miotConfig.userId = sts.userId;
+          miotConfig.miUser = `uid_${sts.userId}`;
+        }
+        miotConfig.isLoggedIn = true;
+        saveJson(CONFIG_FILE, miotConfig);
+        console.log('[Auth] Restored active session via stored passToken for user:', miotConfig.userId);
+      }
+    })
+    .catch((err) => console.warn('[Auth] passToken startup recovery skipped:', err.message));
 }
 
 // Auto-connect Mina WebSocket in background if logged in
@@ -3550,7 +3554,8 @@ async function callMinaCloudApi(
   pathName: string,
   methodName: string,
   messageObj: any,
-  targetDid?: string
+  targetDid?: string,
+  retryCount: number = 0
 ): Promise<{ success: boolean; data?: any; error?: string; raw?: string; statusCode?: number }> {
   const rawToken = (miotConfig as any).micoServiceToken || miotConfig.serviceToken || '';
   const rawUid = miotConfig.userId || '';
@@ -3558,6 +3563,27 @@ async function callMinaCloudApi(
   // Clean ASCII only to prevent ByteString character code > 255 TypeError
   const activeMicoToken = String(rawToken).replace(/[^\x20-\x7E]/g, '').trim();
   const cleanUid = String(rawUid).replace(/[^\x20-\x7E]/g, '').trim();
+
+  // If token is missing but passToken is available, try auto-refresh
+  if ((!activeMicoToken || !cleanUid) && (miotConfig as any).passToken && retryCount === 0) {
+    try {
+      const refreshed = await xiaomiPassport.fetchAdditionalStsToken(cleanUid || '0', (miotConfig as any).passToken, 'micoapi');
+      if (refreshed.serviceToken) {
+        (miotConfig as any).micoServiceToken = refreshed.serviceToken;
+        miotConfig.serviceToken = refreshed.serviceToken;
+        if (refreshed.ssecurity) (miotConfig as any).ssecurity = refreshed.ssecurity;
+        if (refreshed.userId) {
+          miotConfig.userId = refreshed.userId;
+          miotConfig.miUser = `uid_${refreshed.userId}`;
+        }
+        miotConfig.isLoggedIn = true;
+        saveJson(CONFIG_FILE, miotConfig);
+        return callMinaCloudApi(pathName, methodName, messageObj, targetDid, retryCount + 1);
+      }
+    } catch (err: any) {
+      console.warn('[Mina] Pre-flight STS refresh failed:', err.message);
+    }
+  }
 
   if (!activeMicoToken || !cleanUid || activeMicoToken.includes('••') || activeMicoToken.includes('**')) {
     return {
@@ -3650,6 +3676,22 @@ async function callMinaCloudApi(
         return { success: true, data: resJson, statusCode: 200 };
       } else {
         if (response.status === 401 || responseText.includes('HTTP Status 401') || responseText.includes('Unauthorized')) {
+          // Attempt 1-time auto-refresh if passToken is available
+          if (retryCount === 0 && (miotConfig as any).passToken && cleanUid) {
+            try {
+              const refreshRes = await xiaomiPassport.fetchAdditionalStsToken(cleanUid, (miotConfig as any).passToken, 'micoapi');
+              if (refreshRes.serviceToken) {
+                (miotConfig as any).micoServiceToken = refreshRes.serviceToken;
+                miotConfig.serviceToken = refreshRes.serviceToken;
+                if (refreshRes.ssecurity) (miotConfig as any).ssecurity = refreshRes.ssecurity;
+                saveJson(CONFIG_FILE, miotConfig);
+                return callMinaCloudApi(pathName, methodName, messageObj, targetDid, retryCount + 1);
+              }
+            } catch (rErr: any) {
+              console.warn('[Mina] 401 recovery STS refresh failed:', rErr.message);
+            }
+          }
+
           return {
             success: false,
             statusCode: 401,
@@ -3909,7 +3951,7 @@ app.post('/api/miot/control', async (req: Request, res: Response) => {
   if (!checkMiotControlPermission(req, res)) return;
 
   const { did, action, value } = req.body;
-  const targetDevice = xiaomiDevices.find(d => d.did === did) || xiaomiDevices[0];
+  const targetDevice = xiaomiDevices.find(d => d.did === did || (d as any).deviceID === did) || xiaomiDevices[0];
 
   if (!targetDevice) {
     return res.status(404).json({ error: 'Device not found' });
@@ -3923,25 +3965,45 @@ app.post('/api/miot/control', async (req: Request, res: Response) => {
   let cloudResult: any = null;
   let localMiioResult: any = null;
 
+  const activeMicoToken = (miotConfig as any).micoServiceToken || miotConfig.serviceToken;
+  const activeIoToken = (miotConfig as any).xiaomiioServiceToken || activeMicoToken;
+  const cloudAuth = (miotConfig.userId && activeIoToken) ? {
+    userId: String(miotConfig.userId),
+    serviceToken: activeIoToken,
+    ssecurity: (miotConfig as any).ssecurity
+  } : undefined;
+
   switch (action) {
     case 'play':
       targetDevice.status.playing = true;
       detail = '已发送播放指令';
       if (targetDevice.token && targetDevice.ip) {
-        localMiioResult = await sendMiioCommand(targetDevice.ip, targetDevice.token, 'player_play_operation', ['play']);
+        localMiioResult = await sendMiioCommand(targetDevice.ip, targetDevice.token, 'player_play_operation', ['play'], 2500);
       }
-      if (miotConfig.isLoggedIn && miotConfig.serviceToken && miotConfig.userId) {
+      if (miotConfig.isLoggedIn && activeMicoToken && miotConfig.userId) {
         cloudResult = await callMinaCloudApi('mediaplayer', 'player_play_operation', { action: 'play' }, targetDevice.did);
+        if (!cloudResult?.success && cloudAuth) {
+          try {
+            const rpc = await miotRpcEngine.executeAction(targetDevice, 3, 1, [], cloudAuth);
+            if (rpc.code === 0) cloudResult = { success: true, data: rpc.result };
+          } catch {}
+        }
       }
       break;
     case 'pause':
       targetDevice.status.playing = false;
       detail = '已发送暂停指令';
       if (targetDevice.token && targetDevice.ip) {
-        localMiioResult = await sendMiioCommand(targetDevice.ip, targetDevice.token, 'player_play_operation', ['pause']);
+        localMiioResult = await sendMiioCommand(targetDevice.ip, targetDevice.token, 'player_play_operation', ['pause'], 2500);
       }
-      if (miotConfig.isLoggedIn && miotConfig.serviceToken && miotConfig.userId) {
+      if (miotConfig.isLoggedIn && activeMicoToken && miotConfig.userId) {
         cloudResult = await callMinaCloudApi('mediaplayer', 'player_play_operation', { action: 'pause' }, targetDevice.did);
+        if (!cloudResult?.success && cloudAuth) {
+          try {
+            const rpc = await miotRpcEngine.executeAction(targetDevice, 3, 2, [], cloudAuth);
+            if (rpc.code === 0) cloudResult = { success: true, data: rpc.result };
+          } catch {}
+        }
       }
       break;
     case 'toggle':
@@ -3949,20 +4011,33 @@ app.post('/api/miot/control', async (req: Request, res: Response) => {
       detail = `切换播放状态 -> ${targetDevice.status.playing ? '播放' : '暂停'}`;
       const playOp = targetDevice.status.playing ? 'play' : 'pause';
       if (targetDevice.token && targetDevice.ip) {
-        localMiioResult = await sendMiioCommand(targetDevice.ip, targetDevice.token, 'player_play_operation', [playOp]);
+        localMiioResult = await sendMiioCommand(targetDevice.ip, targetDevice.token, 'player_play_operation', [playOp], 2500);
       }
-      if (miotConfig.isLoggedIn && miotConfig.serviceToken && miotConfig.userId) {
+      if (miotConfig.isLoggedIn && activeMicoToken && miotConfig.userId) {
         cloudResult = await callMinaCloudApi('mediaplayer', 'player_play_operation', { action: playOp }, targetDevice.did);
+        if (!cloudResult?.success && cloudAuth) {
+          try {
+            const aiid = playOp === 'play' ? 1 : 2;
+            const rpc = await miotRpcEngine.executeAction(targetDevice, 3, aiid, [], cloudAuth);
+            if (rpc.code === 0) cloudResult = { success: true, data: rpc.result };
+          } catch {}
+        }
       }
       break;
     case 'volume':
       targetDevice.status.volume = Math.max(0, Math.min(100, Number(value) || 50));
       detail = `设置音箱音量 -> ${targetDevice.status.volume}%`;
       if (targetDevice.token && targetDevice.ip) {
-        localMiioResult = await sendMiioCommand(targetDevice.ip, targetDevice.token, 'player_set_volume', [targetDevice.status.volume]);
+        localMiioResult = await sendMiioCommand(targetDevice.ip, targetDevice.token, 'player_set_volume', [targetDevice.status.volume], 2500);
       }
-      if (miotConfig.isLoggedIn && miotConfig.serviceToken && miotConfig.userId) {
+      if (miotConfig.isLoggedIn && activeMicoToken && miotConfig.userId) {
         cloudResult = await callMinaCloudApi('mediaplayer', 'player_set_volume', { volume: targetDevice.status.volume }, targetDevice.did);
+        if (!cloudResult?.success && cloudAuth) {
+          try {
+            const rpc = await miotRpcEngine.setProperty(targetDevice, 2, 1, targetDevice.status.volume, cloudAuth);
+            if (rpc.code === 0) cloudResult = { success: true, data: rpc.result };
+          } catch {}
+        }
       }
       break;
     case 'mute':
@@ -3970,10 +4045,16 @@ app.post('/api/miot/control', async (req: Request, res: Response) => {
       detail = `静音开关 -> ${targetDevice.status.muted ? '已静音' : '已取消静音'}`;
       const targetVol = targetDevice.status.muted ? 0 : targetDevice.status.volume;
       if (targetDevice.token && targetDevice.ip) {
-        localMiioResult = await sendMiioCommand(targetDevice.ip, targetDevice.token, 'player_set_volume', [targetVol]);
+        localMiioResult = await sendMiioCommand(targetDevice.ip, targetDevice.token, 'player_set_volume', [targetVol], 2500);
       }
-      if (miotConfig.isLoggedIn && miotConfig.serviceToken && miotConfig.userId) {
+      if (miotConfig.isLoggedIn && activeMicoToken && miotConfig.userId) {
         cloudResult = await callMinaCloudApi('mediaplayer', 'player_set_volume', { volume: targetVol }, targetDevice.did);
+        if (!cloudResult?.success && cloudAuth) {
+          try {
+            const rpc = await miotRpcEngine.setProperty(targetDevice, 2, 2, targetDevice.status.muted, cloudAuth);
+            if (rpc.code === 0) cloudResult = { success: true, data: rpc.result };
+          } catch {}
+        }
       }
       break;
     case 'seek':
