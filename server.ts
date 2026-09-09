@@ -2395,7 +2395,7 @@ async function queryXiaomiMinaDevices(userId: string, serviceToken: string): Pro
 }
 
 // Xiaomi Cloud Passport Authenticator (Enhanced with Full STS Token Exchange)
-async function authenticateXiaomiPassport(user: string, pass: string): Promise<{
+async function authenticateXiaomiPassport(user: string, pass: string, region = 'cn'): Promise<{
   success: boolean;
   userId?: string;
   ssecurity?: string;
@@ -2408,7 +2408,7 @@ async function authenticateXiaomiPassport(user: string, pass: string): Promise<{
     return { success: false, error: '请输入小米账号与密码' };
   }
 
-  const result = await xiaomiPassport.loginWithPassword(user, pass, 'micoapi');
+  const result = await xiaomiPassport.loginWithPassword(user, pass, 'micoapi', region);
   if (!result.success || !result.userId || !result.serviceToken) {
     return {
       success: false,
@@ -2451,7 +2451,7 @@ async function authenticateXiaomiPassport(user: string, pass: string): Promise<{
 app.post('/api/miot/login', async (req: Request, res: Response) => {
   if (!checkMiotAdminPermission(req, res)) return;
 
-  const { username, password, mode, token, did, ip, serviceToken, userId } = req.body;
+  const { username, password, mode, token, did, ip, serviceToken, userId, region } = req.body;
 
   // Mode 1: Direct Token / LAN Mode (For users avoiding 2FA)
   if (mode === 'token' || (token && ip)) {
@@ -2604,7 +2604,7 @@ app.post('/api/miot/login', async (req: Request, res: Response) => {
     });
   }
 
-  const authResult = await authenticateXiaomiPassport(username.trim(), password);
+  const authResult = await authenticateXiaomiPassport(username.trim(), password, region || 'cn');
 
   if (!authResult.success || !authResult.userId || !authResult.serviceToken || authResult.userId === 'undefined') {
     castLogs.unshift({
@@ -2697,7 +2697,8 @@ app.post('/api/miot/logout', (req: Request, res: Response) => {
 app.get('/api/miot/passport/qrcode/get', async (req: Request, res: Response) => {
   if (!checkMiotAdminPermission(req, res)) return;
 
-  const qrRes = await xiaomiPassport.generateLoginQrCode('xiaomiio');
+  const region = String(req.query.region || 'cn').trim();
+  const qrRes = await xiaomiPassport.generateLoginQrCode('xiaomiio', region);
   if (qrRes.success) {
     return res.json(qrRes);
   }
@@ -2721,7 +2722,9 @@ app.post('/api/miot/passport/qrcode/check', async (req: Request, res: Response) 
     // we must now perform a sub-exchange to obtain the 'micoapi' serviceToken using the confirmed passToken!
     if (checkRes.userId && checkRes.passToken) {
       try {
-        const micoToken = await xiaomiPassport.fetchAdditionalStsToken(checkRes.userId, checkRes.passToken, 'micoapi');
+        const isCn = String(loginUrl || lpUrl || '').includes('cn.account.xiaomi.com');
+        const qrRegion = isCn ? 'cn' : 'sgp';
+        const micoToken = await xiaomiPassport.fetchAdditionalStsToken(checkRes.userId, checkRes.passToken, 'micoapi', qrRegion);
         if (micoToken.serviceToken) {
           serviceToken = micoToken.serviceToken;
         }

@@ -103,14 +103,15 @@ export class XiaomiPassport {
   /**
    * Step 1: Query initial login parameters from Xiaomi Passport
    */
-  public async getServiceLoginParams(sid = 'micoapi'): Promise<{
+  public async getServiceLoginParams(sid = 'micoapi', region = 'cn'): Promise<{
     _sign: string;
     qs: string;
     callback: string;
     cookies: string;
     sid: string;
   }> {
-    const url = `https://account.xiaomi.com/pass/serviceLogin?sid=${encodeURIComponent(sid)}&_json=true`;
+    const host = region === 'cn' ? 'cn.account.xiaomi.com' : 'account.xiaomi.com';
+    const url = `https://${host}/pass/serviceLogin?sid=${encodeURIComponent(sid)}&_json=true`;
     const res = await fetch(url, {
       headers: {
         'User-Agent': this.userAgent
@@ -142,6 +143,7 @@ export class XiaomiPassport {
     user: string,
     pass: string,
     sid = 'micoapi',
+    region = 'cn',
     options?: { captchaCode?: string; captchaIck?: string }
   ): Promise<XiaomiPassportResult> {
     if (!user || !pass) {
@@ -150,7 +152,7 @@ export class XiaomiPassport {
 
     try {
       // 1. Get login metadata
-      const params = await this.getServiceLoginParams(sid);
+      const params = await this.getServiceLoginParams(sid, region);
       if (!params._sign || !params.qs) {
         return { success: false, error: '未能从小米认证服务器获取登录签名，请检查网络连通性' };
       }
@@ -175,7 +177,8 @@ export class XiaomiPassport {
         postBody.append('ick', options.captchaIck);
       }
 
-      const res = await fetch('https://account.xiaomi.com/pass/serviceLoginAuth2', {
+      const host = region === 'cn' ? 'cn.account.xiaomi.com' : 'account.xiaomi.com';
+      const res = await fetch(`https://${host}/pass/serviceLoginAuth2`, {
         method: 'POST',
         headers: {
           'User-Agent': this.userAgent,
@@ -202,7 +205,7 @@ export class XiaomiPassport {
       if (data.code !== 0) {
         let errorMsg = data.description || data.desc || '登录验证失败';
         if (data.code === 70016) {
-          errorMsg = '小米账号或密码错误 (错误码: 70016)，请仔细核对账号和密码后重试';
+          errorMsg = '小米账号或密码错误 (错误码: 70016)，请仔细核对账号 and 密码后重试';
         } else if (data.code === 70002) {
           errorMsg = '该小米账号不存在 (错误码: 70002)，请检查输入';
         } else if (data.code === 87001) {
@@ -215,7 +218,7 @@ export class XiaomiPassport {
           success: false,
           code: data.code,
           error: errorMsg,
-          captchaUrl: data.captchaUrl ? `https://account.xiaomi.com${data.captchaUrl}` : undefined,
+          captchaUrl: data.captchaUrl ? `https://${host}${data.captchaUrl}` : undefined,
           notificationUrl: data.notificationUrl
         };
       }
@@ -238,7 +241,7 @@ export class XiaomiPassport {
       let xiaomiioToken: string | undefined;
       if (serviceToken && passToken && userId) {
         try {
-          const miHomeSts = await this.fetchAdditionalStsToken(userId, passToken, 'xiaomiio');
+          const miHomeSts = await this.fetchAdditionalStsToken(userId, passToken, 'xiaomiio', region);
           if (miHomeSts?.serviceToken) {
             xiaomiioToken = miHomeSts.serviceToken;
           }
@@ -356,11 +359,13 @@ export class XiaomiPassport {
   public async fetchAdditionalStsToken(
     userId: string,
     passToken: string,
-    targetSid: 'xiaomiio' | 'micoapi'
+    targetSid: 'xiaomiio' | 'micoapi',
+    region = 'cn'
   ): Promise<{ serviceToken?: string; ssecurity?: string }> {
     try {
-      const params = await this.getServiceLoginParams(targetSid);
-      const url = `https://account.xiaomi.com/pass/serviceLoginAuth2`;
+      const params = await this.getServiceLoginParams(targetSid, region);
+      const host = region === 'cn' ? 'cn.account.xiaomi.com' : 'account.xiaomi.com';
+      const url = `https://${host}/pass/serviceLoginAuth2`;
       const body = new URLSearchParams({
         sid: targetSid,
         callback: params.callback,
@@ -404,9 +409,10 @@ export class XiaomiPassport {
   /**
    * QR Code Login - Step 1: Generate Login QR Code
    */
-  public async generateLoginQrCode(sid = 'micoapi'): Promise<QrCodeResult & { qrCodeUrl?: string; qrDataUrl?: string; qr?: string }> {
+  public async generateLoginQrCode(sid = 'micoapi', region = 'cn'): Promise<QrCodeResult & { qrCodeUrl?: string; qrDataUrl?: string; qr?: string }> {
     try {
-      const url = `https://account.xiaomi.com/longPolling/loginUrl?sid=${encodeURIComponent(sid)}&_json=true`;
+      const host = region === 'cn' ? 'cn.account.xiaomi.com' : 'account.xiaomi.com';
+      const url = `https://${host}/longPolling/loginUrl?sid=${encodeURIComponent(sid)}&_json=true`;
       const res = await fetch(url, {
         headers: {
           'User-Agent': this.webUserAgent,
@@ -434,7 +440,21 @@ export class XiaomiPassport {
 
       // The URL to encode into QR code MUST be data.qr (the official Xiaomi QR scan authorization URL)
       // CRITICAL: DO NOT use data.loginUrl for generating QR code image! data.loginUrl is a web ticket URL that returns code 70016!
-      const qrTarget = data.qr || data.loginUrl;
+      let qrTarget = data.qr || data.loginUrl || '';
+
+      // Parse query params to build a clean domestic/regional QR login URL to avoid extra clutter and force the correct regional domain
+      const ticketVal = qrTarget.match(/[?&]ticket=([^&]+)/)?.[1] || '';
+      const dcVal = qrTarget.match(/[?&]dc=([^&]+)/)?.[1] || (region === 'cn' ? 'ak' : 'sgp');
+      const sidVal = qrTarget.match(/[?&]sid=([^&]+)/)?.[1] || sid;
+
+      if (ticketVal) {
+        const host = region === 'cn' ? 'cn.account.xiaomi.com' : 'account.xiaomi.com';
+        qrTarget = `https://${host}/pass/qr/login?ticket=${ticketVal}&dc=${dcVal}&sid=${sidVal}`;
+      } else {
+        const host = region === 'cn' ? 'cn.account.xiaomi.com' : 'account.xiaomi.com';
+        qrTarget = qrTarget.replace('account.xiaomi.com', host);
+      }
+
       let qrDataUrl = '';
       try {
         qrDataUrl = await QRCode.toDataURL(qrTarget, {
@@ -450,17 +470,15 @@ export class XiaomiPassport {
         console.warn('QRCode toDataURL error:', qrErr.message);
       }
 
-      const finalQrUrl = qrDataUrl || data.qr || data.loginUrl;
-
       return {
         success: true,
         qrId,
-        qr: data.qr,
+        qr: qrTarget,
         loginUrl: data.loginUrl,
         lpUrl: data.lp,
-        qrUrl: finalQrUrl,
-        qrCodeUrl: finalQrUrl,
-        qrDataUrl: finalQrUrl
+        qrUrl: qrTarget,
+        qrCodeUrl: qrTarget,
+        qrDataUrl: qrDataUrl
       };
     } catch (err: any) {
       return { success: false, error: err.message || '网络连接超时' };
