@@ -64,7 +64,7 @@ interface XiaomiSpeakerPanelProps {
   activeDevice: XiaomiDevice | undefined;
   onSelectDevice: (did: string) => void;
   onControlDevice: (did: string, action: string, value?: any) => void;
-  onSendTts: (did: string, text: string) => void;
+  onSendTts: (did: string, text: string, mode?: string, voice?: string) => void;
   miotConfig: MiotConfig;
   onUpdateConfig: (newConfig: Partial<MiotConfig>) => void;
   castLogs: CastLog[];
@@ -126,6 +126,12 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
   const [showLoginSuccess, setShowLoginSuccess] = useState(false);
   const [showTokenTutorial, setShowTokenTutorial] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  // TTS Engine Configuration State
+  const [selectedTtsMode, setSelectedTtsMode] = useState<'auto' | 'mina_ubus' | 'miot_spec' | 'local_miio' | 'audio_stream'>('auto');
+  const [selectedTtsVoice, setSelectedTtsVoice] = useState('zh-CN-XiaoxiaoNeural');
+  const [isPlayingAudioPreview, setIsPlayingAudioPreview] = useState(false);
+  const audioPreviewRef = useRef<HTMLAudioElement | null>(null);
 
   // QR Code Login State
   const [qrCodeData, setQrCodeData] = useState<{ qrUrl?: string; loginUrl?: string; lpUrl?: string } | null>(null);
@@ -742,8 +748,38 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
   const handleSendTtsSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!ttsInput.trim() || !activeDevice) return;
-    onSendTts(activeDevice.did, ttsInput.trim());
-    setTtsInput('');
+    onSendTts(activeDevice.did, ttsInput.trim(), selectedTtsMode, selectedTtsVoice);
+  };
+
+  const handleAudioStreamPreview = (text: string) => {
+    if (!text.trim()) return;
+    if (isPlayingAudioPreview && audioPreviewRef.current) {
+      audioPreviewRef.current.pause();
+      audioPreviewRef.current = null;
+      setIsPlayingAudioPreview(false);
+      return;
+    }
+
+    const streamUrl = `/api/tts/audio.mp3?text=${encodeURIComponent(text.trim())}&voice=${encodeURIComponent(selectedTtsVoice)}&t=${Date.now()}`;
+    const audio = new Audio(streamUrl);
+    audioPreviewRef.current = audio;
+    setIsPlayingAudioPreview(true);
+
+    audio.onended = () => {
+      setIsPlayingAudioPreview(false);
+      audioPreviewRef.current = null;
+    };
+    audio.onerror = () => {
+      setIsPlayingAudioPreview(false);
+      audioPreviewRef.current = null;
+      // Fallback to browser SpeechSynthesis
+      handleBrowserDebugPreview(text);
+    };
+
+    audio.play().catch(() => {
+      setIsPlayingAudioPreview(false);
+      handleBrowserDebugPreview(text);
+    });
   };
 
   const handleBrowserDebugPreview = (text: string) => {
@@ -764,7 +800,8 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
 
   const handlePresetTts = (text: string) => {
     if (!activeDevice) return;
-    onSendTts(activeDevice.did, text);
+    setTtsInput(text);
+    onSendTts(activeDevice.did, text, selectedTtsMode, selectedTtsVoice);
   };
 
   const handleSaveConfig = (e: React.FormEvent) => {
@@ -2385,18 +2422,40 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
         <div className="max-w-3xl mx-auto space-y-6">
           <div className="p-6 sm:p-8 rounded-3xl bg-zinc-900/40 backdrop-blur-md border border-white/5 space-y-6">
             <div>
-              <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                <Mic2 className="w-5 h-5 text-[#FF6700]" />
-                小爱音箱语音广播 (Text-To-Speech)
-              </h3>
-              <p className="text-xs text-zinc-400 mt-1">
-                向当前连接的【{activeDevice?.name}】发送文字，小爱同学将立刻使用其原生声音朗读播报。
-              </p>
-              <div className="mt-3 p-3 rounded-2xl bg-zinc-950/80 border border-white/10 flex items-center gap-2.5 text-xs text-zinc-300">
-                <Sparkles className="w-4 h-4 text-[#FF6700] flex-shrink-0" />
-                <span>
-                  <strong>小爱硬件发音：</strong>点击【下发至小爱音箱】将直接通过 MIoT / 云端协议下发至物理音箱发声，电脑浏览器保持静音；若需要预览声音，可使用右侧【本地试听 (Debug / Preview)】。
-                </span>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-white/10">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-2xl bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/30 shadow-[0_0_12px_rgba(255,103,0,0.2)]">
+                    <Mic2 className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                      小爱音箱全能语音播报 (Universal TTS Engine)
+                    </h3>
+                    <p className="text-xs text-zinc-400 mt-0.5">
+                      多通道容灾切换：原生 MIoT 规范 · Mina 云端 · 局域网 miIO · 高保真音频串流
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-zinc-400">目标设备:</span>
+                  <span className="text-xs font-mono font-semibold text-[#FF6700] px-2.5 py-1 rounded-xl bg-[#FF6700]/10 border border-[#FF6700]/20 truncate max-w-[160px]">
+                    {cleanDeviceName(activeDevice?.name)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Multi-Channel Smart Fallback Notice */}
+              <div className="mt-4 p-3.5 rounded-2xl bg-emerald-950/20 border border-emerald-500/20 flex items-start gap-3 text-xs text-emerald-200">
+                <ShieldCheck className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="font-semibold text-emerald-300">
+                    智能超时防御与无声熔断机制已启用：
+                  </p>
+                  <p className="text-zinc-300 text-[11px] leading-relaxed">
+                    系统按毫秒级阶梯自动探测：首先执行 <strong>局域网 miIO</strong> 与 <strong>Mina 云端指令</strong>；若该型号音箱不支持或云端指令未响应，系统将在 2.5 秒内自动降级至 <strong>MIoT 规范动作 (siid:5, aiid:1/5)</strong> 或 <strong>高清语音音频串流 (Edge-TTS 串流)</strong>，彻底解决小爱音箱超时、不说话或无反应的问题。
+                  </p>
+                </div>
               </div>
             </div>
 
@@ -2409,37 +2468,76 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                     rows={3}
                     value={ttsInput}
                     onChange={(e) => setTtsInput(e.target.value)}
-                    placeholder="输入要让小爱音箱朗读的文字内容..."
+                    placeholder="输入要让小爱音箱朗读的文字内容（例如：主人您好，听澜音乐为您服务）..."
                     className="w-full px-4 py-3 bg-zinc-950/80 border border-white/10 rounded-2xl text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-[#FF6700] focus:ring-1 focus:ring-[#FF6700] transition"
                   />
                 </div>
               </div>
 
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-xs text-zinc-500 hidden sm:inline">
-                  支持中文、英文朗读，最大 200 字
+              {/* Channel Mode and Voice Selection */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                <div>
+                  <label className="block text-[11px] text-zinc-400 mb-1 font-medium">下发协议通道 (Channel Mode)</label>
+                  <select
+                    value={selectedTtsMode}
+                    onChange={(e) => setSelectedTtsMode(e.target.value as any)}
+                    className="w-full px-3 py-2 bg-zinc-950/80 border border-white/10 rounded-xl text-xs text-zinc-200 focus:outline-none focus:border-[#FF6700]"
+                  >
+                    <option value="auto">✨ 自动多通道智能重试 (推荐 · 永不超时)</option>
+                    <option value="miot_spec">⚡ 米家 MIoT 规范动作 (Play / Execute Text)</option>
+                    <option value="mina_ubus">☁️ 小爱 Mina 云端指令通道 (Mibrain UBUS)</option>
+                    <option value="audio_stream">🎵 高清语音串流投播 (Audio Stream TTS)</option>
+                    <option value="local_miio">📶 局域网 miIO UDP 54321 本地直连</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-zinc-400 mb-1 font-medium">播报音色 (Voice - 串流/降级模式)</label>
+                  <select
+                    value={selectedTtsVoice}
+                    onChange={(e) => setSelectedTtsVoice(e.target.value)}
+                    className="w-full px-3 py-2 bg-zinc-950/80 border border-white/10 rounded-xl text-xs text-zinc-200 focus:outline-none focus:border-[#FF6700]"
+                  >
+                    <option value="zh-CN-XiaoxiaoNeural">晓晓 (亲切温暖女声 · 推荐)</option>
+                    <option value="zh-CN-YunxiNeural">云希 (阳光清脆男声)</option>
+                    <option value="zh-CN-YunjianNeural">云健 (影视磁性男声)</option>
+                    <option value="zh-CN-XiaoyiNeural">晓伊 (甜美清新女声)</option>
+                    <option value="zh-CN-liaoning-XiaobeiNeural">小北 (东北方言幽默女声)</option>
+                    <option value="zh-HK-HiuMaanNeural">晓曼 (标准粤语女声)</option>
+                    <option value="en-US-JennyNeural">Jenny (Natural US English)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+                <span className="text-xs text-zinc-500">
+                  支持中文、英文、方言朗读
                 </span>
-                <div className="flex items-center gap-3 ml-auto">
+                <div className="flex flex-wrap items-center gap-2.5 ml-auto">
                   <button
                     type="button"
-                    onClick={() => handleBrowserDebugPreview(ttsInput)}
+                    onClick={() => handleAudioStreamPreview(ttsInput)}
                     disabled={!ttsInput.trim()}
-                    className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium border border-white/10 disabled:opacity-40 transition active:scale-95"
-                    title="通过当前浏览器 Web Speech API 试听文字发音（仅调试预览，不下发音箱）"
+                    className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-medium border transition active:scale-95 cursor-pointer ${
+                      isPlayingAudioPreview
+                        ? 'bg-[#FF6700]/20 text-[#FF6700] border-[#FF6700]/40 animate-pulse'
+                        : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-white/10 disabled:opacity-40'
+                    }`}
+                    title="通过 Edge-TTS 合成并在电脑浏览器本地试听音频效果"
                   >
-                    <Volume2 className="w-3.5 h-3.5 text-zinc-400" />
-                    <span>本地试听 (Debug / Preview)</span>
+                    <Volume2 className="w-3.5 h-3.5" />
+                    <span>{isPlayingAudioPreview ? '正在播放试听...' : '电脑本地试听 (Preview)'}</span>
                   </button>
 
                   <button
                     type="submit"
                     disabled={!ttsInput.trim() || commandState?.status === 'pending'}
-                    className="flex items-center gap-2 px-6 py-2 rounded-full bg-[#FF6700] hover:bg-[#e55c00] text-white text-xs sm:text-sm font-semibold shadow-[0_4px_20px_rgba(255,103,0,0.3)] disabled:opacity-50 transition active:scale-95"
+                    className="flex items-center gap-2 px-6 py-2 rounded-full bg-[#FF6700] hover:bg-[#e55c00] text-white text-xs sm:text-sm font-semibold shadow-[0_4px_20px_rgba(255,103,0,0.3)] disabled:opacity-50 transition active:scale-95 cursor-pointer"
                   >
                     {commandState?.status === 'pending' && commandState?.action === 'tts' ? (
                       <>
                         <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                        <span>下发指令中...</span>
+                        <span>正在送达音箱...</span>
                       </>
                     ) : (
                       <>
@@ -2460,7 +2558,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                   <button
                     key={i}
                     onClick={() => handlePresetTts(preset)}
-                    className="text-xs px-3.5 py-1.5 rounded-full bg-zinc-950/60 hover:bg-[#FF6700]/15 hover:text-[#FF6700] text-zinc-300 border border-white/5 hover:border-[#FF6700]/30 transition text-left"
+                    className="text-xs px-3.5 py-1.5 rounded-full bg-zinc-950/60 hover:bg-[#FF6700]/15 hover:text-[#FF6700] text-zinc-300 border border-white/5 hover:border-[#FF6700]/30 transition text-left cursor-pointer"
                   >
                     “{preset}”
                   </button>

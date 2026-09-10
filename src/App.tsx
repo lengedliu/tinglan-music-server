@@ -590,7 +590,7 @@ export default function App() {
       });
   };
 
-  const handleSendTts = (did: string, text: string) => {
+  const handleSendTts = (did: string, text: string, mode?: string, voice?: string) => {
     const targetDev = devices.find(d => d.did === did);
 
     // UI State -> pending
@@ -602,12 +602,12 @@ export default function App() {
     });
 
     const controller = new AbortController();
-    const timeoutTimer = setTimeout(() => controller.abort(), 8000);
+    const timeoutTimer = setTimeout(() => controller.abort(), 25000);
 
     apiFetch('/api/miot/tts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ did, text }),
+      body: JSON.stringify({ did, text, mode, voice }),
       signal: controller.signal
     })
       .then(async res => {
@@ -631,14 +631,15 @@ export default function App() {
           setDevices(prev => prev.map(d => d.did === did ? data.device : d));
         }
 
-        showToast('小爱语音播报下发成功', `“${text}” (音箱已确认接收指令)`, 'success');
+        const channelNote = data.channel ? ` (${data.channel})` : '';
+        showToast('小爱语音播报下发成功', `“${text}”${channelNote}`, 'success');
         setCastLogs(prev => [
           {
             id: `log-${Date.now()}`,
             timestamp: new Date().toLocaleTimeString(),
             type: 'tts',
             message: `【${targetDev?.name || '音箱'}】TTS 语音播报成功`,
-            detail: `“${text}” (MIoT协议下发确认)`,
+            detail: `“${text}”${channelNote}`,
             success: true
           },
           ...prev
@@ -648,7 +649,7 @@ export default function App() {
         clearTimeout(timeoutTimer);
         const isTimeout = err.name === 'AbortError';
         const errorDesc = isTimeout
-          ? '向音箱下发语音播报指令超时（8秒）'
+          ? '向音箱下发语音播报指令超时（25秒内多通道均未确认）'
           : (err.message || '音箱未响应语音播报请求');
 
         // UI State -> failed or timeout

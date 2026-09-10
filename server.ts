@@ -17,6 +17,7 @@ import { minaWsClient } from './server/minaWebSocket';
 import { miotRpcEngine, XIAOAI_MIOT_SPEC } from './server/miotRpc';
 import { deviceDiscoveryEngine } from './server/deviceDiscovery';
 import { xiaoaiResolverEngine, extractDevicesFromMinaResponse } from './server/xiaoaiResolver';
+import { ttsEngine, POPULAR_TTS_VOICES } from './server/ttsEngine';
 import { GoogleGenAI } from '@google/genai';
 
 const require = createRequire(import.meta.url);
@@ -1943,6 +1944,66 @@ services:
   });
 });
 
+// ---------------- TTS & SPEECH STREAMING API ----------------
+
+// Get available TTS voices
+app.get('/api/tts/voices', (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    voices: POPULAR_TTS_VOICES,
+    defaultVoice: 'zh-CN-XiaoxiaoNeural'
+  });
+});
+
+// Stream high-definition TTS speech MP3 (supports HTTP 206 partial content for speakers)
+const handleTtsAudioStream = async (req: Request, res: Response) => {
+  const text = String(req.query.text || req.body?.text || '').trim();
+  const voice = String(req.query.voice || req.body?.voice || 'zh-CN-XiaoxiaoNeural').trim();
+  const rate = String(req.query.rate || '+0%').trim();
+  const pitch = String(req.query.pitch || '+0Hz').trim();
+
+  if (!text) {
+    return res.status(400).send('Missing "text" query param for TTS synthesis');
+  }
+
+  try {
+    const audioBuffer = await ttsEngine.synthesizeSpeechMp3(text, voice, rate, pitch);
+    const totalLength = audioBuffer.length;
+    const rangeHeader = req.headers.range;
+
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+
+    if (rangeHeader) {
+      const parts = rangeHeader.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : totalLength - 1;
+
+      if (start >= totalLength || end >= totalLength) {
+        res.status(416).setHeader('Content-Range', `bytes */${totalLength}`).end();
+        return;
+      }
+
+      const chunk = audioBuffer.subarray(start, end + 1);
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${totalLength}`);
+      res.setHeader('Content-Length', chunk.length);
+      res.send(chunk);
+    } else {
+      res.setHeader('Content-Length', totalLength);
+      res.send(audioBuffer);
+    }
+  } catch (err: any) {
+    console.error('[TTS API] Audio stream error:', err.message);
+    res.status(500).send(`TTS Error: ${err.message}`);
+  }
+};
+
+app.get('/api/tts/stream', handleTtsAudioStream);
+app.get('/api/tts/audio.mp3', handleTtsAudioStream);
+app.post('/api/tts/stream', handleTtsAudioStream);
+
 // ---------------- SONGS API ----------------
 
 // Get all songs
@@ -3717,7 +3778,7 @@ async function callMinaCloudApi(
           'Cookie': `userId=${cleanUid}; serviceToken=${activeMicoToken}; deviceId=${deviceId}; PassportDeviceId=${cleanUid}`
         },
         body: postBody.toString(),
-        signal: AbortSignal.timeout(6000)
+        signal: AbortSignal.timeout(3500)
       });
 
       lastStatus = response.status;
@@ -3778,6 +3839,29 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
 
   const startTime = Date.now();
   const { did, songId, songTitle, songArtist, streamUrl, duration } = req.body;
+
+  // Auto-resolve devices from cloud if currently empty and logged in
+  if (xiaomiDevices.length === 0 && (miotConfig as any).passToken) {
+    try {
+      const resolveRes = await xiaoaiResolverEngine.resolveDevices({
+        userId: miotConfig.userId,
+        serviceToken: (miotConfig as any).micoServiceToken || miotConfig.serviceToken,
+        xiaomiioServiceToken: (miotConfig as any).xiaomiioServiceToken || miotConfig.serviceToken,
+        ssecurity: (miotConfig as any).ssecurity,
+        existingDevices: xiaomiDevices,
+        activeStreamIps: Array.from(activeStreamIps)
+      });
+      if (resolveRes.xiaoAiDevices && resolveRes.xiaoAiDevices.length > 0) {
+        xiaomiDevices = resolveRes.xiaoAiDevices;
+        if (!miotConfig.activeDeviceId) miotConfig.activeDeviceId = xiaomiDevices[0].did;
+        saveJson(DEVICES_FILE, xiaomiDevices);
+        saveJson(CONFIG_FILE, miotConfig);
+      }
+    } catch (rErr: any) {
+      console.warn('[Cast] Auto device resolution failed:', rErr.message);
+    }
+  }
+
   const targetDevice = xiaomiDevices.find(d => d.did === did || (d as any).deviceID === did) || xiaomiDevices[0];
 
   if (!targetDevice) {
@@ -3818,18 +3902,17 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
   const host = (req.headers['x-forwarded-host'] as string) || req.headers.host || req.get('host');
   const reqOrigin = `${proto}://${host}`;
 
+  const baseHost = (miotConfig.serverHost && miotConfig.serverHost.startsWith('http'))
+    ? miotConfig.serverHost.replace(/\/$/, '')
+    : reqOrigin;
+  const resolvedServerHost = baseHost;
+
   let resolvedStreamUrl = '';
   if (streamUrl && streamUrl.startsWith('http')) {
     resolvedStreamUrl = streamUrl;
   } else if (streamUrl && streamUrl.startsWith('/')) {
-    const baseHost = (miotConfig.serverHost && miotConfig.serverHost.startsWith('http'))
-      ? miotConfig.serverHost.replace(/\/$/, '')
-      : reqOrigin;
     resolvedStreamUrl = `${baseHost}${streamUrl}`;
   } else {
-    const baseHost = (miotConfig.serverHost && miotConfig.serverHost.startsWith('http'))
-      ? miotConfig.serverHost.replace(/\/$/, '')
-      : reqOrigin;
     resolvedStreamUrl = `${baseHost}/api/stream/${songId || 'song-1'}`;
   }
 
@@ -3863,12 +3946,15 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
       // Send TTS announcement if enabled
       if (miotConfig.ttsAnnouncement) {
         try {
-          await callMinaCloudApi(
-            'mibrain',
-            'text_to_speech',
-            { text: `${miotConfig.ttsPrefix || '正在为您播放'} ${songTitle || '歌曲'}` },
-            targetDevice.did
-          );
+          await ttsEngine.dispatchToSpeaker({
+            targetDevice,
+            text: `${miotConfig.ttsPrefix || '正在为您播放'} ${songTitle || '歌曲'}`,
+            mode: 'auto',
+            serverHost: resolvedServerHost,
+            miotConfig,
+            sendMiioCommandFn: (ip, token, method, params, timeoutMs) => sendMiioCommand(ip, token, method, params, timeoutMs || 2500),
+            callMinaCloudApiFn: (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry)
+          });
         } catch (ttsErr: any) {
           console.warn('TTS intro failed before cast:', ttsErr.message);
         }
@@ -4213,19 +4299,41 @@ app.post('/api/miot/control', async (req: Request, res: Response) => {
   });
 });
 
-// Text to Speech (TTS) broadcast to speaker
+// Text to Speech (TTS) broadcast to speaker (Multi-Channel with Audio Streaming Fallback)
 app.post('/api/miot/tts', async (req: Request, res: Response) => {
   if (!checkMiotTtsPermission(req, res)) return;
 
-  const { did, text } = req.body;
+  const { did, text, mode, voice } = req.body;
   if (!text || !String(text).trim()) {
     return res.status(400).json({ success: false, error: '请输入播报文本内容' });
+  }
+
+  // Auto-resolve devices from cloud if currently empty and logged in
+  if (xiaomiDevices.length === 0 && (miotConfig as any).passToken) {
+    try {
+      const resolveRes = await xiaoaiResolverEngine.resolveDevices({
+        userId: miotConfig.userId,
+        serviceToken: (miotConfig as any).micoServiceToken || miotConfig.serviceToken,
+        xiaomiioServiceToken: (miotConfig as any).xiaomiioServiceToken || miotConfig.serviceToken,
+        ssecurity: (miotConfig as any).ssecurity,
+        existingDevices: xiaomiDevices,
+        activeStreamIps: Array.from(activeStreamIps)
+      });
+      if (resolveRes.xiaoAiDevices && resolveRes.xiaoAiDevices.length > 0) {
+        xiaomiDevices = resolveRes.xiaoAiDevices;
+        if (!miotConfig.activeDeviceId) miotConfig.activeDeviceId = xiaomiDevices[0].did;
+        saveJson(DEVICES_FILE, xiaomiDevices);
+        saveJson(CONFIG_FILE, miotConfig);
+      }
+    } catch (rErr: any) {
+      console.warn('[TTS] Auto device resolution failed:', rErr.message);
+    }
   }
 
   const targetDevice = xiaomiDevices.find(d => d.did === did || (d as any).deviceID === did) || xiaomiDevices[0];
 
   if (!targetDevice) {
-    const errorMsg = '未检测到可用的小米音箱设备。请先在【设置】中绑定米家账号或扫描同步音箱！';
+    const errorMsg = '未检测到可用的小米音箱设备。请先在【设置】中绑定米家账号并在【控制中枢】点击【同步云端音箱】！';
     return res.status(404).json({ success: false, error: errorMsg, message: errorMsg });
   }
 
@@ -4237,102 +4345,33 @@ app.post('/api/miot/tts', async (req: Request, res: Response) => {
   targetDevice.status.updatedAt = new Date().toISOString();
   saveJson(DEVICES_FILE, xiaomiDevices);
 
-  let cloudResult: any = null;
-  let localMiioResult: any = null;
-  let executedChannel = '';
+  // Derive resolved serverHost for audio stream fallback
+  const localIps = getLocalNetworkIps();
+  const primaryIp = localIps.length > 0 ? localIps[0] : '127.0.0.1';
+  const reqHost = req.get('host');
+  const reqProtocol = req.protocol || 'http';
+  const resolvedServerHost = miotConfig.serverHost || (reqHost ? `${reqProtocol}://${reqHost}` : `http://${primaryIp}:${PORT}`);
 
-  // 1. Channel 1: Local miIO UDP 54321 (if device has IP & Token)
-  if (targetDevice.token && targetDevice.ip) {
-    try {
-      localMiioResult = await sendMiioCommand(targetDevice.ip, targetDevice.token, 'text_to_speech', [text], 3000);
-      if (localMiioResult?.success) {
-        executedChannel = 'miIO 本地 UDP 54321';
-      }
-    } catch (e: any) {
-      localMiioResult = { success: false, error: e.message };
-    }
-  }
+  const dispatchRes = await ttsEngine.dispatchToSpeaker({
+    targetDevice,
+    text: String(text).trim(),
+    mode: mode || 'auto',
+    voice: voice || 'zh-CN-XiaoxiaoNeural',
+    serverHost: resolvedServerHost,
+    miotConfig,
+    sendMiioCommandFn: (ip, token, method, params, timeoutMs) => sendMiioCommand(ip, token, method, params, timeoutMs || 2500),
+    callMinaCloudApiFn: (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry)
+  });
 
-  // 2. Channel 2: Mina Cloud UBUS (micoapi)
-  const activeMicoToken = (miotConfig as any).micoServiceToken || miotConfig.serviceToken;
-  const activeIoToken = (miotConfig as any).xiaomiioServiceToken || activeMicoToken;
-  const cleanUid = String(miotConfig.userId || '').replace(/^uid_/, '').trim();
-  const cloudAuth = (cleanUid && activeIoToken) ? {
-    userId: cleanUid,
-    serviceToken: activeIoToken,
-    ssecurity: (miotConfig as any).ssecurity
-  } : undefined;
-
-  if (!executedChannel && miotConfig.isLoggedIn && activeMicoToken && cleanUid) {
-    try {
-      // Try Mina mibrain text_to_speech with dual text & tts keys
-      cloudResult = await callMinaCloudApi(
-        'mibrain',
-        'text_to_speech',
-        { text, tts: text },
-        targetDevice.did
-      );
-
-      if (cloudResult?.success) {
-        executedChannel = '小米 Mina 云端指令通道 (text_to_speech)';
-      } else {
-        // Retry with pure text payload
-        cloudResult = await callMinaCloudApi(
-          'mibrain',
-          'text_to_speech',
-          { text },
-          targetDevice.did
-        );
-        if (cloudResult?.success) {
-          executedChannel = '小米 Mina 云端指令通道 (text_to_speech raw)';
-        }
-      }
-    } catch (e: any) {
-      cloudResult = { success: false, error: e.message };
-    }
-  }
-
-  // 3. Channel 3: MIoT Cloud Action RPC Fallback (siid 5 aiid 1: playText)
-  if (!executedChannel && cloudAuth) {
-    try {
-      // Service 5 (Intelligent Speaker) Action 1 (playText) with in: [text]
-      let rpcRes = await miotRpcEngine.executeAction(targetDevice, 5, 1, [text], cloudAuth);
-      if (rpcRes.code === 0) {
-        cloudResult = { success: true, data: rpcRes.result, method: 'miot_cloud_rpc_5_1' };
-        executedChannel = 'MIoT 原生智能语音服务 (siid:5, aiid:1)';
-      } else {
-        // Try Service 5 Action 3 (textToSpeech)
-        rpcRes = await miotRpcEngine.executeAction(targetDevice, 5, 3, [text, 0], cloudAuth);
-        if (rpcRes.code === 0) {
-          cloudResult = { success: true, data: rpcRes.result, method: 'miot_cloud_rpc_5_3' };
-          executedChannel = 'MIoT 语音合成服务 (siid:5, aiid:3)';
-        } else {
-          // Try Service 7 (Speaker / TTS) Action 1
-          rpcRes = await miotRpcEngine.executeAction(targetDevice, 7, 1, [text], cloudAuth);
-          if (rpcRes.code === 0) {
-            cloudResult = { success: true, data: rpcRes.result, method: 'miot_cloud_rpc_7_1' };
-            executedChannel = 'MIoT 扬声器服务 (siid:7, aiid:1)';
-          }
-        }
-      }
-    } catch (rpcErr: any) {
-      console.warn('[TTS] MIoT Action Cloud fallback failed:', rpcErr.message);
-    }
-  }
-
-  const isTtsSuccess = Boolean(executedChannel) || Boolean(localMiioResult?.success) || Boolean(cloudResult?.success);
-  const errorMessage = !isTtsSuccess
-    ? (cloudResult?.error || localMiioResult?.error || '所有通道均未能送达（请确认米家账号登录状态或重新扫码绑定）')
-    : undefined;
-
+  const isTtsSuccess = dispatchRes.success;
   const logEntry = {
     id: `log-${Date.now()}`,
     timestamp: new Date().toLocaleTimeString(),
     type: 'tts' as const,
-    message: isTtsSuccess ? `【${targetDevice.name}】TTS 语音播报` : `【${targetDevice.name}】TTS 播报失败`,
+    message: isTtsSuccess ? `【${targetDevice.name}】TTS 语音播报成功` : `【${targetDevice.name}】TTS 播报超时/失败`,
     detail: isTtsSuccess
-      ? `✓ “${text}” (${executedChannel || '已成功下发'})`
-      : `✕ 播报失败: ${errorMessage} | 内容: “${text}”`,
+      ? `✓ “${text}” (${dispatchRes.channel})`
+      : `✕ 播报未响应: ${dispatchRes.error || '音箱未在预期时间内确认'} | 已尝试: ${dispatchRes.triedChannels.join(', ')}`,
     success: isTtsSuccess
   };
   castLogs.unshift(logEntry);
@@ -4341,20 +4380,19 @@ app.post('/api/miot/tts', async (req: Request, res: Response) => {
   if (!isTtsSuccess) {
     return res.status(502).json({
       success: false,
-      error: errorMessage,
-      message: `向 ${targetDevice.name} 发送 TTS 失败: ${errorMessage}`,
-      cloudResult,
-      localMiioResult,
+      error: dispatchRes.error || '音箱未响应语音播报请求',
+      message: `向 ${targetDevice.name} 下发 TTS 失败: ${dispatchRes.error}`,
+      triedChannels: dispatchRes.triedChannels,
       device: sanitizeDevice(targetDevice)
     });
   }
 
   res.json({
     success: true,
-    message: `已向 ${targetDevice.name} 发送小爱同学语音播报: ${text} (${executedChannel})`,
-    channel: executedChannel,
-    cloudResult,
-    localMiioResult,
+    message: `已成功向【${targetDevice.name}】下发语音播报: “${text}”`,
+    channel: dispatchRes.channel,
+    triedChannels: dispatchRes.triedChannels,
+    details: dispatchRes.details,
     device: sanitizeDevice(targetDevice)
   });
 });
