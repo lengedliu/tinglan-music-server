@@ -427,15 +427,27 @@ export class XiaomiPassport {
       // 1. Use standard Xiaomi passToken authorization via serviceLogin (GET)
       // This correctly negotiates STS tokens without requiring password authentication or throwing code 70016
       const loginUrl = `https://account.xiaomi.com/pass/serviceLogin?sid=${encodeURIComponent(targetSid)}&_json=true`;
-      const cookieHeader = `userId=${cleanUid}; passToken=${cleanPassToken}; uLocale=zh_CN; sdkVersion=3.9`;
+      const baseCookies = [
+        `userId=${cleanUid}`,
+        cUserId ? `cUserId=${cUserId}` : '',
+        `passToken=${cleanPassToken}`,
+        'uLocale=zh_CN',
+        'sdkVersion=3.9'
+      ].filter(Boolean).join('; ');
 
       const res = await fetch(loginUrl, {
         method: 'GET',
         headers: {
           'User-Agent': 'APP/com.xiaomi.mihome APPV/11.3.203 iosPassportSDK/4.2.50 iOS/26.3.1 MK/aVBob25lMTcsMg== DEVT/aVBob25l DEVS/aU9T BRA/QXBwbGU= L/zh_CN',
-          'Cookie': cookieHeader
+          'Cookie': baseCookies
         }
       });
+
+      const setCookiesArr: string[] = typeof (res.headers as any).getSetCookie === 'function'
+        ? (res.headers as any).getSetCookie()
+        : [res.headers.get('set-cookie') || ''];
+      const responseCookies = setCookiesArr.filter(Boolean).map(c => c.split(';')[0].trim()).filter(Boolean).join('; ');
+      const combinedCookieHeader = [baseCookies, responseCookies].filter(Boolean).join('; ');
 
       const raw = await res.text();
       const clean = raw.replace('&&&START&&&', '');
@@ -451,7 +463,7 @@ export class XiaomiPassport {
       const returnedUserId = json.userId ? String(json.userId) : (json.cUserId || cleanUid);
 
       if (json.code === 0 && json.location) {
-        const sts = await this.exchangeStsToken(json.location, cookieHeader, json.ssecurity);
+        const sts = await this.exchangeStsToken(json.location, combinedCookieHeader, json.ssecurity);
         if (sts.serviceToken) {
           return {
             serviceToken: sts.serviceToken,

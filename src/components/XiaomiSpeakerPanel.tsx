@@ -132,6 +132,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
   const [selectedTtsVoice, setSelectedTtsVoice] = useState('zh-CN-XiaoxiaoNeural');
   const [isPlayingAudioPreview, setIsPlayingAudioPreview] = useState(false);
   const audioPreviewRef = useRef<HTMLAudioElement | null>(null);
+  const speechUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
   // QR Code Login State
   const [qrCodeData, setQrCodeData] = useState<{ qrUrl?: string; loginUrl?: string; lpUrl?: string } | null>(null);
@@ -752,16 +753,88 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
   };
 
   const handleAudioStreamPreview = (text: string) => {
-    if (!text.trim()) return;
-    if (isPlayingAudioPreview && audioPreviewRef.current) {
-      audioPreviewRef.current.pause();
-      audioPreviewRef.current = null;
+    const cleanText = text.trim();
+    if (!cleanText) return;
+
+    // 1. If currently playing, clicking toggles stop
+    if (isPlayingAudioPreview) {
+      if (audioPreviewRef.current) {
+        audioPreviewRef.current.pause();
+        audioPreviewRef.current = null;
+      }
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
       setIsPlayingAudioPreview(false);
       return;
     }
 
-    const streamUrl = `/api/tts/audio.mp3?text=${encodeURIComponent(text.trim())}&voice=${encodeURIComponent(selectedTtsVoice)}&t=${Date.now()}`;
+    // 2. High-priority Instant Browser Native Speech Synthesis (Zero delay, instant first-click playback)
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try {
+        window.speechSynthesis.cancel();
+        // Chrome bugfix: resume speech synthesizer before speaking to prevent paused state
+        window.speechSynthesis.resume();
+
+        const utterance = new SpeechSynthesisUtterance(cleanText);
+        speechUtteranceRef.current = utterance;
+
+        // Smart voice matching based on selected voice
+        const voices = window.speechSynthesis.getVoices();
+        if (voices && voices.length > 0) {
+          let matchedVoice: SpeechSynthesisVoice | undefined;
+          if (selectedTtsVoice.includes('Jenny') || selectedTtsVoice.includes('en-US')) {
+            matchedVoice = voices.find(v => v.lang.startsWith('en') || v.name.toLowerCase().includes('english') || v.name.toLowerCase().includes('jenny'));
+            utterance.lang = 'en-US';
+          } else if (selectedTtsVoice.includes('HiuMaan') || selectedTtsVoice.includes('zh-HK')) {
+            matchedVoice = voices.find(v => v.lang === 'zh-HK' || v.name.toLowerCase().includes('cantonese') || v.name.includes('粤'));
+            utterance.lang = 'zh-HK';
+          } else if (selectedTtsVoice.includes('Yunxi') || selectedTtsVoice.includes('Yunjian')) {
+            matchedVoice = voices.find(v => (v.lang.startsWith('zh') || v.name.includes('Chinese')) && (v.name.toLowerCase().includes('male') || v.name.toLowerCase().includes('yunxi') || v.name.toLowerCase().includes('yunjian') || v.name.includes('男')));
+            utterance.lang = 'zh-CN';
+          }
+
+          if (!matchedVoice) {
+            matchedVoice = voices.find(v => v.lang === 'zh-CN' || v.lang === 'zh_CN' || v.lang.startsWith('zh') || v.name.toLowerCase().includes('chinese') || v.name.includes('Xiaoxiao') || v.name.includes('Ting-Ting') || v.name.includes('Mei-Jia'));
+          }
+
+          if (matchedVoice) {
+            utterance.voice = matchedVoice;
+          }
+        }
+
+        utterance.rate = 1.0;
+        utterance.pitch = 1.0;
+
+        utterance.onstart = () => {
+          setIsPlayingAudioPreview(true);
+        };
+
+        utterance.onend = () => {
+          setIsPlayingAudioPreview(false);
+          speechUtteranceRef.current = null;
+        };
+
+        utterance.onerror = (e) => {
+          console.warn('[TTS Preview] Web speech playback finished or interrupted', e);
+          setIsPlayingAudioPreview(false);
+          speechUtteranceRef.current = null;
+        };
+
+        window.speechSynthesis.speak(utterance);
+        // Ensure Chrome doesn't stall queued utterance
+        window.speechSynthesis.resume();
+        setIsPlayingAudioPreview(true);
+        return;
+      } catch (err) {
+        console.warn('[TTS Preview] Native SpeechSynthesis error, falling back to audio stream', err);
+      }
+    }
+
+    // 3. Fallback: HTML5 Audio Stream from server
+    const streamUrl = `/api/tts/audio.mp3?text=${encodeURIComponent(cleanText)}&voice=${encodeURIComponent(selectedTtsVoice)}&t=${Date.now()}`;
     const audio = new Audio(streamUrl);
+    audio.preload = 'auto';
     audioPreviewRef.current = audio;
     setIsPlayingAudioPreview(true);
 
@@ -772,30 +845,16 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
     audio.onerror = () => {
       setIsPlayingAudioPreview(false);
       audioPreviewRef.current = null;
-      // Fallback to browser SpeechSynthesis
-      handleBrowserDebugPreview(text);
     };
 
     audio.play().catch(() => {
       setIsPlayingAudioPreview(false);
-      handleBrowserDebugPreview(text);
+      audioPreviewRef.current = null;
     });
   };
 
   const handleBrowserDebugPreview = (text: string) => {
-    if (!text.trim()) return;
-    if ('speechSynthesis' in window) {
-      try {
-        window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(text.trim());
-        utterance.lang = 'zh-CN';
-        utterance.pitch = 1.0;
-        utterance.rate = 1.0;
-        window.speechSynthesis.speak(utterance);
-      } catch (e) {
-        console.warn('Browser TTS debug preview error', e);
-      }
-    }
+    handleAudioStreamPreview(text);
   };
 
   const handlePresetTts = (text: string) => {

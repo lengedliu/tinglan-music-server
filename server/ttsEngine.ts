@@ -46,25 +46,33 @@ export class TtsEngine {
     }
 
     try {
-      const comm = new Communicate(cleanText, {
-        voice: voice || 'zh-CN-XiaoxiaoNeural',
-        rate,
-        pitch,
-        connectionTimeout: 8000
+      const synthesisPromise = (async () => {
+        const comm = new Communicate(cleanText, {
+          voice: voice || 'zh-CN-XiaoxiaoNeural',
+          rate,
+          pitch,
+          connectionTimeout: 3000
+        });
+
+        const chunks: Buffer[] = [];
+        for await (const chunk of comm.stream()) {
+          if (chunk.type === 'audio' && chunk.data) {
+            chunks.push(chunk.data);
+          }
+        }
+
+        if (chunks.length === 0) {
+          throw new Error('未获取到合成音频数据');
+        }
+
+        return Buffer.concat(chunks);
+      })();
+
+      const timeoutPromise = new Promise<Buffer>((_, reject) => {
+        setTimeout(() => reject(new Error('Edge-TTS 在线合成连接超时 (3秒)')), 3000);
       });
 
-      const chunks: Buffer[] = [];
-      for await (const chunk of comm.stream()) {
-        if (chunk.type === 'audio' && chunk.data) {
-          chunks.push(chunk.data);
-        }
-      }
-
-      if (chunks.length === 0) {
-        throw new Error('未获取到合成音频数据');
-      }
-
-      const fullBuffer = Buffer.concat(chunks);
+      const fullBuffer = await Promise.race([synthesisPromise, timeoutPromise]);
       
       // Cache management
       if (audioCache.size >= MAX_CACHE_SIZE) {
@@ -75,7 +83,7 @@ export class TtsEngine {
 
       return fullBuffer;
     } catch (err: any) {
-      console.error('[TTSEngine] Synthesis error:', err.message);
+      console.warn('[TTSEngine] Synthesis warning:', err.message);
       throw new Error(`语音合成服务异常: ${err.message}`);
     }
   }

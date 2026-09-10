@@ -452,10 +452,11 @@ function authMiddleware(req: Request, res: Response, next: any) {
     return next();
   }
 
-  // 2. Audio streaming and cover art
+  // 2. Audio streaming, TTS synthesis and cover art
   // Xiaomi smart speakers and standard HTML5 <audio> / <img> pull media directly via HTTP GET without custom headers
   if (
     fullPath.startsWith('/api/stream') ||
+    fullPath.startsWith('/api/tts') ||
     (fullPath.startsWith('/api/songs/') && (fullPath.endsWith('/stream') || fullPath.endsWith('/cover')))
   ) {
     return next();
@@ -4333,7 +4334,17 @@ app.post('/api/miot/tts', async (req: Request, res: Response) => {
   const targetDevice = xiaomiDevices.find(d => d.did === did || (d as any).deviceID === did) || xiaomiDevices[0];
 
   if (!targetDevice) {
-    const errorMsg = '未检测到可用的小米音箱设备。请先在【设置】中绑定米家账号并在【控制中枢】点击【同步云端音箱】！';
+    const errorMsg = '未检测到可用的小米音箱设备。请先在【音箱控制台】绑定米家账号或添加音箱设备！';
+    const failLog = {
+      id: `log-${Date.now()}`,
+      timestamp: new Date().toLocaleTimeString(),
+      type: 'tts' as const,
+      message: 'TTS 播报未执行: 未找到目标音箱设备',
+      detail: `✕ 内容: “${text}” | 原因: 尚未绑定小米账号或设备列表为空，请先在【音箱中枢】同步或添加音箱`,
+      success: false
+    };
+    castLogs.unshift(failLog);
+    if (castLogs.length > 50) castLogs.pop();
     return res.status(404).json({ success: false, error: errorMsg, message: errorMsg });
   }
 

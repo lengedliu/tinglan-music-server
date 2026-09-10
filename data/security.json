@@ -2,5 +2,7 @@
   "requireAuth": false,
   "authScope": "all",
   "allowRegistration": true,
-  "updatedAt": "2026-09-08T23:27:25.505Z"
+  "updatedAt": "2026-09-08T23:27:25.505Z",
+  "allowUserMiotControl": true,
+  "allowUserMiotTts": false
 }
