@@ -4413,7 +4413,29 @@ app.post('/api/miot/test-sound', async (req: Request, res: Response) => {
   const targetDevice = xiaomiDevices.find(d => d.did === deviceId || (d as any).deviceID === deviceId) || xiaomiDevices[0];
 
   if (!targetDevice) {
-    return res.status(400).json({ success: false, error: '未找到指定音箱设备' });
+    return res.status(400).json({ 
+      success: false, 
+      error: '未找到指定音箱设备，请在设备列表中先选择或添加音箱。' 
+    });
+  }
+
+  // Pre-check credentials: must have either Xiaomi cloud login OR 32-hex local token
+  const activeMicoToken = (miotConfig as any).micoServiceToken || miotConfig.serviceToken;
+  const isCloudAvailable = Boolean(miotConfig.isLoggedIn && activeMicoToken && miotConfig.userId);
+  const isLocalTokenAvailable = Boolean(targetDevice.token && String(targetDevice.token).trim().length >= 16);
+
+  if (!isCloudAvailable && !isLocalTokenAvailable) {
+    return res.status(400).json({
+      success: false,
+      needsLogin: true,
+      error: `控制【${targetDevice.name}】需要米家授权。当前既未登录米家账号，也未配置该音箱的 32 位局域网 Token。请点击【立即扫码登录米家】完成授权。`,
+      targetDevice: targetDevice.name,
+      logs: [
+        '⚠️ 局域网通道: 未配置该音箱的 32 位 Token (小米设备 miIO 通信强制要求 AES 密钥握手)',
+        '⚠️ 云端广播通道: 米家账号处于未登录状态，无法调用小爱云端 UBUS 接口',
+        '💡 解决方案: 使用米家 App 扫码登录，系统将自动穿透私网控制家庭音箱'
+      ]
+    });
   }
 
   // Verified public high-availability audio test stream
@@ -4422,8 +4444,7 @@ app.post('/api/miot/test-sound', async (req: Request, res: Response) => {
   let localResult: any = null;
   const logs: string[] = [];
 
-  const activeMicoToken = (miotConfig as any).micoServiceToken || miotConfig.serviceToken;
-  if (miotConfig.isLoggedIn && activeMicoToken && miotConfig.userId) {
+  if (isCloudAvailable) {
     try {
       logs.push(`正在通过小米云端 UBUS (mediaplayer/player_play_music) 投播高保真测试流...`);
       cloudResult = await callMinaCloudApi(
@@ -4443,15 +4464,17 @@ app.post('/api/miot/test-sound', async (req: Request, res: Response) => {
       }
       if (cloudResult?.success) {
         logs.push(`云端投播指令下发成功 (${targetDevice.name})`);
+      } else if (cloudResult?.error) {
+        logs.push(`云端投播失败: ${cloudResult.error}`);
       }
     } catch (err: any) {
       logs.push(`云端下发异常: ${err.message}`);
     }
   }
 
-  if (targetDevice.token && targetDevice.ip) {
+  if (isLocalTokenAvailable && targetDevice.ip) {
     try {
-      logs.push(`正在通过局域网 miIO UDP 下发测试流...`);
+      logs.push(`正在通过局域网 miIO UDP (${targetDevice.ip}) 下发测试流...`);
       localResult = await sendMiioCommand(
         targetDevice.ip,
         targetDevice.token,
@@ -4468,6 +4491,9 @@ app.post('/api/miot/test-sound', async (req: Request, res: Response) => {
           2000
         );
       }
+      if (localResult?.success) {
+        logs.push(`局域网 miIO 指令下发成功`);
+      }
     } catch (err: any) {
       logs.push(`局域网下发异常: ${err.message}`);
     }
@@ -4480,6 +4506,7 @@ app.post('/api/miot/test-sound', async (req: Request, res: Response) => {
     testAudioUrl,
     cloudResult,
     localResult,
+    error: success ? undefined : (cloudResult?.error || localResult?.error || '音箱未能确认播放状态，请检查网络或重新扫码绑定米家账号'),
     logs
   });
 });

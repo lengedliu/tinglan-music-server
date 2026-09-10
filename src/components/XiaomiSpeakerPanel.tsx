@@ -224,7 +224,12 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
 
   // Sound Test & Cast Mode state
   const [isTestingSound, setIsTestingSound] = useState(false);
-  const [soundTestResult, setSoundTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [soundTestResult, setSoundTestResult] = useState<{ 
+    success: boolean; 
+    message: string; 
+    needsLogin?: boolean;
+    logs?: string[];
+  } | null>(null);
 
   const handleTestSound = async () => {
     if (!activeDevice) return;
@@ -240,12 +245,15 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
       if (data.success) {
         setSoundTestResult({
           success: true,
-          message: `🔊 已成功向【${cleanDeviceName(activeDevice.name)}】下发高保真测试音频！若未听到声音，建议切换为【公网高保真 CDN 模式】。`
+          message: `🔊 已成功向【${cleanDeviceName(activeDevice.name)}】下发高保真测试音频！若未听到声音，建议切换为【公网高保真 CDN 模式】。`,
+          logs: data.logs
         });
       } else {
         setSoundTestResult({
           success: false,
-          message: `下发测试流失败: ${data.error || '音箱未响应，请检查设备状态或云端登录'}`
+          needsLogin: data.needsLogin || false,
+          message: data.error || '音箱未响应，请检查设备状态或云端登录',
+          logs: data.logs
         });
       }
     } catch (err: any) {
@@ -255,7 +263,6 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
       });
     } finally {
       setIsTestingSound(false);
-      setTimeout(() => setSoundTestResult(null), 8000);
     }
   };
 
@@ -2501,6 +2508,29 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                       云端接入 (未获取局域网IP)
                     </span>
                   )}
+                  {miotConfig.isLoggedIn ? (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 font-sans flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      米家云通道已连接
+                    </span>
+                  ) : activeDevice?.token ? (
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 font-sans">
+                      局域网 Token 直连
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveSubTab('settings');
+                        setBindMode('qrcode');
+                        if (!qrCodeData) handleGenerateQrCode(qrChannel);
+                      }}
+                      className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 font-sans flex items-center gap-1 transition cursor-pointer"
+                    >
+                      <AlertTriangle className="w-2.5 h-2.5 text-amber-400" />
+                      待授权 (点击扫码绑定)
+                    </button>
+                  )}
                 </h3>
               </div>
 
@@ -2611,17 +2641,59 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
 
             {/* Test Sound Result Banner */}
             {soundTestResult && (
-              <div className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
+              <div className={`p-4 rounded-2xl text-xs space-y-2.5 transition-all ${
                 soundTestResult.success 
-                  ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-300' 
-                  : 'bg-rose-500/15 border border-rose-500/30 text-rose-300'
+                  ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-200' 
+                  : 'bg-rose-500/15 border border-rose-500/30 text-rose-200'
               }`}>
-                {soundTestResult.success ? (
-                  <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
-                ) : (
-                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-2.5">
+                    {soundTestResult.success ? (
+                      <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400 mt-0.5" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
+                    )}
+                    <div className="space-y-1">
+                      <div className="font-semibold leading-relaxed">{soundTestResult.message}</div>
+                      {soundTestResult.logs && soundTestResult.logs.length > 0 && (
+                        <div className="space-y-0.5 font-mono text-[11px] opacity-85 mt-1">
+                          {soundTestResult.logs.map((lg, idx) => (
+                            <div key={idx}>{lg}</div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setSoundTestResult(null)}
+                    className="text-zinc-400 hover:text-white p-1 rounded-lg shrink-0"
+                    title="关闭提示"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {soundTestResult.needsLogin && (
+                  <div className="pt-2 border-t border-rose-500/20 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveSubTab('settings');
+                        setBindMode('qrcode');
+                        if (!qrCodeData) handleGenerateQrCode(qrChannel);
+                      }}
+                      className="px-4 py-2 rounded-xl bg-gradient-to-r from-[#FF6700] to-[#ff7b1a] hover:from-[#e55c00] hover:to-[#FF6700] text-white font-bold flex items-center gap-2 shadow-[0_4px_16px_rgba(255,103,0,0.35)] transition active:scale-95 cursor-pointer"
+                    >
+                      <QrCode className="w-4 h-4" />
+                      <span>立即扫码登录米家账号</span>
+                    </button>
+                    <span className="text-[11px] text-zinc-300">
+                      扫码授权后，小米官方云端将自动穿透私网向家庭音箱下发音频！
+                    </span>
+                  </div>
                 )}
-                <span>{soundTestResult.message}</span>
               </div>
             )}
 
