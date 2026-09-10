@@ -3941,13 +3941,25 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
   // 2. Track 1: Local miIO UDP 54321 (If device has IP & Token)
   if (targetDevice.token && targetDevice.ip) {
     try {
+      // Try play_specify_url first
       localMiioResult = await sendMiioCommand(
         targetDevice.ip,
         targetDevice.token,
         'play_specify_url',
         [resolvedStreamUrl],
-        3000
+        2500
       );
+
+      // If play_specify_url wasn't successful, try player_play_url
+      if (!localMiioResult?.success) {
+        localMiioResult = await sendMiioCommand(
+          targetDevice.ip,
+          targetDevice.token,
+          'player_play_url',
+          [resolvedStreamUrl],
+          2500
+        );
+      }
     } catch (e: any) {
       localMiioResult = { success: false, error: e.message };
     }
@@ -3982,20 +3994,29 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
         targetDevice.did
       );
 
-      // Fallback: If type 1 didn't succeed, retry with type 0
+      // Fallback 1: Try player_play_url without media wrapper (type 1 / type 0)
       if (!cloudResult?.success) {
         cloudResult = await callMinaCloudApi(
           'mediaplayer',
           'player_play_url',
-          { url: resolvedStreamUrl, type: 0, media: 'app_ios' },
+          { url: resolvedStreamUrl, type: 1 },
           targetDevice.did
         );
       }
 
-      // Priority 2: If URL play was acknowledged or failed, also execute voice command fallback if desired
+      if (!cloudResult?.success) {
+        cloudResult = await callMinaCloudApi(
+          'mediaplayer',
+          'player_play_url',
+          { url: resolvedStreamUrl, type: 0 },
+          targetDevice.did
+        );
+      }
+
+      // Priority 2: MIoT Cloud Action fallback (siid 3, aiid 1 / siid 2, aiid 1)
       if (!cloudResult?.success && (miotConfig as any).ssecurity && miotConfig.userId) {
         try {
-          const rpcRes = await miotRpcEngine.executeAction(
+          let rpcRes = await miotRpcEngine.executeAction(
             targetDevice,
             3,
             1,
@@ -4008,6 +4029,22 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
           );
           if (rpcRes.code === 0) {
             cloudResult = { success: true, data: rpcRes.result, method: 'miot_cloud_rpc' };
+          } else {
+            // Try Speaker playUrl (siid 2, aiid 1)
+            rpcRes = await miotRpcEngine.executeAction(
+              targetDevice,
+              2,
+              1,
+              [resolvedStreamUrl],
+              {
+                userId: String(miotConfig.userId),
+                serviceToken: (miotConfig as any).xiaomiioServiceToken || activeMicoToken,
+                ssecurity: (miotConfig as any).ssecurity
+              }
+            );
+            if (rpcRes.code === 0) {
+              cloudResult = { success: true, data: rpcRes.result, method: 'miot_cloud_rpc_siid2' };
+            }
           }
         } catch (rpcErr: any) {
           console.warn('MIoT Action Cloud fallback failed:', rpcErr.message);
@@ -4516,7 +4553,10 @@ app.get('/api/miot/logs', (req: Request, res: Response) => {
 // ---------------- AUDIO STREAMING (HTTP 206 Partial Content Range & DLNA/Mina Support) ----------------
 const streamAudioHandler = async (req: Request, res: Response) => {
   const { songId } = req.params;
-  const decodedSongId = decodeURIComponent(songId);
+  const decodedSongId = decodeURIComponent(songId || '');
+  // Strip any artificial format extension (.mp3, .wav, .flac, .m4a, etc.)
+  const cleanSongId = (songId || '').replace(/\.(wav|mp3|flac|m4a|ogg|aac|opus|ape|dsf|dff)$/i, '');
+  const decodedCleanSongId = (decodedSongId || '').replace(/\.(wav|mp3|flac|m4a|ogg|aac|opus|ape|dsf|dff)$/i, '');
 
   // Set permissive CORS headers for local speakers and browsers
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -4528,7 +4568,13 @@ const streamAudioHandler = async (req: Request, res: Response) => {
   }
 
   // Find song in library metadata if available
-  const foundSong = storedSongs.find(s => s.id === songId || s.id === decodedSongId);
+  const foundSong = storedSongs.find(s => 
+    s.id === songId || 
+    s.id === decodedSongId || 
+    s.id === cleanSongId || 
+    s.id === decodedCleanSongId
+  );
+
   let localFilePath: string | null = null;
   let matchedExt = '.wav';
 
@@ -4543,18 +4589,32 @@ const streamAudioHandler = async (req: Request, res: Response) => {
     }
   }
 
-  // 2. Check direct file by songId with multiple extensions
+  // 2. Check direct file by exact names first
+  if (!localFilePath) {
+    const directNames = [songId, decodedSongId, `${cleanSongId}.wav`, `${cleanSongId}.mp3`, `${cleanSongId}.flac`];
+    for (const name of directNames) {
+      if (!name) continue;
+      const testPath = path.join(MUSIC_DIR, name);
+      if (fs.existsSync(testPath) && fs.statSync(testPath).isFile()) {
+        localFilePath = testPath;
+        matchedExt = path.extname(testPath).toLowerCase();
+        break;
+      }
+    }
+  }
+
+  // 3. Check direct file by cleanSongId with all possible extensions
   if (!localFilePath) {
     const possibleExtensions = ['.wav', '.mp3', '.flac', '.m4a', '.ogg', '.aac', '.opus', '.ape', '.dsf', '.dff'];
     for (const ext of possibleExtensions) {
-      const testPath = path.join(MUSIC_DIR, `${songId}${ext}`);
-      if (fs.existsSync(testPath)) {
+      const testPath = path.join(MUSIC_DIR, `${cleanSongId}${ext}`);
+      if (fs.existsSync(testPath) && fs.statSync(testPath).isFile()) {
         localFilePath = testPath;
         matchedExt = ext;
         break;
       }
-      const testPathDecoded = path.join(MUSIC_DIR, `${decodedSongId}${ext}`);
-      if (fs.existsSync(testPathDecoded)) {
+      const testPathDecoded = path.join(MUSIC_DIR, `${decodedCleanSongId}${ext}`);
+      if (fs.existsSync(testPathDecoded) && fs.statSync(testPathDecoded).isFile()) {
         localFilePath = testPathDecoded;
         matchedExt = ext;
         break;
@@ -4562,7 +4622,27 @@ const streamAudioHandler = async (req: Request, res: Response) => {
     }
   }
 
-  // 3. If file doesn't exist on disk, return 404 with clear message
+  // 4. Auto-generate sample track on demand if it is one of the standard demo tracks
+  if (!localFilePath) {
+    const matchedSample = sampleTracksConfig.find(t => t.id === cleanSongId || t.id === decodedCleanSongId);
+    if (matchedSample) {
+      try {
+        const samplePath = path.join(MUSIC_DIR, `${matchedSample.id}.wav`);
+        if (!fs.existsSync(samplePath)) {
+          const wavBuffer = generateHarmonicWav(30, matchedSample.freqs);
+          fs.writeFileSync(samplePath, wavBuffer);
+        }
+        if (fs.existsSync(samplePath)) {
+          localFilePath = samplePath;
+          matchedExt = '.wav';
+        }
+      } catch (genErr) {
+        console.warn('Auto-generation of sample track failed:', genErr);
+      }
+    }
+  }
+
+  // 5. If file doesn't exist on disk, return 404 with clear message
   if (!localFilePath || !fs.existsSync(localFilePath)) {
     return res.status(404).json({
       error: 'Audio file not found',
