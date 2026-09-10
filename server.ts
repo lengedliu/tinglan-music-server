@@ -1963,6 +1963,14 @@ const handleTtsAudioStream = async (req: Request, res: Response) => {
   const rate = String(req.query.rate || '+0%').trim();
   const pitch = String(req.query.pitch || '+0Hz').trim();
 
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type, Accept-Ranges');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+
   if (!text) {
     return res.status(400).send('Missing "text" query param for TTS synthesis');
   }
@@ -1975,6 +1983,11 @@ const handleTtsAudioStream = async (req: Request, res: Response) => {
     res.setHeader('Content-Type', 'audio/mpeg');
     res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Cache-Control', 'public, max-age=86400');
+
+    if (req.method === 'HEAD') {
+      res.setHeader('Content-Length', totalLength);
+      return res.status(200).end();
+    }
 
     if (rangeHeader) {
       const parts = rangeHeader.replace(/bytes=/, '').split('-');

@@ -145,7 +145,7 @@ export class TtsEngine {
       triedChannels.push('Local miIO UDP (54321)');
       try {
         // Method 1: text_to_speech
-        const localRes = await sendMiioCommandFn(targetDevice.ip, targetDevice.token, 'text_to_speech', [cleanText], 2000);
+        const localRes = await sendMiioCommandFn(targetDevice.ip, targetDevice.token, 'text_to_speech', [cleanText], 1500);
         if (localRes?.success) {
           return {
             success: true,
@@ -155,18 +155,34 @@ export class TtsEngine {
           };
         }
 
-        // Method 2: MIoT Local Action siid 5 aiid 1
+        // Method 2: MIoT Local Action siid 5 aiid 1 (play-text [text, 0])
         const actionRes = await sendMiioCommandFn(targetDevice.ip, targetDevice.token, 'action', {
           did: targetDevice.did,
           siid: 5,
           aiid: 1,
-          in: [cleanText]
-        }, 2000);
-        if (actionRes?.success) {
+          in: [cleanText, 0]
+        }, 1500);
+        if (actionRes?.success && actionRes?.result?.code === 0) {
           return {
             success: true,
             channel: '局域网 miIO 本地 Spec 动作 (siid:5, aiid:1)',
             details: actionRes,
+            triedChannels
+          };
+        }
+
+        // Method 3: MIoT Local Action siid 5 aiid 3 (text-to-speech [text, 0])
+        const action3Res = await sendMiioCommandFn(targetDevice.ip, targetDevice.token, 'action', {
+          did: targetDevice.did,
+          siid: 5,
+          aiid: 3,
+          in: [cleanText, 0]
+        }, 1500);
+        if (action3Res?.success && action3Res?.result?.code === 0) {
+          return {
+            success: true,
+            channel: '局域网 miIO 本地 Spec 动作 (siid:5, aiid:3)',
+            details: action3Res,
             triedChannels
           };
         }
@@ -223,29 +239,29 @@ export class TtsEngine {
     if ((mode === 'auto' || mode === 'miot_spec') && cloudAuth) {
       triedChannels.push('米家 MIoT 规范云端动作');
       try {
-        // Action 1: siid 5, aiid 1 (Intelligent Speaker: play-text)
-        let rpcRes = await miotRpcEngine.executeAction(targetDevice, 5, 1, [cleanText], cloudAuth);
+        // Action 1: siid 5, aiid 1 (Intelligent Speaker: play-text [text, 0] where 0 is voice enabled)
+        let rpcRes = await miotRpcEngine.executeAction(targetDevice, 5, 1, [cleanText, 0], cloudAuth);
         if (rpcRes.code === 0) {
           return {
             success: true,
-            channel: 'MIoT 原生智能语音服务 (siid:5, aiid:1)',
+            channel: 'MIoT 智能语音服务 (siid:5, aiid:1 [text, 0])',
             details: rpcRes,
             triedChannels
           };
         }
 
-        // Action 2: siid 5, aiid 5 (Intelligent Speaker: execute-text, e.g. for XiaoAi Play LX04 / L05 / Touch Screen)
-        rpcRes = await miotRpcEngine.executeAction(targetDevice, 5, 5, [cleanText, 1], cloudAuth);
+        // Action 1-alt: siid 5, aiid 1 (Intelligent Speaker: play-text [text])
+        rpcRes = await miotRpcEngine.executeAction(targetDevice, 5, 1, [cleanText], cloudAuth);
         if (rpcRes.code === 0) {
           return {
             success: true,
-            channel: 'MIoT 智能执行指令 (siid:5, aiid:5)',
+            channel: 'MIoT 智能语音服务 (siid:5, aiid:1 [text])',
             details: rpcRes,
             triedChannels
           };
         }
 
-        // Action 3: siid 5, aiid 3 (Intelligent Speaker: text-to-speech)
+        // Action 2: siid 5, aiid 3 (Intelligent Speaker: text-to-speech [text, 0])
         rpcRes = await miotRpcEngine.executeAction(targetDevice, 5, 3, [cleanText, 0], cloudAuth);
         if (rpcRes.code === 0) {
           return {
@@ -256,7 +272,29 @@ export class TtsEngine {
           };
         }
 
-        // Action 4: siid 7, aiid 1 (Speaker: play-text)
+        // Action 3: siid 5, aiid 4 (Intelligent Speaker: execute-text [text, 0])
+        rpcRes = await miotRpcEngine.executeAction(targetDevice, 5, 4, [cleanText, 0], cloudAuth);
+        if (rpcRes.code === 0) {
+          return {
+            success: true,
+            channel: 'MIoT 智能指令执行 (siid:5, aiid:4)',
+            details: rpcRes,
+            triedChannels
+          };
+        }
+
+        // Action 4: siid 5, aiid 5 (Intelligent Speaker: execute-text [text, 0] -> 0 is voiced!)
+        rpcRes = await miotRpcEngine.executeAction(targetDevice, 5, 5, [cleanText, 0], cloudAuth);
+        if (rpcRes.code === 0) {
+          return {
+            success: true,
+            channel: 'MIoT 智能执行有声播报 (siid:5, aiid:5)',
+            details: rpcRes,
+            triedChannels
+          };
+        }
+
+        // Action 5: siid 7, aiid 1 (Speaker: play-text [text])
         rpcRes = await miotRpcEngine.executeAction(targetDevice, 7, 1, [cleanText], cloudAuth);
         if (rpcRes.code === 0) {
           return {
@@ -267,7 +305,7 @@ export class TtsEngine {
           };
         }
 
-        // Action 5: siid 8, aiid 1 (Speaker: play-text alternate)
+        // Action 6: siid 8, aiid 1 (Speaker: play-text alternate)
         rpcRes = await miotRpcEngine.executeAction(targetDevice, 8, 1, [cleanText], cloudAuth);
         if (rpcRes.code === 0) {
           return {
@@ -283,7 +321,7 @@ export class TtsEngine {
     }
 
     // ----------------------------------------------------
-    // Channel 4: High-Definition Audio Stream Fallback
+    // Channel 4: High-Definition Audio Stream Fallback (Guaranteed to produce sound)
     // ----------------------------------------------------
     if (serverHost && (mode === 'auto' || mode === 'audio_stream')) {
       triedChannels.push('高清音频串流投播 (Audio Stream TTS)');
@@ -308,14 +346,37 @@ export class TtsEngine {
           }
         }
 
-        // 2. Try MIoT playUrl (siid 3, aiid 1)
+        // 2. Try MIoT playUrl (siid 3, aiid 1 / siid 2, aiid 1)
         if (cloudAuth) {
-          const rpcRes = await miotRpcEngine.executeAction(targetDevice, 3, 1, [streamAudioUrl], cloudAuth);
+          let rpcRes = await miotRpcEngine.executeAction(targetDevice, 3, 1, [streamAudioUrl], cloudAuth);
           if (rpcRes.code === 0) {
             return {
               success: true,
               channel: '高清语音串流投播 (MIoT PlayUrl siid:3, aiid:1)',
               details: { streamUrl: streamAudioUrl, rpcRes },
+              triedChannels
+            };
+          }
+
+          rpcRes = await miotRpcEngine.executeAction(targetDevice, 2, 1, [streamAudioUrl], cloudAuth);
+          if (rpcRes.code === 0) {
+            return {
+              success: true,
+              channel: '高清语音串流投播 (MIoT PlayUrl siid:2, aiid:1)',
+              details: { streamUrl: streamAudioUrl, rpcRes },
+              triedChannels
+            };
+          }
+        }
+
+        // 3. Try Local miIO player_play_url if IP/token present
+        if (targetDevice.token && targetDevice.ip) {
+          const miioPlayRes = await sendMiioCommandFn(targetDevice.ip, targetDevice.token, 'player_play_url', [streamAudioUrl], 2000);
+          if (miioPlayRes?.success) {
+            return {
+              success: true,
+              channel: '局域网 miIO 高清语音串流 (player_play_url)',
+              details: { streamUrl: streamAudioUrl, miioPlayRes },
               triedChannels
             };
           }

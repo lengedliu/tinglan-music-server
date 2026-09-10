@@ -330,9 +330,37 @@ export class MiotRpcEngine {
       }
 
       if (res.ok && (resJson.code === 0 || resJson.message === 'ok')) {
+        // Check if the inner result has an error code
+        const innerResult = resJson.result !== undefined ? resJson.result : resJson;
+
+        // Case 1: Action execution result { did, siid, aiid, code: -704042011, out: [] }
+        if (innerResult && typeof innerResult === 'object' && !Array.isArray(innerResult)) {
+          if (innerResult.code !== undefined && innerResult.code !== 0) {
+            return {
+              code: innerResult.code,
+              error: `MIoT 设备执行未确认 (Inner Code: ${innerResult.code})`,
+              result: innerResult,
+              exeMode: 'cloud_miot'
+            };
+          }
+        }
+
+        // Case 2: Property execution result array [{ did, siid, piid, code: -704042011 }]
+        if (Array.isArray(innerResult) && innerResult.length > 0) {
+          const failedItem = innerResult.find((item: any) => item && item.code !== undefined && item.code !== 0);
+          if (failedItem) {
+            return {
+              code: failedItem.code,
+              error: `MIoT 属性操作失败 (Inner Code: ${failedItem.code})`,
+              result: innerResult,
+              exeMode: 'cloud_miot'
+            };
+          }
+        }
+
         return {
           code: 0,
-          result: resJson.result !== undefined ? resJson.result : resJson,
+          result: innerResult,
           exeMode: 'cloud_miot'
         };
       }
