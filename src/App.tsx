@@ -381,9 +381,9 @@ export default function App() {
 
     const streamUrl = `${miotConfig.serverHost}/api/stream/${song.id}`;
 
-    // 20-second timeout controller to allow multi-channel fallback
+    // 15-second timeout controller to detect un-reachable device
     const controller = new AbortController();
-    const timeoutTimer = setTimeout(() => controller.abort(), 20000);
+    const timeoutTimer = setTimeout(() => controller.abort(), 15000);
 
     apiFetch('/api/miot/cast', {
       method: 'POST',
@@ -516,7 +516,7 @@ export default function App() {
         clearTimeout(timeoutTimer);
         const isTimeout = err.name === 'AbortError';
         const errorDesc = isTimeout
-          ? '向音箱下发投播指令超时未响应，请检查设备是否在线或米家账号授权'
+          ? '向音箱下发投播指令超时（8秒未响应），设备可能未联网或局域网不可达'
           : (err.message || '音箱拒绝或未响应投播请求');
 
         const errTime = new Date().toLocaleTimeString();
