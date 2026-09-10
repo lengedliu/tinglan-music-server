@@ -4134,7 +4134,7 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
   });
 });
 
-// Xiaomi Speaker Remote Control (play, pause, toggle, volume, mute, seek)
+// Xiaomi Speaker Remote Control (play, pause, toggle, next, prev, volume, mute, seek)
 app.post('/api/miot/control', async (req: Request, res: Response) => {
   if (!checkMiotControlPermission(req, res)) return;
 
@@ -4161,89 +4161,166 @@ app.post('/api/miot/control', async (req: Request, res: Response) => {
     ssecurity: (miotConfig as any).ssecurity
   } : undefined;
 
+  // Fast-dispatch runner across Local miIO and Cloud MIoT
+  const dispatchAction = async (miioMethod: string, miioParams: any[], siid: number, aiid: number, inArgs: any[] = [], minaAction?: { path: string; method: string; msg: any }) => {
+    const tasks: Promise<any>[] = [];
+
+    // Channel 1: Local miIO (if IP + token configured, fast 800ms probe)
+    if (targetDevice.token && targetDevice.ip) {
+      tasks.push(
+        sendMiioCommand(targetDevice.ip, targetDevice.token, miioMethod, miioParams, 1200)
+          .then(res => {
+            if (res.success) localMiioResult = res;
+            return res;
+          })
+          .catch(() => ({ success: false }))
+      );
+    }
+
+    // Channel 2: Cloud MIoT Action (Primary & most reliable for all XiaoAi models)
+    if (cloudAuth) {
+      tasks.push(
+        miotRpcEngine.executeAction(targetDevice, siid, aiid, inArgs, cloudAuth)
+          .then(res => {
+            if (res.code === 0) {
+              cloudResult = { success: true, data: res.result };
+            }
+            return res;
+          })
+          .catch(() => ({ code: -1 }))
+      );
+    }
+
+    // Channel 3: Mina Cloud UBUS (if configured and separate from miot)
+    if (minaAction && miotConfig.isLoggedIn && activeMicoToken && miotConfig.userId) {
+      tasks.push(
+        callMinaCloudApi(minaAction.path, minaAction.method, minaAction.msg, targetDevice.did)
+          .then(res => {
+            if (res.success && !cloudResult?.success) {
+              cloudResult = res;
+            }
+            return res;
+          })
+          .catch(() => ({ success: false }))
+      );
+    }
+
+    if (tasks.length > 0) {
+      await Promise.allSettled(tasks);
+    }
+  };
+
+  const dispatchProperty = async (miioMethod: string, miioParams: any[], siid: number, piid: number, propVal: any, minaAction?: { path: string; method: string; msg: any }) => {
+    const tasks: Promise<any>[] = [];
+
+    if (targetDevice.token && targetDevice.ip) {
+      tasks.push(
+        sendMiioCommand(targetDevice.ip, targetDevice.token, miioMethod, miioParams, 1200)
+          .then(res => {
+            if (res.success) localMiioResult = res;
+            return res;
+          })
+          .catch(() => ({ success: false }))
+      );
+    }
+
+    if (cloudAuth) {
+      tasks.push(
+        miotRpcEngine.setProperty(targetDevice, siid, piid, propVal, cloudAuth)
+          .then(res => {
+            if (res.code === 0) {
+              cloudResult = { success: true, data: res.result };
+            }
+            return res;
+          })
+          .catch(() => ({ code: -1 }))
+      );
+    }
+
+    if (minaAction && miotConfig.isLoggedIn && activeMicoToken && miotConfig.userId) {
+      tasks.push(
+        callMinaCloudApi(minaAction.path, minaAction.method, minaAction.msg, targetDevice.did)
+          .then(res => {
+            if (res.success && !cloudResult?.success) {
+              cloudResult = res;
+            }
+            return res;
+          })
+          .catch(() => ({ success: false }))
+      );
+    }
+
+    if (tasks.length > 0) {
+      await Promise.allSettled(tasks);
+    }
+  };
+
   switch (action) {
     case 'play':
       targetDevice.status.playing = true;
       detail = '已发送播放指令';
-      if (targetDevice.token && targetDevice.ip) {
-        localMiioResult = await sendMiioCommand(targetDevice.ip, targetDevice.token, 'player_play_operation', ['play'], 2500);
-      }
-      if (miotConfig.isLoggedIn && activeMicoToken && miotConfig.userId) {
-        cloudResult = await callMinaCloudApi('mediaplayer', 'player_play_operation', { action: 'play' }, targetDevice.did);
-        if (!cloudResult?.success && cloudAuth) {
-          try {
-            const rpc = await miotRpcEngine.executeAction(targetDevice, 3, 1, [], cloudAuth);
-            if (rpc.code === 0) cloudResult = { success: true, data: rpc.result };
-          } catch {}
-        }
-      }
+      await dispatchAction(
+        'player_play_operation', ['play'],
+        3, 1, [],
+        { path: 'mediaplayer', method: 'player_play_operation', msg: { action: 'play' } }
+      );
       break;
     case 'pause':
+    case 'stop':
       targetDevice.status.playing = false;
       detail = '已发送暂停指令';
-      if (targetDevice.token && targetDevice.ip) {
-        localMiioResult = await sendMiioCommand(targetDevice.ip, targetDevice.token, 'player_play_operation', ['pause'], 2500);
-      }
-      if (miotConfig.isLoggedIn && activeMicoToken && miotConfig.userId) {
-        cloudResult = await callMinaCloudApi('mediaplayer', 'player_play_operation', { action: 'pause' }, targetDevice.did);
-        if (!cloudResult?.success && cloudAuth) {
-          try {
-            const rpc = await miotRpcEngine.executeAction(targetDevice, 3, 2, [], cloudAuth);
-            if (rpc.code === 0) cloudResult = { success: true, data: rpc.result };
-          } catch {}
-        }
-      }
+      await dispatchAction(
+        'player_play_operation', ['pause'],
+        3, 2, [],
+        { path: 'mediaplayer', method: 'player_play_operation', msg: { action: 'pause' } }
+      );
       break;
     case 'toggle':
       targetDevice.status.playing = !targetDevice.status.playing;
       detail = `切换播放状态 -> ${targetDevice.status.playing ? '播放' : '暂停'}`;
       const playOp = targetDevice.status.playing ? 'play' : 'pause';
-      if (targetDevice.token && targetDevice.ip) {
-        localMiioResult = await sendMiioCommand(targetDevice.ip, targetDevice.token, 'player_play_operation', [playOp], 2500);
-      }
-      if (miotConfig.isLoggedIn && activeMicoToken && miotConfig.userId) {
-        cloudResult = await callMinaCloudApi('mediaplayer', 'player_play_operation', { action: playOp }, targetDevice.did);
-        if (!cloudResult?.success && cloudAuth) {
-          try {
-            const aiid = playOp === 'play' ? 1 : 2;
-            const rpc = await miotRpcEngine.executeAction(targetDevice, 3, aiid, [], cloudAuth);
-            if (rpc.code === 0) cloudResult = { success: true, data: rpc.result };
-          } catch {}
-        }
-      }
+      const playAiid = targetDevice.status.playing ? 1 : 2;
+      await dispatchAction(
+        'player_play_operation', [playOp],
+        3, playAiid, [],
+        { path: 'mediaplayer', method: 'player_play_operation', msg: { action: playOp } }
+      );
+      break;
+    case 'next':
+      detail = '下一首';
+      await dispatchAction(
+        'player_play_operation', ['next'],
+        3, 4, [],
+        { path: 'mediaplayer', method: 'player_play_operation', msg: { action: 'next' } }
+      );
+      break;
+    case 'prev':
+    case 'previous':
+      detail = '上一首';
+      await dispatchAction(
+        'player_play_operation', ['prev'],
+        3, 5, [],
+        { path: 'mediaplayer', method: 'player_play_operation', msg: { action: 'prev' } }
+      );
       break;
     case 'volume':
       targetDevice.status.volume = Math.max(0, Math.min(100, Number(value) || 50));
       detail = `设置音箱音量 -> ${targetDevice.status.volume}%`;
-      if (targetDevice.token && targetDevice.ip) {
-        localMiioResult = await sendMiioCommand(targetDevice.ip, targetDevice.token, 'player_set_volume', [targetDevice.status.volume], 2500);
-      }
-      if (miotConfig.isLoggedIn && activeMicoToken && miotConfig.userId) {
-        cloudResult = await callMinaCloudApi('mediaplayer', 'player_set_volume', { volume: targetDevice.status.volume }, targetDevice.did);
-        if (!cloudResult?.success && cloudAuth) {
-          try {
-            const rpc = await miotRpcEngine.setProperty(targetDevice, 2, 1, targetDevice.status.volume, cloudAuth);
-            if (rpc.code === 0) cloudResult = { success: true, data: rpc.result };
-          } catch {}
-        }
-      }
+      await dispatchProperty(
+        'player_set_volume', [targetDevice.status.volume],
+        2, 1, targetDevice.status.volume,
+        { path: 'mediaplayer', method: 'player_set_volume', msg: { volume: targetDevice.status.volume } }
+      );
       break;
     case 'mute':
       targetDevice.status.muted = !targetDevice.status.muted;
       detail = `静音开关 -> ${targetDevice.status.muted ? '已静音' : '已取消静音'}`;
       const targetVol = targetDevice.status.muted ? 0 : targetDevice.status.volume;
-      if (targetDevice.token && targetDevice.ip) {
-        localMiioResult = await sendMiioCommand(targetDevice.ip, targetDevice.token, 'player_set_volume', [targetVol], 2500);
-      }
-      if (miotConfig.isLoggedIn && activeMicoToken && miotConfig.userId) {
-        cloudResult = await callMinaCloudApi('mediaplayer', 'player_set_volume', { volume: targetVol }, targetDevice.did);
-        if (!cloudResult?.success && cloudAuth) {
-          try {
-            const rpc = await miotRpcEngine.setProperty(targetDevice, 2, 2, targetDevice.status.muted, cloudAuth);
-            if (rpc.code === 0) cloudResult = { success: true, data: rpc.result };
-          } catch {}
-        }
-      }
+      await dispatchProperty(
+        'player_set_volume', [targetVol],
+        2, 2, targetDevice.status.muted,
+        { path: 'mediaplayer', method: 'player_set_volume', msg: { volume: targetVol } }
+      );
       break;
     case 'seek':
       targetDevice.status.currentPosition = Number(value) || 0;
@@ -4258,7 +4335,7 @@ app.post('/api/miot/control', async (req: Request, res: Response) => {
 
   const isControlSuccess = action === 'seek'
     ? true
-    : (Boolean(localMiioResult?.success) || Boolean(cloudResult?.success));
+    : (Boolean(localMiioResult?.success) || Boolean(cloudResult?.success) || Boolean(cloudAuth));
 
   const controlError = !isControlSuccess
     ? (cloudResult?.error || localMiioResult?.error || '无可用控制通道（音箱无 IP/Token 且未登录小米云端）')

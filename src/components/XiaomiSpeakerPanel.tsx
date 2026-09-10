@@ -2302,25 +2302,36 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
               <div className={`p-3 rounded-2xl border flex items-center justify-between text-xs transition ${
                 commandState.status === 'pending'
                   ? 'bg-amber-500/10 border-amber-500/30 text-amber-300 animate-pulse'
-                  : commandState.status === 'success'
+                  : commandState.status === 'success' || (activeDevice?.status?.playing && (commandState.action === 'play' || commandState.action === 'cast'))
                     ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
                     : 'bg-red-500/10 border-red-500/30 text-red-300'
               }`}>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 min-w-0 pr-2">
                   {commandState.status === 'pending' && (
                     <div className="w-3.5 h-3.5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
                   )}
-                  {commandState.status === 'success' && (
+                  {(commandState.status === 'success' || (activeDevice?.status?.playing && (commandState.action === 'play' || commandState.action === 'cast'))) && (
                     <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
                   )}
-                  {(commandState.status === 'failed' || commandState.status === 'timeout') && (
+                  {commandState.status === 'failed' && !(activeDevice?.status?.playing && (commandState.action === 'play' || commandState.action === 'cast')) && (
                     <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
                   )}
-                  <span className="font-medium">
+                  {commandState.status === 'timeout' && !(activeDevice?.status?.playing && (commandState.action === 'play' || commandState.action === 'cast')) && (
+                    <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
+                  )}
+                  <span className="font-medium truncate">
                     {commandState.status === 'pending' && `正在向【${activeDevice?.name}】下发${commandState.action || '控制'}指令，等待音箱硬件确认...`}
                     {commandState.status === 'success' && `指令下发成功，音箱已确认执行 (${commandState.action || '操作完成'})`}
-                    {commandState.status === 'failed' && `指令执行失败: ${commandState.error || '音箱未在预期内响应'}`}
-                    {commandState.status === 'timeout' && `指令下发超时: 音箱未在超时期限内响应确认`}
+                    {commandState.status === 'failed' && (
+                      activeDevice?.status?.playing
+                        ? `音箱已处于串流播放中 (${activeDevice?.name})`
+                        : `指令执行失败: ${commandState.error || '音箱未在预期内响应'}`
+                    )}
+                    {commandState.status === 'timeout' && (
+                      activeDevice?.status?.playing
+                        ? `音箱已成功接收串流并正在播放`
+                        : `指令下发超时: 音箱未在超时期限内响应确认`
+                    )}
                   </span>
                 </div>
                 <div className="flex items-center gap-2 text-[10px] font-mono opacity-70 flex-shrink-0">

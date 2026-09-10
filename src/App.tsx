@@ -87,6 +87,16 @@ export default function App() {
   const [isScanning, setIsScanning] = useState(false);
   const [toastMessage, setToastMessage] = useState<{ title: string; desc?: string; type: 'success' | 'info' | 'error' } | null>(null);
 
+  // Auto-dismiss command status banner after completion
+  useEffect(() => {
+    if (commandState.status === 'success' || commandState.status === 'failed' || commandState.status === 'timeout') {
+      const timer = setTimeout(() => {
+        setCommandState({ status: 'idle' });
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [commandState.status, commandState.timestamp]);
+
   const fetchSongsFromBackend = () => {
     apiFetch('/api/songs')
       .then(res => res.ok ? res.json() : null)
@@ -371,9 +381,9 @@ export default function App() {
 
     const streamUrl = `${miotConfig.serverHost}/api/stream/${song.id}`;
 
-    // 8-second timeout controller to detect un-reachable device
+    // 15-second timeout controller to detect un-reachable device
     const controller = new AbortController();
-    const timeoutTimer = setTimeout(() => controller.abort(), 8000);
+    const timeoutTimer = setTimeout(() => controller.abort(), 15000);
 
     apiFetch('/api/miot/cast', {
       method: 'POST',
@@ -531,7 +541,7 @@ export default function App() {
     });
 
     const controller = new AbortController();
-    const timeoutTimer = setTimeout(() => controller.abort(), 6000);
+    const timeoutTimer = setTimeout(() => controller.abort(), 12000);
 
     apiFetch('/api/miot/control', {
       method: 'POST',
