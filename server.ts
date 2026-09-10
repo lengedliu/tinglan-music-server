@@ -20,11 +20,13 @@ import { xiaoaiResolverEngine, extractDevicesFromMinaResponse } from './server/x
 import { ttsEngine, POPULAR_TTS_VOICES } from './server/ttsEngine';
 import { GoogleGenAI } from '@google/genai';
 
-const require = createRequire(import.meta.url);
+const dynamicRequire = typeof require !== 'undefined'
+  ? require
+  : createRequire((import.meta && import.meta.url) ? import.meta.url : 'file://' + __filename);
 
 let sqlite3: any = null;
 try {
-  sqlite3 = require('sqlite3');
+  sqlite3 = dynamicRequire('sqlite3');
 } catch (err: any) {
   console.warn('[Database] sqlite3 module could not be loaded in current GLIBC environment. Falling back to JSON DB & PostgreSQL/MySQL driver.', err.message);
 }
