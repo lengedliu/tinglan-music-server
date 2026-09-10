@@ -101,6 +101,7 @@ export class TtsEngine {
     text: string;
     mode?: 'auto' | 'mina_ubus' | 'miot_spec' | 'local_miio' | 'audio_stream';
     voice?: string;
+    forSongCast?: boolean;
     serverHost?: string;
     miotConfig: any;
     sendMiioCommandFn: (ip: string, token: string, method: string, params: any, timeoutMs?: number) => Promise<any>;
@@ -117,6 +118,7 @@ export class TtsEngine {
       text,
       mode = 'auto',
       voice = 'zh-CN-XiaoxiaoNeural',
+      forSongCast = false,
       serverHost = '',
       miotConfig,
       sendMiioCommandFn,
@@ -272,26 +274,30 @@ export class TtsEngine {
           };
         }
 
-        // Action 3: siid 5, aiid 4 (Intelligent Speaker: execute-text [text, 0])
-        rpcRes = await miotRpcEngine.executeAction(targetDevice, 5, 4, [cleanText, 0], cloudAuth);
-        if (rpcRes.code === 0) {
-          return {
-            success: true,
-            channel: 'MIoT 智能指令执行 (siid:5, aiid:4)',
-            details: rpcRes,
-            triedChannels
-          };
-        }
+        // Actions 3 & 4 (execute-text): ONLY allowed for general user voice command prompts, NEVER for song intro announcements!
+        // execute-text causes XiaoAi to treat the announcement as a user voice prompt to search and play online music, hijacking local playback.
+        if (!forSongCast) {
+          // Action 3: siid 5, aiid 4 (Intelligent Speaker: execute-text [text, 0])
+          rpcRes = await miotRpcEngine.executeAction(targetDevice, 5, 4, [cleanText, 0], cloudAuth);
+          if (rpcRes.code === 0) {
+            return {
+              success: true,
+              channel: 'MIoT 智能指令执行 (siid:5, aiid:4)',
+              details: rpcRes,
+              triedChannels
+            };
+          }
 
-        // Action 4: siid 5, aiid 5 (Intelligent Speaker: execute-text [text, 0] -> 0 is voiced!)
-        rpcRes = await miotRpcEngine.executeAction(targetDevice, 5, 5, [cleanText, 0], cloudAuth);
-        if (rpcRes.code === 0) {
-          return {
-            success: true,
-            channel: 'MIoT 智能执行有声播报 (siid:5, aiid:5)',
-            details: rpcRes,
-            triedChannels
-          };
+          // Action 4: siid 5, aiid 5 (Intelligent Speaker: execute-text [text, 0] -> 0 is voiced!)
+          rpcRes = await miotRpcEngine.executeAction(targetDevice, 5, 5, [cleanText, 0], cloudAuth);
+          if (rpcRes.code === 0) {
+            return {
+              success: true,
+              channel: 'MIoT 智能执行有声播报 (siid:5, aiid:5)',
+              details: rpcRes,
+              triedChannels
+            };
+          }
         }
 
         // Action 5: siid 7, aiid 1 (Speaker: play-text [text])

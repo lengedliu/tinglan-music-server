@@ -3225,7 +3225,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                     className="w-4 h-4 rounded accent-[#FF6700] bg-zinc-950"
                   />
                   <label htmlFor="checkbox-tts-announce" className="text-xs text-zinc-300 cursor-pointer">
-                    开始播放前由小爱播报歌名
+                    开始播放前由小爱播报歌名 <span className="text-[11px] text-zinc-400">(推荐关闭以获得即点即播秒开体验)</span>
                   </label>
                 </div>
 

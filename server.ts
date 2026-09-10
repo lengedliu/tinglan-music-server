@@ -1405,7 +1405,7 @@ const DEFAULT_CONFIG = {
   serverHost: process.env.SERVER_HOST || '',
   activeDeviceId: '',
   autoCast: true,
-  ttsAnnouncement: true,
+  ttsAnnouncement: false,
   ttsPrefix: '正在为您播放',
   volumeSync: true,
   userId: '',
@@ -3953,16 +3953,16 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
   }
   const resolvedServerHost = baseHost;
 
-  // Determine true extension of the song on disk so player receives matching Content-Type
+  // Determine true extension of the song on disk so player receives matching Content-Type (prefer MP3 for hardware decoder)
   const rawId = (songId || 'song-1').toString();
   const cleanSongId = rawId.replace(/\.(mp3|wav|flac|m4a|aac|ogg|opus|ape)$/i, '');
   const foundSong = storedSongs.find(s => s.id === cleanSongId || s.id === rawId);
 
-  let songExt = '.wav';
+  let songExt = '.mp3';
   if (foundSong?.localFilename) {
     songExt = path.extname(foundSong.localFilename).toLowerCase() || '.mp3';
   } else {
-    for (const ext of ['.wav', '.mp3', '.flac', '.m4a', '.aac', '.ogg']) {
+    for (const ext of ['.mp3', '.flac', '.wav', '.m4a', '.aac', '.ogg']) {
       if (fs.existsSync(path.join(MUSIC_DIR, `${cleanSongId}${ext}`)) || fs.existsSync(path.join(MUSIC_DIR, `${rawId}${ext}`))) {
         songExt = ext;
         break;
@@ -3983,6 +3983,17 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
   resolvedStreamUrl = resolvedStreamUrl.replace(/\.(mp3|wav|flac|m4a|aac|ogg|opus|ape)$/i, '');
   resolvedStreamUrl = `${resolvedStreamUrl}${songExt}`;
 
+  // If resolvedStreamUrl contains localhost/127.0.0.1, replace with baseHost/primaryLanIp so physical speaker can reach it
+  if (resolvedStreamUrl.includes('localhost') || resolvedStreamUrl.includes('127.0.0.1')) {
+    if (primaryLanIp) {
+      resolvedStreamUrl = resolvedStreamUrl.replace(/https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i, `http://${primaryLanIp}:${PORT}`);
+    } else if (baseHost && !baseHost.includes('localhost') && !baseHost.includes('127.0.0.1')) {
+      resolvedStreamUrl = resolvedStreamUrl.replace(/https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i, baseHost);
+    }
+  }
+
+  console.log(`[Cast] Target: "${targetDevice.name}" (${targetDevice.did}), songId: ${cleanSongId}, streamUrl: ${resolvedStreamUrl}`);
+
   let cloudResult: any = null;
   let localMiioResult: any = null;
 
@@ -3994,7 +4005,7 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
         targetDevice.ip,
         targetDevice.token,
         'play_specify_url',
-        { url: resolvedStreamUrl, type: 0 },
+        { url: resolvedStreamUrl, type: 1, media: 'app_ios' },
         2500
       );
 
@@ -4009,7 +4020,18 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
         );
       }
 
-      // 3. Try player_play_url
+      // 3. Try array format [url, 1]
+      if (!localMiioResult?.success) {
+        localMiioResult = await sendMiioCommand(
+          targetDevice.ip,
+          targetDevice.token,
+          'play_specify_url',
+          [resolvedStreamUrl, 1],
+          2500
+        );
+      }
+
+      // 4. Try player_play_url
       if (!localMiioResult?.success) {
         localMiioResult = await sendMiioCommand(
           targetDevice.ip,
@@ -4020,7 +4042,7 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
         );
       }
 
-      // 4. Try MIoT Spec Action siid 3, aiid 1 (Media Play Url)
+      // 5. Try MIoT Spec Action siid 3, aiid 1 (Media Play Url)
       if (!localMiioResult?.success) {
         localMiioResult = await sendMiioCommand(
           targetDevice.ip,
@@ -4039,50 +4061,74 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
   const activeMicoToken = (miotConfig as any).micoServiceToken || miotConfig.serviceToken;
   if (miotConfig.isLoggedIn && activeMicoToken && miotConfig.userId) {
     try {
-      // Send TTS announcement if enabled
+      // Send TTS announcement if enabled (safeguarded so it never triggers voice search/cloud music hijacking)
       if (miotConfig.ttsAnnouncement) {
         try {
           await ttsEngine.dispatchToSpeaker({
             targetDevice,
             text: `${miotConfig.ttsPrefix || '正在为您播放'} ${songTitle || '歌曲'}`,
             mode: 'auto',
+            forSongCast: true,
             serverHost: resolvedServerHost,
             miotConfig,
             sendMiioCommandFn: (ip, token, method, params, timeoutMs) => sendMiioCommand(ip, token, method, params, timeoutMs || 2500),
             callMinaCloudApiFn: (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry)
           });
-          // Wait 2.0 seconds for XiaoAi TTS speech to finish so mediaplayer is not preempted
-          await new Promise(r => setTimeout(r, 2000));
+          // Wait 1.5 seconds for XiaoAi TTS speech to finish so mediaplayer is not preempted
+          await new Promise(r => setTimeout(r, 1500));
         } catch (ttsErr: any) {
           console.warn('TTS intro failed before cast:', ttsErr.message);
         }
       }
 
-      // Priority 1: Standard Mina UBUS mediaplayer player_play_url with type 0 (standard for music file streams)
-      // Note: Do NOT add media: 'app_ios' as that causes XiaoAi to reject non-Apple streams
+      // Pre-stop any ongoing playback so XiaoAi's mediaplayer clears old track and focuses on the new stream
+      try {
+        await callMinaCloudApi(
+          'mediaplayer',
+          'player_play_operation',
+          { action: 'stop' },
+          targetDevice.did
+        );
+        await new Promise(r => setTimeout(r, 200));
+      } catch {
+        // non-blocking
+      }
+
+      // Priority 1: Standard XiaoAi Mina UBUS command with type: 1 and media: 'app_ios'
+      // This is the universal payload format required by XiaoAi firmware for external stream playback
       cloudResult = await callMinaCloudApi(
         'mediaplayer',
         'player_play_url',
-        { url: resolvedStreamUrl, type: 0 },
+        { url: resolvedStreamUrl, type: 1, media: 'app_ios' },
         targetDevice.did
       );
 
-      // Fallback 1: Try player_play_url without type parameter
-      if (!cloudResult?.success) {
-        cloudResult = await callMinaCloudApi(
-          'mediaplayer',
-          'player_play_url',
-          { url: resolvedStreamUrl },
-          targetDevice.did
-        );
-      }
-
-      // Fallback 2: Try type 1 (radio stream mode) if type 0 rejected
+      // Fallback 1: type 1 without media
       if (!cloudResult?.success) {
         cloudResult = await callMinaCloudApi(
           'mediaplayer',
           'player_play_url',
           { url: resolvedStreamUrl, type: 1 },
+          targetDevice.did
+        );
+      }
+
+      // Fallback 2: media: 'app_ios' only
+      if (!cloudResult?.success) {
+        cloudResult = await callMinaCloudApi(
+          'mediaplayer',
+          'player_play_url',
+          { url: resolvedStreamUrl, media: 'app_ios' },
+          targetDevice.did
+        );
+      }
+
+      // Fallback 3: raw url
+      if (!cloudResult?.success) {
+        cloudResult = await callMinaCloudApi(
+          'mediaplayer',
+          'player_play_url',
+          { url: resolvedStreamUrl },
           targetDevice.did
         );
       }
@@ -4691,9 +4737,16 @@ const streamAudioHandler = async (req: Request, res: Response) => {
     }
   }
 
-  // 2. Check direct file by exact names first
+  // 2. Check direct file by exact names first (prioritize compressed formats like MP3/FLAC over uncompressed WAV for speaker compatibility)
   if (!localFilePath) {
-    const directNames = [songId, decodedSongId, `${cleanSongId}.wav`, `${cleanSongId}.mp3`, `${cleanSongId}.flac`];
+    const directNames = [
+      songId,
+      decodedSongId,
+      `${cleanSongId}.mp3`,
+      `${cleanSongId}.flac`,
+      `${cleanSongId}.m4a`,
+      `${cleanSongId}.wav`
+    ];
     for (const name of directNames) {
       if (!name) continue;
       const testPath = path.join(MUSIC_DIR, name);
@@ -4705,9 +4758,9 @@ const streamAudioHandler = async (req: Request, res: Response) => {
     }
   }
 
-  // 3. Check direct file by cleanSongId with all possible extensions
+  // 3. Check direct file by cleanSongId with all possible extensions (MP3 first for broad hardware compatibility)
   if (!localFilePath) {
-    const possibleExtensions = ['.wav', '.mp3', '.flac', '.m4a', '.ogg', '.aac', '.opus', '.ape', '.dsf', '.dff'];
+    const possibleExtensions = ['.mp3', '.flac', '.m4a', '.aac', '.ogg', '.opus', '.wav', '.ape', '.dsf', '.dff'];
     for (const ext of possibleExtensions) {
       const testPath = path.join(MUSIC_DIR, `${cleanSongId}${ext}`);
       if (fs.existsSync(testPath) && fs.statSync(testPath).isFile()) {
