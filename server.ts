@@ -4667,13 +4667,18 @@ const streamAudioHandler = async (req: Request, res: Response) => {
       '.dsf': 'audio/x-dsd',
       '.dff': 'audio/x-dsd'
     };
-    const contentType = mimeTypes[matchedExt] || 'audio/mpeg';
+    let contentType = mimeTypes[matchedExt] || 'audio/mpeg';
+    if (songId.toLowerCase().endsWith('.mp3') || req.path.toLowerCase().endsWith('.mp3')) {
+      contentType = 'audio/mpeg';
+    }
 
     if (req.method === 'HEAD') {
       res.writeHead(200, {
         'Content-Length': fileSize,
         'Content-Type': contentType,
-        'Accept-Ranges': 'bytes'
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'no-cache',
+        'Access-Control-Allow-Origin': '*'
       });
       return res.end();
     }
