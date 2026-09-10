@@ -3836,6 +3836,11 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
   let cloudResult: any = null;
   let localMiioResult: any = null;
 
+  // Ensure stream URL has friendly extension for XiaoAi embedded players
+  if (!resolvedStreamUrl.includes('.mp3') && !resolvedStreamUrl.includes('.wav')) {
+    resolvedStreamUrl = `${resolvedStreamUrl}.mp3`;
+  }
+
   // 2. Track 1: Local miIO UDP 54321 (If device has IP & Token)
   if (targetDevice.token && targetDevice.ip) {
     try {
@@ -3869,25 +3874,25 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
         }
       }
 
-      // Send standard Mina UBUS player_play_url command (type 0 for custom direct HTTP/HTTPS raw stream URL)
+      // Priority 1: Standard Mina UBUS player_play_url command (type 1 for standard music media stream)
       cloudResult = await callMinaCloudApi(
         'mediaplayer',
         'player_play_url',
-        { url: resolvedStreamUrl, type: 0, media: 'app_ios' },
+        { url: resolvedStreamUrl, type: 1, media: 'app_ios' },
         targetDevice.did
       );
 
-      // Fallback: If type 0 didn't succeed, retry with type 1 for music cloud compatibility
+      // Fallback: If type 1 didn't succeed, retry with type 0
       if (!cloudResult?.success) {
         cloudResult = await callMinaCloudApi(
           'mediaplayer',
           'player_play_url',
-          { url: resolvedStreamUrl, type: 1, media: 'app_ios' },
+          { url: resolvedStreamUrl, type: 0, media: 'app_ios' },
           targetDevice.did
         );
       }
 
-      // Track 3: MIoT Cloud Action RPC Fallback if Mina UBUS failed
+      // Priority 2: If URL play was acknowledged or failed, also execute voice command fallback if desired
       if (!cloudResult?.success && (miotConfig as any).ssecurity && miotConfig.userId) {
         try {
           const rpcRes = await miotRpcEngine.executeAction(
@@ -4213,10 +4218,15 @@ app.post('/api/miot/tts', async (req: Request, res: Response) => {
   if (!checkMiotTtsPermission(req, res)) return;
 
   const { did, text } = req.body;
-  const targetDevice = xiaomiDevices.find(d => d.did === did) || xiaomiDevices[0];
+  if (!text || !String(text).trim()) {
+    return res.status(400).json({ success: false, error: '请输入播报文本内容' });
+  }
+
+  const targetDevice = xiaomiDevices.find(d => d.did === did || (d as any).deviceID === did) || xiaomiDevices[0];
 
   if (!targetDevice) {
-    return res.status(404).json({ error: 'Device not found' });
+    const errorMsg = '未检测到可用的小米音箱设备。请先在【设置】中绑定米家账号或扫描同步音箱！';
+    return res.status(404).json({ success: false, error: errorMsg, message: errorMsg });
   }
 
   if (!targetDevice.status) {
@@ -4229,45 +4239,52 @@ app.post('/api/miot/tts', async (req: Request, res: Response) => {
 
   let cloudResult: any = null;
   let localMiioResult: any = null;
+  let executedChannel = '';
 
-  // 1. Send via miIO UDP 54321 if token exists
+  // 1. Channel 1: Local miIO UDP 54321 (if device has IP & Token)
   if (targetDevice.token && targetDevice.ip) {
     try {
-      localMiioResult = await sendMiioCommand(targetDevice.ip, targetDevice.token, 'text_to_speech', [text]);
+      localMiioResult = await sendMiioCommand(targetDevice.ip, targetDevice.token, 'text_to_speech', [text], 3000);
+      if (localMiioResult?.success) {
+        executedChannel = 'miIO 本地 UDP 54321';
+      }
     } catch (e: any) {
       localMiioResult = { success: false, error: e.message };
     }
   }
 
-  // 2. Send via Mina Cloud if logged in
+  // 2. Channel 2: Mina Cloud UBUS (micoapi)
   const activeMicoToken = (miotConfig as any).micoServiceToken || miotConfig.serviceToken;
   const activeIoToken = (miotConfig as any).xiaomiioServiceToken || activeMicoToken;
-  const cloudAuth = (miotConfig.userId && activeIoToken) ? {
-    userId: String(miotConfig.userId),
+  const cleanUid = String(miotConfig.userId || '').replace(/^uid_/, '').trim();
+  const cloudAuth = (cleanUid && activeIoToken) ? {
+    userId: cleanUid,
     serviceToken: activeIoToken,
     ssecurity: (miotConfig as any).ssecurity
   } : undefined;
 
-  if (miotConfig.isLoggedIn && activeMicoToken && miotConfig.userId) {
+  if (!executedChannel && miotConfig.isLoggedIn && activeMicoToken && cleanUid) {
     try {
-      cloudResult = await callMinaCloudApi('mibrain', 'text_to_speech', { text }, targetDevice.did);
-      
-      // Track 3: MIoT Cloud Action RPC Fallback (Service 5 Action 1: playText) if Mina UBUS returned 401 or failed
-      if (!cloudResult?.success && cloudAuth) {
-        try {
-          // Attempt Service 5 (Intelligent Speaker) Action 1 (playText)
-          let rpcRes = await miotRpcEngine.executeAction(targetDevice, 5, 1, [text], cloudAuth);
-          if (rpcRes.code === 0) {
-            cloudResult = { success: true, data: rpcRes.result, method: 'miot_cloud_rpc_5_1' };
-          } else {
-            // Fallback to Service 7 (TTS) Action 1
-            rpcRes = await miotRpcEngine.executeAction(targetDevice, 7, 1, [text], cloudAuth);
-            if (rpcRes.code === 0) {
-              cloudResult = { success: true, data: rpcRes.result, method: 'miot_cloud_rpc_7_1' };
-            }
-          }
-        } catch (rpcErr: any) {
-          console.warn('[TTS] MIoT Action Cloud fallback failed:', rpcErr.message);
+      // Try Mina mibrain text_to_speech with dual text & tts keys
+      cloudResult = await callMinaCloudApi(
+        'mibrain',
+        'text_to_speech',
+        { text, tts: text },
+        targetDevice.did
+      );
+
+      if (cloudResult?.success) {
+        executedChannel = '小米 Mina 云端指令通道 (text_to_speech)';
+      } else {
+        // Retry with pure text payload
+        cloudResult = await callMinaCloudApi(
+          'mibrain',
+          'text_to_speech',
+          { text },
+          targetDevice.did
+        );
+        if (cloudResult?.success) {
+          executedChannel = '小米 Mina 云端指令通道 (text_to_speech raw)';
         }
       }
     } catch (e: any) {
@@ -4275,9 +4292,37 @@ app.post('/api/miot/tts', async (req: Request, res: Response) => {
     }
   }
 
-  const isTtsSuccess = Boolean(localMiioResult?.success) || Boolean(cloudResult?.success);
+  // 3. Channel 3: MIoT Cloud Action RPC Fallback (siid 5 aiid 1: playText)
+  if (!executedChannel && cloudAuth) {
+    try {
+      // Service 5 (Intelligent Speaker) Action 1 (playText) with in: [text]
+      let rpcRes = await miotRpcEngine.executeAction(targetDevice, 5, 1, [text], cloudAuth);
+      if (rpcRes.code === 0) {
+        cloudResult = { success: true, data: rpcRes.result, method: 'miot_cloud_rpc_5_1' };
+        executedChannel = 'MIoT 原生智能语音服务 (siid:5, aiid:1)';
+      } else {
+        // Try Service 5 Action 3 (textToSpeech)
+        rpcRes = await miotRpcEngine.executeAction(targetDevice, 5, 3, [text, 0], cloudAuth);
+        if (rpcRes.code === 0) {
+          cloudResult = { success: true, data: rpcRes.result, method: 'miot_cloud_rpc_5_3' };
+          executedChannel = 'MIoT 语音合成服务 (siid:5, aiid:3)';
+        } else {
+          // Try Service 7 (Speaker / TTS) Action 1
+          rpcRes = await miotRpcEngine.executeAction(targetDevice, 7, 1, [text], cloudAuth);
+          if (rpcRes.code === 0) {
+            cloudResult = { success: true, data: rpcRes.result, method: 'miot_cloud_rpc_7_1' };
+            executedChannel = 'MIoT 扬声器服务 (siid:7, aiid:1)';
+          }
+        }
+      }
+    } catch (rpcErr: any) {
+      console.warn('[TTS] MIoT Action Cloud fallback failed:', rpcErr.message);
+    }
+  }
+
+  const isTtsSuccess = Boolean(executedChannel) || Boolean(localMiioResult?.success) || Boolean(cloudResult?.success);
   const errorMessage = !isTtsSuccess
-    ? (cloudResult?.error || localMiioResult?.error || '无可用通道发送 TTS 指令（音箱未配置 IP/Token 且未登录小米云端）')
+    ? (cloudResult?.error || localMiioResult?.error || '所有通道均未能送达（请确认米家账号登录状态或重新扫码绑定）')
     : undefined;
 
   const logEntry = {
@@ -4286,7 +4331,7 @@ app.post('/api/miot/tts', async (req: Request, res: Response) => {
     type: 'tts' as const,
     message: isTtsSuccess ? `【${targetDevice.name}】TTS 语音播报` : `【${targetDevice.name}】TTS 播报失败`,
     detail: isTtsSuccess
-      ? (localMiioResult?.success ? `✓ “${text}” (miIO 本地朗读执行)` : `✓ “${text}” (小爱云端已接收朗读)`)
+      ? `✓ “${text}” (${executedChannel || '已成功下发'})`
       : `✕ 播报失败: ${errorMessage} | 内容: “${text}”`,
     success: isTtsSuccess
   };
@@ -4306,7 +4351,8 @@ app.post('/api/miot/tts', async (req: Request, res: Response) => {
 
   res.json({
     success: true,
-    message: `已向 ${targetDevice.name} 发送小爱同学语音播报: ${text}`,
+    message: `已向 ${targetDevice.name} 发送小爱同学语音播报: ${text} (${executedChannel})`,
+    channel: executedChannel,
     cloudResult,
     localMiioResult,
     device: sanitizeDevice(targetDevice)
