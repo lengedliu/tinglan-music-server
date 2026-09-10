@@ -410,18 +410,18 @@ export default function App() {
         const doneStr = new Date().toLocaleTimeString();
         const successStages = data.stages || [
           { stage: 'COMMAND_SENT', label: '指令发送成功', success: true, timestamp: doneStr },
-          { stage: 'DEVICE_ACK', label: '音箱已响应', success: true, timestamp: doneStr },
-          { stage: 'STREAM_CONNECTED', label: '音频流已连接', success: true, timestamp: doneStr },
-          { stage: 'PLAYING', label: '正在播放', success: true, timestamp: doneStr }
+          { stage: 'DEVICE_ACK', label: '音箱云端/局域网已响应', success: true, timestamp: doneStr },
+          { stage: 'STREAM_CONNECTED', label: '等待音箱拉流', success: false, pending: true, timestamp: doneStr },
+          { stage: 'PLAYING', label: '等待音箱解码播放', success: false, pending: true, timestamp: doneStr }
         ];
 
-        // UI State -> success with complete stage history
+        // UI State -> reflect real command delivery
         setCommandState({
           status: 'success',
           action: 'cast',
           targetDid: dev.did,
           timestamp: Date.now(),
-          castingStage: 'PLAYING',
+          castingStage: 'COMMAND_SENT',
           stageHistory: successStages
         });
 
@@ -433,11 +433,19 @@ export default function App() {
           setIsCasting(true);
         }
 
-        showToast(
-          `已成功投放到【${dev.name}】`,
-          `音箱已确认接收音频流并开始播放 (${song.title})`,
-          'success'
-        );
+        if (data.warning) {
+          showToast(
+            `指令已向【${dev.name}】下发（请注意）`,
+            data.warning,
+            'info'
+          );
+        } else {
+          showToast(
+            `已向【${dev.name}】下发播放指令`,
+            data.message || `指令已被接收，正在等待音箱连接音频流 (${song.title})`,
+            'success'
+          );
+        }
 
         // Add local log
         setCastLogs(prev => [
@@ -445,12 +453,64 @@ export default function App() {
             id: `log-${Date.now()}`,
             timestamp: new Date().toLocaleTimeString(),
             type: 'cast',
-            message: `成功投放到【${dev.name}】`,
-            detail: `曲目: ${song.title} | 串流源: ${streamUrl}`,
+            message: `已下发投播指令到【${dev.name}】`,
+            detail: `曲目: ${song.title} | 串流源: ${data.streamUrl || streamUrl}`,
             success: true
           },
           ...prev
         ]);
+
+        // Actively monitor whether the speaker hardware connects and fetches the audio stream
+        const castStartTime = Date.now();
+        const checkInterval = setInterval(async () => {
+          try {
+            const statusRes = await apiFetch('/api/miot/stream-status');
+            if (statusRes.ok) {
+              const statusData = await statusRes.json();
+              if (statusData.lastSpeakerStream && statusData.lastSpeakerStream.timeMs >= castStartTime - 1000) {
+                clearInterval(checkInterval);
+                const ackTime = new Date().toLocaleTimeString();
+                setCommandState({
+                  status: 'success',
+                  action: 'cast',
+                  targetDid: dev.did,
+                  timestamp: Date.now(),
+                  castingStage: 'PLAYING',
+                  stageHistory: [
+                    { stage: 'COMMAND_SENT', label: '指令发送成功', success: true, timestamp: doneStr },
+                    { stage: 'DEVICE_ACK', label: '音箱已确认接收', success: true, timestamp: doneStr },
+                    { stage: 'STREAM_CONNECTED', label: '音箱已成功拉取音频流', success: true, timestamp: ackTime },
+                    { stage: 'PLAYING', label: '音箱正在播放', success: true, timestamp: ackTime }
+                  ]
+                });
+                showToast(
+                  `音箱已成功拉流播放`,
+                  `【${dev.name}】已成功连接音频流并开始播放《${song.title}》`,
+                  'success'
+                );
+                return;
+              }
+            }
+          } catch {
+            // non-blocking
+          }
+
+          if (Date.now() - castStartTime > 8000) {
+            clearInterval(checkInterval);
+            setCommandState(prev => {
+              if (prev.action !== 'cast' || prev.targetDid !== dev.did) return prev;
+              return {
+                ...prev,
+                castingStage: 'DEVICE_ACK',
+                stageHistory: [
+                  { stage: 'COMMAND_SENT', label: '指令发送成功', success: true, timestamp: doneStr },
+                  { stage: 'DEVICE_ACK', label: '音箱已接单确认', success: true, timestamp: doneStr },
+                  { stage: 'STREAM_CONNECTED', label: '未检测到音箱拉流', success: false, detail: '若音箱无声，请检查【串流地址】配置是否为音箱可访问的局域网 IP', timestamp: new Date().toLocaleTimeString() }
+                ]
+              };
+            });
+          }
+        }, 2000);
       })
       .catch((err: any) => {
         clearTimeout(timeoutTimer);

@@ -127,6 +127,23 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
   const [showTokenTutorial, setShowTokenTutorial] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
+  // Stream Reachability Diagnostic State
+  const [streamStatus, setStreamStatus] = useState<{
+    serverHost: string;
+    isLoopback: boolean;
+    detectedLanIps: string[];
+    primaryLanIp: string;
+    lastSpeakerStream: any;
+    speakerStreamCount: number;
+    recentStreamEvents: any[];
+  } | null>(null);
+  const [streamTestResult, setStreamTestResult] = useState<{
+    testing: boolean;
+    success?: boolean;
+    message?: string;
+    details?: string;
+  }>({ testing: false });
+
   // TTS Engine Configuration State
   const [selectedTtsMode, setSelectedTtsMode] = useState<'auto' | 'mina_ubus' | 'miot_spec' | 'local_miio' | 'audio_stream'>('auto');
   const [selectedTtsVoice, setSelectedTtsVoice] = useState('zh-CN-XiaoxiaoNeural');
@@ -249,6 +266,59 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
       }
     };
   }, []);
+
+  const fetchStreamStatus = async () => {
+    try {
+      const res = await apiFetch('/api/miot/stream-status');
+      if (res.ok) {
+        const data = await res.json();
+        setStreamStatus(data);
+      }
+    } catch {
+      // non-blocking
+    }
+  };
+
+  useEffect(() => {
+    fetchStreamStatus();
+    const interval = setInterval(fetchStreamStatus, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleTestStream = async () => {
+    setStreamTestResult({ testing: true });
+    try {
+      const tStart = Date.now();
+      const res = await fetch('/api/stream/song-1', { method: 'HEAD' });
+      const elapsed = Date.now() - tStart;
+      const cType = res.headers.get('content-type') || '未知';
+      const cLength = res.headers.get('content-length') || '0';
+      const isLoopback = serverHostInput.includes('localhost') || serverHostInput.includes('127.0.0.1');
+
+      if (res.ok) {
+        setStreamTestResult({
+          testing: false,
+          success: true,
+          message: `音频流接口握手成功 (HTTP 200, 响应耗时 ${elapsed}ms)`,
+          details: `编码格式: ${cType} | 采样体量: ${Math.round(parseInt(cLength) / 1024)} KB | ${isLoopback ? '⚠️ 注意：串流地址为本地回环 (localhost)，外部音箱可能无法访问，请使用局域网 IP' : '✓ 串流地址网段有效'}`
+        });
+      } else {
+        setStreamTestResult({
+          testing: false,
+          success: false,
+          message: `音频流接口返回异常 (HTTP ${res.status})`,
+          details: '请确认音乐目录中包含音频文件'
+        });
+      }
+    } catch (e: any) {
+      setStreamTestResult({
+        testing: false,
+        success: false,
+        message: '无法连通音频流接口',
+        details: e.message || '网络连接被拒绝'
+      });
+    }
+  };
 
   // QR Code Channel selection: 'xiaomiio' (米家 App 授权 - 推荐) vs 'micoapi' (小爱音箱 App 授权)
   const [qrChannel, setQrChannel] = useState<'xiaomiio' | 'micoapi'>('xiaomiio');
@@ -3032,17 +3102,85 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
 
           {/* Server Host & LAN Audio Stream Config */}
           <div className="p-6 sm:p-8 rounded-3xl bg-zinc-900/40 backdrop-blur-md border border-white/5 space-y-5">
-            <h3 className="text-lg font-bold text-white flex items-center gap-2">
-              <Server className="w-5 h-5 text-blue-400" />
-              局域网音频串流地址 (Server Host)
-            </h3>
-            <p className="text-xs text-zinc-400 leading-relaxed">
-              小米音箱在接收到播放指令后，会通过 HTTP GET 向此地址请求音乐流文件。如果运行在 Docker / NAS 环境，请输入宿主机局域网 IP（例如：<code className="text-[#FF6700] font-mono">http://192.168.1.50:3000</code>）。
-            </p>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                  <Server className="w-5 h-5 text-blue-400" />
+                  局域网音频串流地址 (Server Host)
+                </h3>
+                <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+                  小米音箱在接收到播放指令后，会通过 HTTP GET 向此地址拉取音乐文件流。
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleTestStream}
+                  disabled={streamTestResult.testing}
+                  className="text-xs px-3.5 py-1.5 rounded-full bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20 transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                >
+                  <Activity className="w-3.5 h-3.5" />
+                  <span>{streamTestResult.testing ? '探测连通性中...' : '测试音频流接口'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Loopback Warning Box */}
+            {(serverHostInput.includes('localhost') || serverHostInput.includes('127.0.0.1')) && (
+              <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300 space-y-1.5">
+                <div className="flex items-center gap-2 font-semibold">
+                  <AlertTriangle className="w-4 h-4 text-amber-400" />
+                  <span>重要提示：当前配置为本地回环地址 (localhost / 127.0.0.1)</span>
+                </div>
+                <p className="text-zinc-300 leading-relaxed">
+                  小爱音箱是物理局域网中的独立硬件终端，其解析“localhost”只会尝试连接音箱自己，<strong>无法访问到您电脑/服务器上的音乐文件</strong>，会导致下发指令显示成功但音箱静音无声。
+                </p>
+                {streamStatus?.primaryLanIp && (
+                  <div className="pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setServerHostInput(`http://${streamStatus.primaryLanIp}:3000`)}
+                      className="px-3 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/30 text-xs font-mono font-medium transition cursor-pointer"
+                    >
+                      点击快速替换为检测到的局域网 IP：http://{streamStatus.primaryLanIp}:3000
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Stream Test Result Banner */}
+            {streamTestResult.message && (
+              <div className={`p-3.5 rounded-2xl border text-xs flex items-start gap-2.5 ${streamTestResult.success ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300' : 'bg-red-500/10 border-red-500/20 text-red-300'}`}>
+                {streamTestResult.success ? <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" /> : <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />}
+                <div>
+                  <div className="font-semibold">{streamTestResult.message}</div>
+                  {streamTestResult.details && <div className="text-zinc-400 text-[11px] mt-0.5 font-mono">{streamTestResult.details}</div>}
+                </div>
+              </div>
+            )}
 
             <form onSubmit={handleSaveConfig} className="space-y-4">
               <div>
-                <label className="block text-xs text-zinc-400 mb-1.5 font-medium">当前服务器串流地址</label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs text-zinc-400 font-medium">当前服务器串流地址</label>
+                  {streamStatus?.detectedLanIps && streamStatus.detectedLanIps.length > 0 && (
+                    <div className="flex items-center gap-1.5 text-[11px] text-zinc-400">
+                      <span>检测到主机 IP:</span>
+                      {streamStatus.detectedLanIps.map(ip => (
+                        <button
+                          key={ip}
+                          type="button"
+                          onClick={() => setServerHostInput(`http://${ip}:3000`)}
+                          className="font-mono text-zinc-300 hover:text-[#FF6700] underline cursor-pointer"
+                        >
+                          {ip}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <input
                   type="text"
                   value={serverHostInput}
@@ -3050,6 +3188,31 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                   placeholder="http://192.168.1.100:3000"
                   className="w-full px-4 py-2.5 bg-zinc-950/80 border border-white/10 rounded-xl text-sm font-mono text-zinc-100 focus:outline-none focus:border-[#FF6700] transition"
                 />
+              </div>
+
+              {/* Speaker Stream Pull Monitor */}
+              <div className="p-3.5 rounded-2xl bg-zinc-950/60 border border-white/5 space-y-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="text-zinc-400 font-medium flex items-center gap-1.5">
+                    <Radio className="w-3.5 h-3.5 text-[#FF6700]" />
+                    音箱硬件拉流监控状态
+                  </span>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${streamStatus?.lastSpeakerStream ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-zinc-800 text-zinc-400'}`}>
+                    {streamStatus?.lastSpeakerStream ? `已累计响应 ${streamStatus.speakerStreamCount} 次音箱拉流` : '暂未收到音箱拉流请求'}
+                  </span>
+                </div>
+                {streamStatus?.lastSpeakerStream ? (
+                  <div className="text-[11px] text-zinc-400 font-mono bg-black/40 p-2 rounded-lg border border-white/5 flex flex-wrap items-center gap-x-4 gap-y-1">
+                    <span>最近拉流时间: <strong className="text-zinc-200">{streamStatus.lastSpeakerStream.timestamp}</strong></span>
+                    <span>音箱 IP: <strong className="text-zinc-200">{streamStatus.lastSpeakerStream.clientIp}</strong></span>
+                    <span>歌曲: <strong className="text-zinc-200">{streamStatus.lastSpeakerStream.songId}</strong></span>
+                    <span>状态码: <strong className="text-emerald-400">{streamStatus.lastSpeakerStream.status}</strong></span>
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-zinc-400 leading-relaxed">
+                    若您在投放时界面提示成功，但音箱迟迟没有声音，通常是因为音箱无法通过上方“串流地址”拉取到音频。请确认音箱与本服务处于同一局域网、未开启路由器 AP 隔离，且防火墙放行了 3000 端口。
+                  </p>
+                )}
               </div>
 
               <div className="flex items-center justify-between pt-2">
@@ -3068,7 +3231,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
 
                 <button
                   type="submit"
-                  className="px-6 py-2.5 rounded-full bg-[#FF6700] hover:bg-[#e55c00] text-white text-sm font-semibold shadow-[0_4px_20px_rgba(255,103,0,0.3)] transition"
+                  className="px-6 py-2.5 rounded-full bg-[#FF6700] hover:bg-[#e55c00] text-white text-sm font-semibold shadow-[0_4px_20px_rgba(255,103,0,0.3)] transition cursor-pointer"
                 >
                   保存网络配置
                 </button>

@@ -1447,6 +1447,19 @@ let xiaomiDevices: any[] = rawXiaomiDevices.map((d: any) => {
 let miotConfig = loadJson(CONFIG_FILE, DEFAULT_CONFIG);
 const activeStreamIps = new Set<string>();
 
+interface StreamEventInfo {
+  timestamp: string;
+  timeMs: number;
+  songId: string;
+  clientIp: string;
+  isBrowser: boolean;
+  userAgent: string;
+  status: number;
+  format: string;
+  bytesSent?: number;
+}
+let recentStreamEvents: StreamEventInfo[] = [];
+
 // Auto-recover session and speaker devices from passToken on startup if available
 if ((miotConfig as any).passToken) {
   const candidateUid = miotConfig.userId || (miotConfig as any).cUserId || '0';
@@ -3918,10 +3931,44 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
   const host = (req.headers['x-forwarded-host'] as string) || req.headers.host || req.get('host');
   const reqOrigin = `${proto}://${host}`;
 
-  const baseHost = (miotConfig.serverHost && miotConfig.serverHost.startsWith('http'))
+  const localIps = getLocalNetworkIps();
+  const primaryLanIp = localIps.find(ip => !ip.startsWith('127.') && !ip.startsWith('169.254.') && !ip.startsWith('172.17.')) || localIps[0] || '';
+
+  let baseHost = (miotConfig.serverHost && miotConfig.serverHost.startsWith('http'))
     ? miotConfig.serverHost.replace(/\/$/, '')
     : reqOrigin;
+
+  let isLoopback = baseHost.includes('localhost') || baseHost.includes('127.0.0.1');
+  let hostWarning: string | null = null;
+
+  // If baseHost is loopback (localhost/127.0.0.1), physical speakers cannot access it!
+  // Auto-substitute with host LAN IP if available
+  if (isLoopback) {
+    if (primaryLanIp) {
+      baseHost = `http://${primaryLanIp}:${PORT}`;
+      isLoopback = false;
+    } else {
+      hostWarning = '检测到当前串流地址为 localhost/127.0.0.1，外部音箱无法拉取音频。请在设置中配置服务器局域网 IP (如 http://192.168.x.x:3000)';
+    }
+  }
   const resolvedServerHost = baseHost;
+
+  // Determine true extension of the song on disk so player receives matching Content-Type
+  const rawId = (songId || 'song-1').toString();
+  const cleanSongId = rawId.replace(/\.(mp3|wav|flac|m4a|aac|ogg|opus|ape)$/i, '');
+  const foundSong = storedSongs.find(s => s.id === cleanSongId || s.id === rawId);
+
+  let songExt = '.wav';
+  if (foundSong?.localFilename) {
+    songExt = path.extname(foundSong.localFilename).toLowerCase() || '.mp3';
+  } else {
+    for (const ext of ['.wav', '.mp3', '.flac', '.m4a', '.aac', '.ogg']) {
+      if (fs.existsSync(path.join(MUSIC_DIR, `${cleanSongId}${ext}`)) || fs.existsSync(path.join(MUSIC_DIR, `${rawId}${ext}`))) {
+        songExt = ext;
+        break;
+      }
+    }
+  }
 
   let resolvedStreamUrl = '';
   if (streamUrl && streamUrl.startsWith('http')) {
@@ -3929,36 +3976,57 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
   } else if (streamUrl && streamUrl.startsWith('/')) {
     resolvedStreamUrl = `${baseHost}${streamUrl}`;
   } else {
-    resolvedStreamUrl = `${baseHost}/api/stream/${songId || 'song-1'}`;
+    resolvedStreamUrl = `${baseHost}/api/stream/${cleanSongId}`;
   }
+
+  // Ensure resolvedStreamUrl has correct file extension matching the actual audio file
+  resolvedStreamUrl = resolvedStreamUrl.replace(/\.(mp3|wav|flac|m4a|aac|ogg|opus|ape)$/i, '');
+  resolvedStreamUrl = `${resolvedStreamUrl}${songExt}`;
 
   let cloudResult: any = null;
   let localMiioResult: any = null;
 
-  // Ensure stream URL has friendly extension for XiaoAi embedded players
-  if (!resolvedStreamUrl.includes('.mp3') && !resolvedStreamUrl.includes('.wav')) {
-    resolvedStreamUrl = `${resolvedStreamUrl}.mp3`;
-  }
-
   // 2. Track 1: Local miIO UDP 54321 (If device has IP & Token)
   if (targetDevice.token && targetDevice.ip) {
     try {
-      // Try play_specify_url first
+      // 1. Try standard play_specify_url with object payload
       localMiioResult = await sendMiioCommand(
         targetDevice.ip,
         targetDevice.token,
         'play_specify_url',
-        [resolvedStreamUrl],
+        { url: resolvedStreamUrl, type: 0 },
         2500
       );
 
-      // If play_specify_url wasn't successful, try player_play_url
+      // 2. Try array format [url, 0]
+      if (!localMiioResult?.success) {
+        localMiioResult = await sendMiioCommand(
+          targetDevice.ip,
+          targetDevice.token,
+          'play_specify_url',
+          [resolvedStreamUrl, 0],
+          2500
+        );
+      }
+
+      // 3. Try player_play_url
       if (!localMiioResult?.success) {
         localMiioResult = await sendMiioCommand(
           targetDevice.ip,
           targetDevice.token,
           'player_play_url',
           [resolvedStreamUrl],
+          2500
+        );
+      }
+
+      // 4. Try MIoT Spec Action siid 3, aiid 1 (Media Play Url)
+      if (!localMiioResult?.success) {
+        localMiioResult = await sendMiioCommand(
+          targetDevice.ip,
+          targetDevice.token,
+          'action',
+          { did: targetDevice.did, siid: 3, aiid: 1, in: [resolvedStreamUrl] },
           2500
         );
       }
@@ -3983,34 +4051,38 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
             sendMiioCommandFn: (ip, token, method, params, timeoutMs) => sendMiioCommand(ip, token, method, params, timeoutMs || 2500),
             callMinaCloudApiFn: (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry)
           });
+          // Wait 2.0 seconds for XiaoAi TTS speech to finish so mediaplayer is not preempted
+          await new Promise(r => setTimeout(r, 2000));
         } catch (ttsErr: any) {
           console.warn('TTS intro failed before cast:', ttsErr.message);
         }
       }
 
-      // Priority 1: Standard Mina UBUS player_play_url command (type 1 for standard music media stream)
+      // Priority 1: Standard Mina UBUS mediaplayer player_play_url with type 0 (standard for music file streams)
+      // Note: Do NOT add media: 'app_ios' as that causes XiaoAi to reject non-Apple streams
       cloudResult = await callMinaCloudApi(
         'mediaplayer',
         'player_play_url',
-        { url: resolvedStreamUrl, type: 1, media: 'app_ios' },
+        { url: resolvedStreamUrl, type: 0 },
         targetDevice.did
       );
 
-      // Fallback 1: Try player_play_url without media wrapper (type 1 / type 0)
+      // Fallback 1: Try player_play_url without type parameter
+      if (!cloudResult?.success) {
+        cloudResult = await callMinaCloudApi(
+          'mediaplayer',
+          'player_play_url',
+          { url: resolvedStreamUrl },
+          targetDevice.did
+        );
+      }
+
+      // Fallback 2: Try type 1 (radio stream mode) if type 0 rejected
       if (!cloudResult?.success) {
         cloudResult = await callMinaCloudApi(
           'mediaplayer',
           'player_play_url',
           { url: resolvedStreamUrl, type: 1 },
-          targetDevice.did
-        );
-      }
-
-      if (!cloudResult?.success) {
-        cloudResult = await callMinaCloudApi(
-          'mediaplayer',
-          'player_play_url',
-          { url: resolvedStreamUrl, type: 0 },
           targetDevice.did
         );
       }
@@ -4061,22 +4133,6 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
   const isSuccess = Boolean(localMiioResult?.success) || Boolean(cloudResult?.success);
   const responseTimeMs = Date.now() - startTime;
 
-  // For speakers like Pro (xiaomi.wifispeaker.oh2p) that load URL in paused state, dispatch an explicit 'play' operation immediately after URL load
-  if (isSuccess && miotConfig.isLoggedIn && activeMicoToken && miotConfig.userId) {
-    setTimeout(async () => {
-      try {
-        await callMinaCloudApi(
-          'mediaplayer',
-          'player_play_operation',
-          { action: 'play' },
-          targetDevice.did
-        );
-      } catch (opErr) {
-        // Non-blocking
-      }
-    }, 400);
-  }
-
   const errorMessage = !isSuccess
     ? (
         cloudResult?.error
@@ -4092,11 +4148,13 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
     : undefined;
 
   const nowTime = new Date().toLocaleTimeString();
+
+  // Accurate diagnostic stages: distinguish between command acknowledgement and real audio stream fetch
   const stages = [
     { stage: 'COMMAND_SENT' as const, label: '指令发送成功', success: true, timestamp: nowTime },
-    { stage: 'DEVICE_ACK' as const, label: '音箱已响应', success: isSuccess, timestamp: nowTime },
-    { stage: 'STREAM_CONNECTED' as const, label: '音频流已连接', success: isSuccess, timestamp: nowTime },
-    { stage: 'PLAYING' as const, label: '正在播放', success: isSuccess, timestamp: nowTime }
+    { stage: 'DEVICE_ACK' as const, label: isSuccess ? (localMiioResult?.success ? '音箱局域网已响应' : '小米云端已接单确认') : '指令被拒绝', success: isSuccess, timestamp: nowTime },
+    { stage: 'STREAM_CONNECTED' as const, label: '等待音箱拉取音频流', success: false, pending: true, timestamp: nowTime },
+    { stage: 'PLAYING' as const, label: '等待音箱解码播放', success: false, pending: true, timestamp: nowTime }
   ];
 
   // Only reflect active playback state if the command was actually accepted by the device
@@ -4104,7 +4162,7 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
     targetDevice.status = {
       ...targetDevice.status,
       playing: true,
-      currentSongId: songId,
+      currentSongId: cleanSongId,
       currentTitle: songTitle || '未知曲目',
       currentArtist: songArtist || '未知歌手',
       currentDuration: duration || 200,
@@ -4125,7 +4183,7 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
   const dispatchModeDesc = isSuccess
     ? (localMiioResult?.success && cloudResult?.success
         ? '✓ 本地 miIO 与云端 UBUS 均下发成功'
-        : (localMiioResult?.success ? '✓ miIO 本地 UDP 直连投播成功' : '✓ 云端 UBUS 投播指令已确认'))
+        : (localMiioResult?.success ? '✓ miIO 本地 UDP 直连投播成功' : '✓ 云端 UBUS 投播指令已确认接单'))
     : `✕ 投播失败: ${errorMessage}`;
 
   const diagnosticSteps = [
@@ -4134,7 +4192,7 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
       step: 'MINA',
       status: cloudResult ? (cloudResult.success ? 'OK' : 'ERROR') : 'SKIPPED',
       statusCode: cloudResult?.success ? 200 : (cloudResult?.error?.includes('401') ? 401 : 500),
-      message: cloudResult ? (cloudResult.success ? 'Mina Cloud → 200 OK' : `Mina → ${cloudResult.error}`) : 'Mina 通道未发起'
+      message: cloudResult ? (cloudResult.success ? 'Mina Cloud → 200 OK (已入队推流)' : `Mina → ${cloudResult.error}`) : 'Mina 通道未发起'
     },
     {
       timestamp: nowTime,
@@ -4146,9 +4204,9 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
     {
       timestamp: nowTime,
       step: 'SPEAKER_HTTP',
-      status: isSuccess ? 'OK' : 'ERROR',
+      status: isSuccess ? 'PENDING' : 'ERROR',
       statusCode: isSuccess ? 200 : 502,
-      message: isSuccess ? `Speaker [${targetDevice.name}] → 200 Command Accepted` : `Speaker → 502 Command Rejected`
+      message: isSuccess ? `已下发串流地址: ${resolvedStreamUrl}` : `Speaker → 502 Command Rejected`
     }
   ];
 
@@ -4156,7 +4214,7 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
     id: `log-${Date.now()}`,
     timestamp: nowTime,
     type: 'cast' as const,
-    message: isSuccess ? `成功投放到【${targetDevice.name}】` : `投放失败【${targetDevice.name}】`,
+    message: isSuccess ? `已向【${targetDevice.name}】下发播放指令` : `投放失败【${targetDevice.name}】`,
     detail: `${dispatchModeDesc} | 串流源: ${resolvedStreamUrl}`,
     success: isSuccess,
 
@@ -4193,12 +4251,38 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
 
   res.json({
     success: true,
-    message: `已向 ${targetDevice.name} 成功下发播放指令`,
+    message: hostWarning
+      ? `已向 ${targetDevice.name} 下发指令，但提示：${hostWarning}`
+      : `已向 ${targetDevice.name} 成功下发播放指令，正在等待音箱连接音频流`,
+    warning: hostWarning,
     cloudResult,
     localMiioResult,
     stages,
     device: sanitizeDevice(targetDevice),
     streamUrl: resolvedStreamUrl
+  });
+});
+
+// Stream status & reachability diagnostic endpoint
+app.get('/api/miot/stream-status', (req: Request, res: Response) => {
+  const localIps = getLocalNetworkIps();
+  const primaryLanIp = localIps.find(ip => !ip.startsWith('127.') && !ip.startsWith('169.254.') && !ip.startsWith('172.17.')) || localIps[0] || '';
+  const currentServerHost = miotConfig.serverHost || (primaryLanIp ? `http://${primaryLanIp}:${PORT}` : '');
+  const isLoopback = currentServerHost.includes('localhost') || currentServerHost.includes('127.0.0.1');
+
+  const speakerStreams = recentStreamEvents.filter(e => !e.isBrowser);
+  const lastSpeakerStream = speakerStreams[0] || null;
+
+  res.json({
+    success: true,
+    serverHost: currentServerHost,
+    isLoopback,
+    detectedLanIps: localIps,
+    primaryLanIp,
+    lastSpeakerStream,
+    speakerStreamCount: speakerStreams.length,
+    recentStreamEvents: recentStreamEvents.slice(0, 10),
+    activeIps: Array.from(activeStreamIps)
   });
 });
 
@@ -4685,10 +4769,8 @@ const streamAudioHandler = async (req: Request, res: Response) => {
       '.dsf': 'audio/x-dsd',
       '.dff': 'audio/x-dsd'
     };
-    let contentType = mimeTypes[matchedExt] || 'audio/mpeg';
-    if (songId.toLowerCase().endsWith('.mp3') || req.path.toLowerCase().endsWith('.mp3')) {
-      contentType = 'audio/mpeg';
-    }
+    // Content-Type must strictly match the actual audio file on disk, not an arbitrary request suffix
+    const contentType = mimeTypes[matchedExt] || (matchedExt === '.wav' ? 'audio/wav' : 'audio/mpeg');
 
     if (req.method === 'HEAD') {
       res.writeHead(200, {
@@ -4716,6 +4798,20 @@ const streamAudioHandler = async (req: Request, res: Response) => {
     if (!isBrowserClient && clientIp && clientIp !== '127.0.0.1' && clientIp !== 'localhost') {
       activeStreamIps.add(clientIp);
     }
+
+    // Record structured event in recentStreamEvents for live diagnostic monitor
+    recentStreamEvents.unshift({
+      timestamp: nowStr,
+      timeMs: Date.now(),
+      songId: String(songId),
+      clientIp,
+      isBrowser: isBrowserClient,
+      userAgent,
+      status: isPartial ? 206 : 200,
+      format: matchedExt,
+      bytesSent: fileSize
+    });
+    if (recentStreamEvents.length > 50) recentStreamEvents.pop();
 
     // Diagnostic Stream Fetch Log Entry
     const streamLogEntry = {
