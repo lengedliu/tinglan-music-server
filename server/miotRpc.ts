@@ -39,19 +39,28 @@ export const XIAOAI_MIOT_SPEC = {
     volume: { piid: 1, type: 'uint8', min: 0, max: 100 },
     mute: { piid: 2, type: 'bool' }
   },
-  // Service 3: Play Control / Media
+  // Service 3: Play Control / Media (Standard MIoT urn:miot-spec-v2:service:play-control:0000781D)
   playControl: {
     siid: 3,
-    status: { piid: 1, type: 'uint8', values: { playing: 1, paused: 2, stopped: 3 } },
-    play: { aiid: 1 },
-    pause: { aiid: 2 },
+    status: { piid: 1, type: 'uint8', values: { playing: 1, paused: 2, stopped: 0 } },
+    play: { aiid: 2, legacyAiid: 1 },
+    pause: { aiid: 3, legacyAiid: 2 },
     toggle: { aiid: 3 },
-    next: { aiid: 4 },
+    next: { aiid: 6, legacyAiid: 4 },
     previous: { aiid: 5 },
     playUrl: { aiid: 1, in: ['url'] }
   },
-  // Service 5: Intelligent Voice / TTS
-  intelligentSpeaker: {
+  // Service 7: Intelligent Speaker (Modern Pro / OH2P / Sound / X08 / L05)
+  intelligentSpeaker7: {
+    siid: 7,
+    wakeUp: { aiid: 1 },
+    playRadio: { aiid: 2 },
+    playText: { aiid: 3, in: ['text'] },
+    executeTextDirective: { aiid: 4, in: ['text', 'silent'] },
+    playMusic: { aiid: 5 }
+  },
+  // Service 5: Legacy Intelligent Voice / TTS (LX04, etc.)
+  intelligentSpeaker5: {
     siid: 5,
     playText: { aiid: 1, in: ['text'] },
     wakeUp: { aiid: 2 },

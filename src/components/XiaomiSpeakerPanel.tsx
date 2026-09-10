@@ -222,6 +222,43 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
   const [specDefinition, setSpecDefinition] = useState<any>(null);
   const [isLoadingSpec, setIsLoadingSpec] = useState(false);
 
+  // Sound Test & Cast Mode state
+  const [isTestingSound, setIsTestingSound] = useState(false);
+  const [soundTestResult, setSoundTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  const handleTestSound = async () => {
+    if (!activeDevice) return;
+    setIsTestingSound(true);
+    setSoundTestResult(null);
+    try {
+      const res = await apiFetch('/api/miot/test-sound', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId: activeDevice.did })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSoundTestResult({
+          success: true,
+          message: `🔊 已成功向【${cleanDeviceName(activeDevice.name)}】下发高保真测试音频！若未听到声音，建议切换为【公网高保真 CDN 模式】。`
+        });
+      } else {
+        setSoundTestResult({
+          success: false,
+          message: `下发测试流失败: ${data.error || '音箱未响应，请检查设备状态或云端登录'}`
+        });
+      }
+    } catch (err: any) {
+      setSoundTestResult({
+        success: false,
+        message: `测试请求失败: ${err.message}`
+      });
+    } finally {
+      setIsTestingSound(false);
+      setTimeout(() => setSoundTestResult(null), 8000);
+    }
+  };
+
   // SSE Live Event listener and WebSocket status polling
   useEffect(() => {
     const fetchWsStatus = async () => {
@@ -1986,26 +2023,73 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                       </div>
                     </div>
 
-                    {/* Playback Status */}
+                    {/* Playback Status & Interactive Controls */}
                     <div className="mb-4">
                       {isDevPlaying ? (
-                        <div className="flex items-center justify-between p-3 rounded-2xl bg-[#FF6700]/10 border border-[#FF6700]/20 text-xs">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <Radio className="w-4 h-4 text-[#FF6700] animate-pulse flex-shrink-0" />
+                        <div className="flex items-center justify-between p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center flex-shrink-0">
+                              <Radio className="w-4 h-4 text-amber-400 animate-pulse" />
+                            </div>
                             <div className="min-w-0">
-                              <span className="text-zinc-200 font-medium block truncate">
-                                正在播音：{dev.status?.currentTitle}
-                              </span>
-                              <span className="text-zinc-400 text-[11px] block truncate">
+                              <div className="flex items-center gap-2">
+                                <span className="text-zinc-200 font-medium truncate">
+                                  {dev.status?.currentTitle}
+                                </span>
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1 flex-shrink-0">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                                  播放中
+                                </span>
+                              </div>
+                              <span className="text-zinc-400 text-[11px] block truncate mt-0.5">
                                 {dev.status?.currentArtist}
                               </span>
                             </div>
                           </div>
                           <button
-                            onClick={() => onControlDevice(dev.did, 'pause')}
-                            className="px-3 py-1 rounded-full bg-[#FF6700] text-white text-xs font-semibold hover:bg-[#e55c00] transition shadow-sm"
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onControlDevice(dev.did, 'pause');
+                            }}
+                            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white border border-white/10 text-xs font-semibold transition active:scale-95 shadow-sm cursor-pointer ml-3 flex-shrink-0"
+                            title="点击暂停音箱播放"
                           >
-                            暂停
+                            <Pause className="w-3.5 h-3.5 fill-current text-zinc-300" />
+                            <span>暂停播放</span>
+                          </button>
+                        </div>
+                      ) : dev.status?.currentTitle ? (
+                        <div className="flex items-center justify-between p-3 rounded-2xl bg-zinc-900/60 border border-white/10 text-xs">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="w-8 h-8 rounded-xl bg-zinc-800 border border-white/10 flex items-center justify-center flex-shrink-0">
+                              <Pause className="w-4 h-4 text-zinc-400" />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="text-zinc-300 font-medium truncate">
+                                  {dev.status?.currentTitle}
+                                </span>
+                                <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-zinc-800 text-zinc-400 border border-zinc-700 flex-shrink-0">
+                                  已暂停
+                                </span>
+                              </div>
+                              <span className="text-zinc-500 text-[11px] block truncate mt-0.5">
+                                {dev.status?.currentArtist}
+                              </span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onControlDevice(dev.did, 'play');
+                            }}
+                            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-[#FF6700] hover:bg-[#e55c00] text-white text-xs font-semibold transition active:scale-95 shadow-sm cursor-pointer ml-3 flex-shrink-0"
+                            title="点击继续播放"
+                          >
+                            <Play className="w-3.5 h-3.5 fill-current" />
+                            <span>继续播放</span>
                           </button>
                         </div>
                       ) : (
@@ -2501,14 +2585,85 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                 </div>
               </div>
 
-              {currentSong && (
+              <div className="flex items-center gap-2 shrink-0">
                 <button
-                  onClick={onCastCurrentSong}
-                  className="px-4 py-2 rounded-full bg-[#FF6700] hover:bg-[#e55c00] text-white text-xs font-semibold shadow-[0_0_15px_rgba(255,103,0,0.3)] transition whitespace-nowrap"
+                  type="button"
+                  id="btn-test-sound"
+                  disabled={isTestingSound}
+                  onClick={handleTestSound}
+                  className="px-3 py-2 rounded-full bg-white/10 hover:bg-white/20 text-white text-xs font-semibold border border-white/10 transition flex items-center gap-1.5 whitespace-nowrap disabled:opacity-50"
+                  title="向音箱下发一段经过高保真编码测试音频，验证音箱扬声器与解码链路"
                 >
-                  推送当前音乐
+                  <Volume2 className={`w-3.5 h-3.5 text-[#FF6700] ${isTestingSound ? 'animate-bounce' : ''}`} />
+                  <span>{isTestingSound ? '发声测试中...' : '一键测声'}</span>
                 </button>
-              )}
+
+                {currentSong && (
+                  <button
+                    onClick={onCastCurrentSong}
+                    className="px-4 py-2 rounded-full bg-[#FF6700] hover:bg-[#e55c00] text-white text-xs font-semibold shadow-[0_0_15px_rgba(255,103,0,0.3)] transition whitespace-nowrap"
+                  >
+                    推送当前音乐
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Test Sound Result Banner */}
+            {soundTestResult && (
+              <div className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
+                soundTestResult.success 
+                  ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-300' 
+                  : 'bg-rose-500/15 border border-rose-500/30 text-rose-300'
+              }`}>
+                {soundTestResult.success ? (
+                  <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                )}
+                <span>{soundTestResult.message}</span>
+              </div>
+            )}
+
+            {/* Cast Protocol & Network Mode Selector */}
+            <div className="p-3.5 rounded-2xl bg-zinc-950/40 border border-white/5 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-zinc-400 font-medium flex items-center gap-1.5">
+                  <Zap className="w-3.5 h-3.5 text-[#FF6700]" />
+                  投播流策略模式
+                </span>
+                <span className="text-[11px] text-zinc-500">
+                  当前: {miotConfig.castMode === 'cdn_direct' ? '公网高保真直链 (推荐)' : (miotConfig.castMode === 'lan_stream' ? '局域网串流' : (miotConfig.castMode === 'xiaoai_directive' ? '小爱指令点播' : '智能自适应'))}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-xs">
+                {[
+                  { id: 'auto', label: '智能自适应', desc: '根据网络环境自动决策' },
+                  { id: 'cdn_direct', label: '公网 CDN 直链', desc: '云端容器/异地推荐' },
+                  { id: 'lan_stream', label: '局域网串流', desc: '同路由器本地播放' },
+                  { id: 'xiaoai_directive', label: '小爱指令点播', desc: '小爱官方媒体库' },
+                ].map((m) => {
+                  const isSelected = (miotConfig.castMode || 'auto') === m.id;
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => onUpdateConfig({ castMode: m.id as any })}
+                      className={`p-2 rounded-xl text-left border transition ${
+                        isSelected 
+                          ? 'bg-[#FF6700]/15 border-[#FF6700]/50 text-white shadow-[0_0_12px_rgba(255,103,0,0.15)]' 
+                          : 'bg-white/5 border-white/5 text-zinc-400 hover:text-zinc-200 hover:bg-white/10'
+                      }`}
+                    >
+                      <div className="font-semibold text-[11px] flex items-center justify-between">
+                        <span>{m.label}</span>
+                        {isSelected && <Check className="w-3 h-3 text-[#FF6700]" />}
+                      </div>
+                      <div className="text-[10px] text-zinc-500 truncate mt-0.5">{m.desc}</div>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {/* Remote Controller Buttons */}

@@ -5,6 +5,7 @@ export interface Song {
   album: string;
   duration: number; // in seconds
   url: string;
+  publicStreamUrl?: string; // Verified public high-availability MP3 URL for hardware speakers
   coverUrl: string;
   lyrics?: string; // LRC formatted string
   genre?: string;
@@ -93,6 +94,7 @@ export interface MiotConfig {
   serviceToken?: string;
   hasServiceToken?: boolean;
   bindMode?: 'account' | 'token' | 'cookie';
+  castMode?: 'auto' | 'cdn_direct' | 'xiaoai_directive' | 'lan_stream';
 }
 
 export interface DiagnosticStepLog {

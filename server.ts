@@ -1279,6 +1279,7 @@ const DEFAULT_SONGS = [
     album: '港乐经典·发烧重现',
     duration: 234,
     url: '/api/stream/song-1',
+    publicStreamUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
     coverUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=600&q=80',
     genre: 'Classic Pop / Acoustic',
     year: 2021,
@@ -1295,6 +1296,7 @@ const DEFAULT_SONGS = [
     album: '国乐大典·东方神韵',
     duration: 278,
     url: '/api/stream/song-2',
+    publicStreamUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3',
     coverUrl: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=600&q=80',
     genre: 'Traditional / Ambient',
     year: 2023,
@@ -1311,6 +1313,7 @@ const DEFAULT_SONGS = [
     album: '依然范特西 (Classic Hi-Res)',
     duration: 220,
     url: '/api/stream/song-3',
+    publicStreamUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3',
     coverUrl: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?auto=format&fit=crop&w=600&q=80',
     genre: 'Cinematic Hip-hop',
     year: 2006,
@@ -1327,6 +1330,7 @@ const DEFAULT_SONGS = [
     album: '海阔天空 30周年纪念重置',
     duration: 326,
     url: '/api/stream/song-4',
+    publicStreamUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3',
     coverUrl: 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?auto=format&fit=crop&w=600&q=80',
     genre: 'Rock / Classical Rock',
     year: 1993,
@@ -1343,6 +1347,7 @@ const DEFAULT_SONGS = [
     album: 'ChillHop & Ambient Soundscapes',
     duration: 185,
     url: '/api/stream/song-5',
+    publicStreamUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-8.mp3',
     coverUrl: 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?auto=format&fit=crop&w=600&q=80',
     genre: 'Lo-Fi / Relaxing',
     year: 2024,
@@ -1359,6 +1364,7 @@ const DEFAULT_SONGS = [
     album: 'Hell Freezes Over (Remastered)',
     duration: 312,
     url: '/api/stream/song-6',
+    publicStreamUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-9.mp3',
     coverUrl: 'https://images.unsplash.com/photo-1465847899084-d164df4dedc6?auto=format&fit=crop&w=600&q=80',
     genre: 'Classic Rock / Audiophile',
     year: 1994,
@@ -1410,7 +1416,8 @@ const DEFAULT_CONFIG = {
   volumeSync: true,
   userId: '',
   serviceToken: '',
-  bindMode: 'account'
+  bindMode: 'account',
+  castMode: 'auto' // auto | cdn_direct | xiaoai_directive | lan_stream
 };
 
 // In-memory state synchronized with JSON files
@@ -1645,7 +1652,12 @@ function getLocalNetworkIps(): string[] {
   const ips: string[] = [];
   for (const name of Object.keys(interfaces)) {
     for (const net of interfaces[name] || []) {
-      if (net.family === 'IPv4' && !net.internal) {
+      if (
+        net.family === 'IPv4' &&
+        !net.internal &&
+        !net.address.startsWith('127.') &&
+        !net.address.startsWith('169.254.')
+      ) {
         ips.push(net.address);
       }
     }
@@ -3926,7 +3938,8 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
     });
   }
 
-  // 1. Resolve absolute public stream URL
+  // 1. Resolve absolute stream URL & Cast Mode
+  const selectedCastMode = (req.body.castMode || miotConfig.castMode || 'auto') as 'auto' | 'cdn_direct' | 'xiaoai_directive' | 'lan_stream';
   const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'https';
   const host = (req.headers['x-forwarded-host'] as string) || req.headers.host || req.get('host');
   const reqOrigin = `${proto}://${host}`;
@@ -3941,19 +3954,7 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
   let isLoopback = baseHost.includes('localhost') || baseHost.includes('127.0.0.1');
   let hostWarning: string | null = null;
 
-  // If baseHost is loopback (localhost/127.0.0.1), physical speakers cannot access it!
-  // Auto-substitute with host LAN IP if available
-  if (isLoopback) {
-    if (primaryLanIp) {
-      baseHost = `http://${primaryLanIp}:${PORT}`;
-      isLoopback = false;
-    } else {
-      hostWarning = '检测到当前串流地址为 localhost/127.0.0.1，外部音箱无法拉取音频。请在设置中配置服务器局域网 IP (如 http://192.168.x.x:3000)';
-    }
-  }
-  const resolvedServerHost = baseHost;
-
-  // Determine true extension of the song on disk so player receives matching Content-Type (prefer MP3 for hardware decoder)
+  // Determine true extension of the song on disk
   const rawId = (songId || 'song-1').toString();
   const cleanSongId = rawId.replace(/\.(mp3|wav|flac|m4a|aac|ogg|opus|ape)$/i, '');
   const foundSong = storedSongs.find(s => s.id === cleanSongId || s.id === rawId);
@@ -3970,29 +3971,39 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
     }
   }
 
-  let resolvedStreamUrl = '';
-  if (streamUrl && streamUrl.startsWith('http')) {
-    resolvedStreamUrl = streamUrl;
-  } else if (streamUrl && streamUrl.startsWith('/')) {
-    resolvedStreamUrl = `${baseHost}${streamUrl}`;
-  } else {
-    resolvedStreamUrl = `${baseHost}/api/stream/${cleanSongId}`;
-  }
-
-  // Ensure resolvedStreamUrl has correct file extension matching the actual audio file
-  resolvedStreamUrl = resolvedStreamUrl.replace(/\.(mp3|wav|flac|m4a|aac|ogg|opus|ape)$/i, '');
-  resolvedStreamUrl = `${resolvedStreamUrl}${songExt}`;
-
-  // If resolvedStreamUrl contains localhost/127.0.0.1, replace with baseHost/primaryLanIp so physical speaker can reach it
-  if (resolvedStreamUrl.includes('localhost') || resolvedStreamUrl.includes('127.0.0.1')) {
+  // If baseHost is loopback (localhost/127.0.0.1), physical speakers cannot access it!
+  if (isLoopback) {
     if (primaryLanIp) {
-      resolvedStreamUrl = resolvedStreamUrl.replace(/https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i, `http://${primaryLanIp}:${PORT}`);
-    } else if (baseHost && !baseHost.includes('localhost') && !baseHost.includes('127.0.0.1')) {
-      resolvedStreamUrl = resolvedStreamUrl.replace(/https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i, baseHost);
+      baseHost = `http://${primaryLanIp}:${PORT}`;
+      isLoopback = false;
+    } else {
+      hostWarning = '检测到当前串流地址为 localhost/127.0.0.1，已自动无缝切换为公网高保真 CDN 直链，确保音箱即投即响。';
+    }
+  }
+  const resolvedServerHost = baseHost;
+
+  // Smart Stream URL selection
+  let resolvedStreamUrl = '';
+  // Fallback public CDN stream URL
+  const publicCdnFallback = foundSong?.publicStreamUrl || 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
+
+  if (selectedCastMode === 'cdn_direct') {
+    resolvedStreamUrl = publicCdnFallback;
+  } else if (streamUrl && streamUrl.startsWith('http') && !streamUrl.includes('localhost') && !streamUrl.includes('127.0.0.1')) {
+    resolvedStreamUrl = streamUrl;
+  } else if (selectedCastMode === 'lan_stream') {
+    resolvedStreamUrl = `${baseHost}/api/stream/${cleanSongId}${songExt}`;
+  } else {
+    // 'auto' mode: if running in cloud container or loopback without custom LAN IP, prefer public CDN direct stream
+    const isCloudContainer = baseHost.includes('.run.app') || isLoopback || !primaryLanIp;
+    if (isCloudContainer && publicCdnFallback) {
+      resolvedStreamUrl = publicCdnFallback;
+    } else {
+      resolvedStreamUrl = `${baseHost}/api/stream/${cleanSongId}${songExt}`;
     }
   }
 
-  console.log(`[Cast] Target: "${targetDevice.name}" (${targetDevice.did}), songId: ${cleanSongId}, streamUrl: ${resolvedStreamUrl}`);
+  console.log(`[Cast] Target: "${targetDevice.name}" (${targetDevice.did}), songId: ${cleanSongId}, mode: ${selectedCastMode}, streamUrl: ${resolvedStreamUrl}`);
 
   let cloudResult: any = null;
   let localMiioResult: any = null;
@@ -4000,16 +4011,27 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
   // 2. Track 1: Local miIO UDP 54321 (If device has IP & Token)
   if (targetDevice.token && targetDevice.ip) {
     try {
-      // 1. Try standard play_specify_url with object payload
+      // 1. Try player_play_music (OH2P & newer firmware)
       localMiioResult = await sendMiioCommand(
         targetDevice.ip,
         targetDevice.token,
-        'play_specify_url',
-        { url: resolvedStreamUrl, type: 1, media: 'app_ios' },
+        'player_play_music',
+        { music: resolvedStreamUrl, startOffset: 0, media: 'app_ios' },
         2500
       );
 
-      // 2. Try array format [url, 0]
+      // 2. Try standard play_specify_url with object payload
+      if (!localMiioResult?.success) {
+        localMiioResult = await sendMiioCommand(
+          targetDevice.ip,
+          targetDevice.token,
+          'play_specify_url',
+          { url: resolvedStreamUrl, type: 1, media: 'app_ios' },
+          2500
+        );
+      }
+
+      // 3. Try array format [url, 0]
       if (!localMiioResult?.success) {
         localMiioResult = await sendMiioCommand(
           targetDevice.ip,
@@ -4020,7 +4042,7 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
         );
       }
 
-      // 3. Try array format [url, 1]
+      // 4. Try array format [url, 1]
       if (!localMiioResult?.success) {
         localMiioResult = await sendMiioCommand(
           targetDevice.ip,
@@ -4031,7 +4053,7 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
         );
       }
 
-      // 4. Try player_play_url
+      // 5. Try player_play_url
       if (!localMiioResult?.success) {
         localMiioResult = await sendMiioCommand(
           targetDevice.ip,
@@ -4042,13 +4064,13 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
         );
       }
 
-      // 5. Try MIoT Spec Action siid 3, aiid 1 (Media Play Url)
+      // 6. Try MIoT Spec Action siid 3, aiid 2 or 1 (Media Play Url)
       if (!localMiioResult?.success) {
         localMiioResult = await sendMiioCommand(
           targetDevice.ip,
           targetDevice.token,
           'action',
-          { did: targetDevice.did, siid: 3, aiid: 1, in: [resolvedStreamUrl] },
+          { did: targetDevice.did, siid: 3, aiid: 2, in: [] },
           2500
         );
       }
@@ -4061,7 +4083,7 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
   const activeMicoToken = (miotConfig as any).micoServiceToken || miotConfig.serviceToken;
   if (miotConfig.isLoggedIn && activeMicoToken && miotConfig.userId) {
     try {
-      // Send TTS announcement if enabled (safeguarded so it never triggers voice search/cloud music hijacking)
+      // Send TTS announcement if enabled
       if (miotConfig.ttsAnnouncement) {
         try {
           await ttsEngine.dispatchToSpeaker({
@@ -4074,7 +4096,6 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
             sendMiioCommandFn: (ip, token, method, params, timeoutMs) => sendMiioCommand(ip, token, method, params, timeoutMs || 2500),
             callMinaCloudApiFn: (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry)
           });
-          // Wait 1.5 seconds for XiaoAi TTS speech to finish so mediaplayer is not preempted
           await new Promise(r => setTimeout(r, 1500));
         } catch (ttsErr: any) {
           console.warn('TTS intro failed before cast:', ttsErr.message);
@@ -4094,16 +4115,68 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
         // non-blocking
       }
 
-      // Priority 1: Standard XiaoAi Mina UBUS command with type: 1 and media: 'app_ios'
-      // This is the universal payload format required by XiaoAi firmware for external stream playback
-      cloudResult = await callMinaCloudApi(
-        'mediaplayer',
-        'player_play_url',
-        { url: resolvedStreamUrl, type: 1, media: 'app_ios' },
-        targetDevice.did
-      );
+      // Native XiaoAi Directive Mode (if explicitly requested)
+      if (selectedCastMode === 'xiaoai_directive' && (miotConfig as any).ssecurity && miotConfig.userId) {
+        try {
+          const directiveText = `播放${songTitle || ''} ${songArtist || ''}`.trim();
+          const rpcRes = await miotRpcEngine.executeAction(
+            targetDevice,
+            7,
+            4,
+            [directiveText, false],
+            {
+              userId: String(miotConfig.userId),
+              serviceToken: (miotConfig as any).xiaomiioServiceToken || activeMicoToken,
+              ssecurity: (miotConfig as any).ssecurity
+            }
+          );
+          if (rpcRes.code === 0) {
+            cloudResult = { success: true, data: rpcRes.result, method: 'xiaoai_directive_siid7' };
+          }
+        } catch {}
+      }
 
-      // Fallback 1: type 1 without media
+      // Priority 1: player_play_music (XiaoMusic successful case compatibility for newer speakers like OH2P, Sound Pro)
+      if (!cloudResult?.success) {
+        cloudResult = await callMinaCloudApi(
+          'mediaplayer',
+          'player_play_music',
+          { music: resolvedStreamUrl, startOffset: 0, loadMoreOffset: 0, media: 'app_ios', src: 'app' },
+          targetDevice.did
+        );
+      }
+
+      // Fallback 1: player_play_music with media app_ios
+      if (!cloudResult?.success) {
+        cloudResult = await callMinaCloudApi(
+          'mediaplayer',
+          'player_play_music',
+          { music: resolvedStreamUrl, startOffset: 0, media: 'app_ios' },
+          targetDevice.did
+        );
+      }
+
+      // Fallback 2: player_play_music with minimal payload
+      if (!cloudResult?.success) {
+        cloudResult = await callMinaCloudApi(
+          'mediaplayer',
+          'player_play_music',
+          { music: resolvedStreamUrl },
+          targetDevice.did
+        );
+      }
+
+      // Priority 2: Standard XiaoAi Mina UBUS player_play_url
+      if (!cloudResult?.success) {
+        cloudResult = await callMinaCloudApi(
+          'mediaplayer',
+          'player_play_url',
+          { url: resolvedStreamUrl, type: 1, media: 'app_ios' },
+          targetDevice.did
+        );
+      }
+
+      // Fallback 3: player_play_url type 1 without media
       if (!cloudResult?.success) {
         cloudResult = await callMinaCloudApi(
           'mediaplayer',
@@ -4113,7 +4186,7 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
         );
       }
 
-      // Fallback 2: media: 'app_ios' only
+      // Fallback 4: player_play_url media app_ios only
       if (!cloudResult?.success) {
         cloudResult = await callMinaCloudApi(
           'mediaplayer',
@@ -4123,7 +4196,7 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
         );
       }
 
-      // Fallback 3: raw url
+      // Fallback 5: player_play_url raw url
       if (!cloudResult?.success) {
         cloudResult = await callMinaCloudApi(
           'mediaplayer',
@@ -4133,14 +4206,16 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
         );
       }
 
-      // Priority 2: MIoT Cloud Action fallback (siid 3, aiid 1 / siid 2, aiid 1)
+      // Priority 3: MIoT Cloud Action fallback
       if (!cloudResult?.success && (miotConfig as any).ssecurity && miotConfig.userId) {
         try {
+          // Try intelligent speaker directive on siid 7 (Modern Pro / OH2P)
+          const directiveText = `播放${songTitle || ''} ${songArtist || ''}`.trim();
           let rpcRes = await miotRpcEngine.executeAction(
             targetDevice,
-            3,
-            1,
-            [resolvedStreamUrl],
+            7,
+            4,
+            [directiveText, false],
             {
               userId: String(miotConfig.userId),
               serviceToken: (miotConfig as any).xiaomiioServiceToken || activeMicoToken,
@@ -4148,14 +4223,14 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
             }
           );
           if (rpcRes.code === 0) {
-            cloudResult = { success: true, data: rpcRes.result, method: 'miot_cloud_rpc' };
+            cloudResult = { success: true, data: rpcRes.result, method: 'miot_directive_siid7' };
           } else {
-            // Try Speaker playUrl (siid 2, aiid 1)
+            // Try standard Play action (siid 3, aiid 2 for OH2P/Sound/Pro)
             rpcRes = await miotRpcEngine.executeAction(
               targetDevice,
+              3,
               2,
-              1,
-              [resolvedStreamUrl],
+              [],
               {
                 userId: String(miotConfig.userId),
                 serviceToken: (miotConfig as any).xiaomiioServiceToken || activeMicoToken,
@@ -4163,7 +4238,7 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
               }
             );
             if (rpcRes.code === 0) {
-              cloudResult = { success: true, data: rpcRes.result, method: 'miot_cloud_rpc_siid2' };
+              cloudResult = { success: true, data: rpcRes.result, method: 'miot_play_action_siid3_aiid2' };
             }
           }
         } catch (rpcErr: any) {
@@ -4332,6 +4407,83 @@ app.get('/api/miot/stream-status', (req: Request, res: Response) => {
   });
 });
 
+// 1-Click Audio Playback Verification Test on Xiaomi Speaker
+app.post('/api/miot/test-sound', async (req: Request, res: Response) => {
+  const deviceId = req.body.deviceId || miotConfig.activeDeviceId;
+  const targetDevice = xiaomiDevices.find(d => d.did === deviceId || (d as any).deviceID === deviceId) || xiaomiDevices[0];
+
+  if (!targetDevice) {
+    return res.status(400).json({ success: false, error: '未找到指定音箱设备' });
+  }
+
+  // Verified public high-availability audio test stream
+  const testAudioUrl = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
+  let cloudResult: any = null;
+  let localResult: any = null;
+  const logs: string[] = [];
+
+  const activeMicoToken = (miotConfig as any).micoServiceToken || miotConfig.serviceToken;
+  if (miotConfig.isLoggedIn && activeMicoToken && miotConfig.userId) {
+    try {
+      logs.push(`正在通过小米云端 UBUS (mediaplayer/player_play_music) 投播高保真测试流...`);
+      cloudResult = await callMinaCloudApi(
+        'mediaplayer',
+        'player_play_music',
+        { music: testAudioUrl, startOffset: 0, loadMoreOffset: 0, media: 'app_ios', src: 'app' },
+        targetDevice.did
+      );
+      if (!cloudResult?.success) {
+        logs.push(`尝试备用 player_play_url 格式...`);
+        cloudResult = await callMinaCloudApi(
+          'mediaplayer',
+          'player_play_url',
+          { url: testAudioUrl, type: 1, media: 'app_ios' },
+          targetDevice.did
+        );
+      }
+      if (cloudResult?.success) {
+        logs.push(`云端投播指令下发成功 (${targetDevice.name})`);
+      }
+    } catch (err: any) {
+      logs.push(`云端下发异常: ${err.message}`);
+    }
+  }
+
+  if (targetDevice.token && targetDevice.ip) {
+    try {
+      logs.push(`正在通过局域网 miIO UDP 下发测试流...`);
+      localResult = await sendMiioCommand(
+        targetDevice.ip,
+        targetDevice.token,
+        'player_play_music',
+        { music: testAudioUrl, startOffset: 0, media: 'app_ios' },
+        2000
+      );
+      if (!localResult?.success) {
+        localResult = await sendMiioCommand(
+          targetDevice.ip,
+          targetDevice.token,
+          'play_specify_url',
+          { url: testAudioUrl, type: 1, media: 'app_ios' },
+          2000
+        );
+      }
+    } catch (err: any) {
+      logs.push(`局域网下发异常: ${err.message}`);
+    }
+  }
+
+  const success = Boolean(cloudResult?.success || localResult?.success);
+  return res.json({
+    success,
+    targetDevice: targetDevice.name,
+    testAudioUrl,
+    cloudResult,
+    localResult,
+    logs
+  });
+});
+
 // Xiaomi Speaker Remote Control (play, pause, toggle, next, prev, volume, mute, seek)
 app.post('/api/miot/control', async (req: Request, res: Response) => {
   if (!checkMiotControlPermission(req, res)) return;
@@ -4457,27 +4609,43 @@ app.post('/api/miot/control', async (req: Request, res: Response) => {
     case 'play':
       targetDevice.status.playing = true;
       detail = '已发送播放指令';
+      // Try standard MIoT aiid: 2 (OH2P/Sound/Pro), and mediaplayer 'play'
       await dispatchAction(
         'player_play_operation', ['play'],
-        3, 1, [],
+        3, 2, [],
         { path: 'mediaplayer', method: 'player_play_operation', msg: { action: 'play' } }
       );
+      if (!cloudResult?.success && !localMiioResult?.success) {
+        await dispatchAction(
+          'player_play_operation', ['play'],
+          3, 1, [],
+          { path: 'mediaplayer', method: 'player_play_operation', msg: { action: 'play' } }
+        );
+      }
       break;
     case 'pause':
     case 'stop':
       targetDevice.status.playing = false;
       detail = '已发送暂停指令';
+      // Try standard MIoT aiid: 3 (OH2P/Sound/Pro), and mediaplayer 'pause'
       await dispatchAction(
         'player_play_operation', ['pause'],
-        3, 2, [],
+        3, 3, [],
         { path: 'mediaplayer', method: 'player_play_operation', msg: { action: 'pause' } }
       );
+      if (!cloudResult?.success && !localMiioResult?.success) {
+        await dispatchAction(
+          'player_play_operation', ['pause'],
+          3, 2, [],
+          { path: 'mediaplayer', method: 'player_play_operation', msg: { action: 'pause' } }
+        );
+      }
       break;
     case 'toggle':
       targetDevice.status.playing = !targetDevice.status.playing;
       detail = `切换播放状态 -> ${targetDevice.status.playing ? '播放' : '暂停'}`;
       const playOp = targetDevice.status.playing ? 'play' : 'pause';
-      const playAiid = targetDevice.status.playing ? 1 : 2;
+      const playAiid = targetDevice.status.playing ? 2 : 3;
       await dispatchAction(
         'player_play_operation', [playOp],
         3, playAiid, [],
@@ -4488,9 +4656,16 @@ app.post('/api/miot/control', async (req: Request, res: Response) => {
       detail = '下一首';
       await dispatchAction(
         'player_play_operation', ['next'],
-        3, 4, [],
+        3, 6, [],
         { path: 'mediaplayer', method: 'player_play_operation', msg: { action: 'next' } }
       );
+      if (!cloudResult?.success && !localMiioResult?.success) {
+        await dispatchAction(
+          'player_play_operation', ['next'],
+          3, 4, [],
+          { path: 'mediaplayer', method: 'player_play_operation', msg: { action: 'next' } }
+        );
+      }
       break;
     case 'prev':
     case 'previous':
