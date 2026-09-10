@@ -4059,6 +4059,22 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
   const isSuccess = Boolean(localMiioResult?.success) || Boolean(cloudResult?.success);
   const responseTimeMs = Date.now() - startTime;
 
+  // For speakers like Pro (xiaomi.wifispeaker.oh2p) that load URL in paused state, dispatch an explicit 'play' operation immediately after URL load
+  if (isSuccess && miotConfig.isLoggedIn && activeMicoToken && miotConfig.userId) {
+    setTimeout(async () => {
+      try {
+        await callMinaCloudApi(
+          'mediaplayer',
+          'player_play_operation',
+          { action: 'play' },
+          targetDevice.did
+        );
+      } catch (opErr) {
+        // Non-blocking
+      }
+    }, 400);
+  }
+
   const errorMessage = !isSuccess
     ? (
         cloudResult?.error
