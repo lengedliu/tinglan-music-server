@@ -2044,6 +2044,40 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                     />
                   </div>
 
+                  <div>
+                    <label className="block text-xs text-zinc-400 mb-1.5 font-medium">快速选择音箱机型预设</label>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-3">
+                      {[
+                        { name: '小爱音箱 Pro', model: 'xiaomi.wifispeaker.lx06', hw: 'LX06', desc: '发烧级/DLNA/红外' },
+                        { name: '小爱音箱 Play', model: 'xiaomi.wifispeaker.l05c', hw: 'L05C', desc: '时钟版/性价比' },
+                        { name: 'Xiaomi Sound', model: 'xiaomi.wifispeaker.l16a', hw: 'L16A', desc: '高保真/计算音频' },
+                        { name: '小爱触屏音箱', model: 'xiaomi.wifispeaker.lx04', hw: 'LX04', desc: '带屏/多模态' },
+                        { name: '小爱音箱 Art', model: 'xiaomi.wifispeaker.l09a', hw: 'L09A', desc: '金属机身/DTS' },
+                        { name: '小爱音箱 (通用)', model: 'xiaomi.wifispeaker.sound', hw: 'Sound', desc: '标准 MIoT 协议' },
+                      ].map((preset) => (
+                        <button
+                          key={preset.model}
+                          type="button"
+                          onClick={() => {
+                            setNewDevModel(preset.model);
+                            setNewDevHardware(preset.hw);
+                            if (!newDevName || newDevName === '客厅小爱 Pro' || newDevName.startsWith('小爱')) {
+                              setNewDevName(preset.name);
+                            }
+                          }}
+                          className={`p-2 rounded-xl text-left border transition cursor-pointer ${
+                            newDevModel === preset.model
+                              ? 'bg-[#FF6700]/20 border-[#FF6700] text-white shadow-sm'
+                              : 'bg-zinc-950/60 border-white/10 text-zinc-400 hover:border-white/20 hover:text-zinc-200'
+                          }`}
+                        >
+                          <div className="font-medium text-xs text-zinc-200">{preset.name}</div>
+                          <div className="text-[10px] text-zinc-500 font-mono">{preset.hw} · {preset.desc}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className="block text-xs text-zinc-400 mb-1 font-medium">设备 Model</label>
@@ -2156,6 +2190,37 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                       onChange={(e) => setEditDevDid(e.target.value)}
                       className="w-full px-4 py-2 bg-zinc-950/80 border border-white/10 rounded-xl text-xs text-zinc-300 font-mono focus:outline-none focus:border-[#FF6700] transition"
                     />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-zinc-400 mb-1.5 font-medium">快速切换机型预设</label>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-3">
+                      {[
+                        { name: '小爱音箱 Pro', model: 'xiaomi.wifispeaker.lx06', hw: 'LX06' },
+                        { name: '小爱音箱 Play', model: 'xiaomi.wifispeaker.l05c', hw: 'L05C' },
+                        { name: 'Xiaomi Sound', model: 'xiaomi.wifispeaker.l16a', hw: 'L16A' },
+                        { name: '小爱触屏音箱', model: 'xiaomi.wifispeaker.lx04', hw: 'LX04' },
+                        { name: '小爱音箱 Art', model: 'xiaomi.wifispeaker.l09a', hw: 'L09A' },
+                        { name: '小爱音箱 (通用)', model: 'xiaomi.wifispeaker.sound', hw: 'Sound' },
+                      ].map((preset) => (
+                        <button
+                          key={preset.model}
+                          type="button"
+                          onClick={() => {
+                            setEditDevModel(preset.model);
+                            setEditDevHardware(preset.hw);
+                          }}
+                          className={`p-2 rounded-xl text-left border transition cursor-pointer ${
+                            editDevModel === preset.model
+                              ? 'bg-[#FF6700]/20 border-[#FF6700] text-white shadow-sm'
+                              : 'bg-zinc-950/60 border-white/10 text-zinc-400 hover:border-white/20 hover:text-zinc-200'
+                          }`}
+                        >
+                          <div className="font-medium text-xs text-zinc-200">{preset.name}</div>
+                          <div className="text-[10px] text-zinc-500 font-mono">{preset.hw}</div>
+                        </button>
+                      ))}
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-3">
