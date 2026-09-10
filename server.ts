@@ -1849,6 +1849,80 @@ async function sendMiioCommand(
   }
 }
 
+// DLNA UPnP AVTransport Cast function for Xiaomi Speakers
+async function sendDlnaAvTransportPlay(
+  ip: string,
+  streamUrl: string,
+  title: string = 'TingLan Audio',
+  artist: string = 'TingLan'
+): Promise<{ success: boolean; port?: number; error?: string }> {
+  if (!ip) return { success: false, error: '未提供音箱 IP' };
+
+  const candidatePorts = [49152, 49153, 49154, 8080, 1400];
+  const controlPaths = [
+    '/upnp/control/AVTransport1',
+    '/AVTransport/control',
+    '/upnp/control/rendertransport1',
+    '/MediaRenderer/AVTransport/control'
+  ];
+
+  const escapeXml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const metaData = `&lt;DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/"&gt;&lt;item id="0" parentID="-1" restricted="1"&gt;&lt;dc:title&gt;${escapeXml(title)}&lt;/dc:title&gt;&lt;dc:creator&gt;${escapeXml(artist)}&lt;/dc:creator&gt;&lt;upnp:class&gt;object.item.audioItem.musicTrack&lt;/upnp:class&gt;&lt;res protocolInfo="http-get:*:audio/mpeg:*"&gt;${escapeXml(streamUrl)}&lt;/res&gt;&lt;/item&gt;&lt;/DIDL-Lite&gt;`;
+
+  const setUriXml = `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+  <s:Body>
+    <u:SetAVTransportURI xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">
+      <InstanceID>0</InstanceID>
+      <CurrentURI>${escapeXml(streamUrl)}</CurrentURI>
+      <CurrentURIMetaData>${metaData}</CurrentURIMetaData>
+    </u:SetAVTransportURI>
+  </s:Body>
+</s:Envelope>`;
+
+  const playXml = `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+  <s:Body>
+    <u:Play xmlns:u="urn:schemas-upnp-org:service:AVTransport:1">
+      <InstanceID>0</InstanceID>
+      <Speed>1</Speed>
+    </u:Play>
+  </s:Body>
+</s:Envelope>`;
+
+  for (const port of candidatePorts) {
+    for (const cPath of controlPaths) {
+      try {
+        const setRes = await fetch(`http://${ip}:${port}${cPath}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'text/xml; charset="utf-8"',
+            'SOAPAction': '"urn:schemas-upnp-org:service:AVTransport:1#SetAVTransportURI"'
+          },
+          body: setUriXml,
+          signal: AbortSignal.timeout(1200)
+        });
+
+        if (setRes.ok || setRes.status === 200) {
+          // Send Play action
+          await fetch(`http://${ip}:${port}${cPath}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'text/xml; charset="utf-8"',
+              'SOAPAction': '"urn:schemas-upnp-org:service:AVTransport:1#Play"'
+            },
+            body: playXml,
+            signal: AbortSignal.timeout(1200)
+          });
+          return { success: true, port };
+        }
+      } catch {}
+    }
+  }
+
+  return { success: false, error: 'DLNA AVTransport 端口未响应' };
+}
+
 // TCP Ping test utility (Fallback for HTTP / UPnP endpoints)
 function testTcpConnection(host: string, port = 80, timeoutMs = 1500): Promise<{ reachable: boolean; latency: number }> {
   return new Promise((resolve) => {
@@ -4008,31 +4082,20 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
   let cloudResult: any = null;
   let localMiioResult: any = null;
 
-  // 2. Track 1: Local miIO UDP 54321 (If device has IP & Token)
-  if (targetDevice.token && targetDevice.ip) {
+  // 1. Track 1: Local Network Dispatch (DLNA UPnP + miIO UDP 54321)
+  if (targetDevice.ip) {
     try {
-      // 1. Try player_play_music (OH2P & newer firmware)
-      localMiioResult = await sendMiioCommand(
-        targetDevice.ip,
-        targetDevice.token,
-        'player_play_music',
-        { music: resolvedStreamUrl, startOffset: 0, media: 'app_ios' },
-        2500
-      );
-
-      // 2. Try standard play_specify_url with object payload
-      if (!localMiioResult?.success) {
-        localMiioResult = await sendMiioCommand(
-          targetDevice.ip,
-          targetDevice.token,
-          'play_specify_url',
-          { url: resolvedStreamUrl, type: 1, media: 'app_ios' },
-          2500
-        );
+      // 1.1 Try DLNA UPnP AVTransport (Lossless native audio streaming for Pro / Sound / Sound Pro / LX06 / L16A)
+      const dlnaRes = await sendDlnaAvTransportPlay(targetDevice.ip, resolvedStreamUrl, songTitle || '听澜音频', songArtist || 'TingLan');
+      if (dlnaRes.success) {
+        localMiioResult = { success: true, method: `DLNA UPnP (Port ${dlnaRes.port})` };
       }
+    } catch {}
 
-      // 3. Try array format [url, 0]
-      if (!localMiioResult?.success) {
+    // 1.2 If DLNA didn't match and device has 32-bit Token, try miIO commands
+    if (!localMiioResult?.success && targetDevice.token) {
+      try {
+        // Standard XiaoAi miIO custom URL play methods
         localMiioResult = await sendMiioCommand(
           targetDevice.ip,
           targetDevice.token,
@@ -4040,46 +4103,53 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
           [resolvedStreamUrl, 0],
           2500
         );
-      }
 
-      // 4. Try array format [url, 1]
-      if (!localMiioResult?.success) {
-        localMiioResult = await sendMiioCommand(
-          targetDevice.ip,
-          targetDevice.token,
-          'play_specify_url',
-          [resolvedStreamUrl, 1],
-          2500
-        );
-      }
+        if (!localMiioResult?.success) {
+          localMiioResult = await sendMiioCommand(
+            targetDevice.ip,
+            targetDevice.token,
+            'play_specify_url',
+            [resolvedStreamUrl, 1],
+            2500
+          );
+        }
 
-      // 5. Try player_play_url
-      if (!localMiioResult?.success) {
-        localMiioResult = await sendMiioCommand(
-          targetDevice.ip,
-          targetDevice.token,
-          'player_play_url',
-          [resolvedStreamUrl],
-          2500
-        );
-      }
+        if (!localMiioResult?.success) {
+          localMiioResult = await sendMiioCommand(
+            targetDevice.ip,
+            targetDevice.token,
+            'play_specify_url',
+            { url: resolvedStreamUrl, type: 1 },
+            2500
+          );
+        }
 
-      // 6. Try MIoT Spec Action siid 3, aiid 2 or 1 (Media Play Url)
-      if (!localMiioResult?.success) {
-        localMiioResult = await sendMiioCommand(
-          targetDevice.ip,
-          targetDevice.token,
-          'action',
-          { did: targetDevice.did, siid: 3, aiid: 2, in: [] },
-          2500
-        );
+        if (!localMiioResult?.success) {
+          localMiioResult = await sendMiioCommand(
+            targetDevice.ip,
+            targetDevice.token,
+            'player_play_url',
+            [resolvedStreamUrl],
+            2500
+          );
+        }
+
+        if (!localMiioResult?.success) {
+          localMiioResult = await sendMiioCommand(
+            targetDevice.ip,
+            targetDevice.token,
+            'player_play_url',
+            { url: resolvedStreamUrl, type: 1 },
+            2500
+          );
+        }
+      } catch (e: any) {
+        localMiioResult = { success: false, error: e.message };
       }
-    } catch (e: any) {
-      localMiioResult = { success: false, error: e.message };
     }
   }
 
-  // 3. Track 2: Xiaomi Mina Cloud UBUS (micoapi)
+  // 2. Track 2: Xiaomi Mina Cloud UBUS (micoapi / player_play_url)
   const activeMicoToken = (miotConfig as any).micoServiceToken || miotConfig.serviceToken;
   if (miotConfig.isLoggedIn && activeMicoToken && miotConfig.userId) {
     try {
@@ -4115,7 +4185,7 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
         // non-blocking
       }
 
-      // Native XiaoAi Directive Mode (if explicitly requested)
+      // Native XiaoAi Directive Mode (if explicitly requested by user in UI)
       if (selectedCastMode === 'xiaoai_directive' && (miotConfig as any).ssecurity && miotConfig.userId) {
         try {
           const directiveText = `播放${songTitle || ''} ${songArtist || ''}`.trim();
@@ -4136,47 +4206,7 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
         } catch {}
       }
 
-      // Priority 1: player_play_music (XiaoMusic successful case compatibility for newer speakers like OH2P, Sound Pro)
-      if (!cloudResult?.success) {
-        cloudResult = await callMinaCloudApi(
-          'mediaplayer',
-          'player_play_music',
-          { music: resolvedStreamUrl, startOffset: 0, loadMoreOffset: 0, media: 'app_ios', src: 'app' },
-          targetDevice.did
-        );
-      }
-
-      // Fallback 1: player_play_music with media app_ios
-      if (!cloudResult?.success) {
-        cloudResult = await callMinaCloudApi(
-          'mediaplayer',
-          'player_play_music',
-          { music: resolvedStreamUrl, startOffset: 0, media: 'app_ios' },
-          targetDevice.did
-        );
-      }
-
-      // Fallback 2: player_play_music with minimal payload
-      if (!cloudResult?.success) {
-        cloudResult = await callMinaCloudApi(
-          'mediaplayer',
-          'player_play_music',
-          { music: resolvedStreamUrl },
-          targetDevice.did
-        );
-      }
-
-      // Priority 2: Standard XiaoAi Mina UBUS player_play_url
-      if (!cloudResult?.success) {
-        cloudResult = await callMinaCloudApi(
-          'mediaplayer',
-          'player_play_url',
-          { url: resolvedStreamUrl, type: 1, media: 'app_ios' },
-          targetDevice.did
-        );
-      }
-
-      // Fallback 3: player_play_url type 1 without media
+      // Priority 1: Standard XiaoAi Mina player_play_url with type 1 (Standard open-source xiaomusic/miservice method)
       if (!cloudResult?.success) {
         cloudResult = await callMinaCloudApi(
           'mediaplayer',
@@ -4186,7 +4216,27 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
         );
       }
 
-      // Fallback 4: player_play_url media app_ios only
+      // Fallback 1: player_play_url with type 0 (Compatible with S12 / OpenWrt / legacy XiaoAi firmwares)
+      if (!cloudResult?.success) {
+        cloudResult = await callMinaCloudApi(
+          'mediaplayer',
+          'player_play_url',
+          { url: resolvedStreamUrl, type: 0 },
+          targetDevice.did
+        );
+      }
+
+      // Fallback 2: player_play_url with media app_ios
+      if (!cloudResult?.success) {
+        cloudResult = await callMinaCloudApi(
+          'mediaplayer',
+          'player_play_url',
+          { url: resolvedStreamUrl, type: 1, media: 'app_ios' },
+          targetDevice.did
+        );
+      }
+
+      // Fallback 3: player_play_url media app_ios without type
       if (!cloudResult?.success) {
         cloudResult = await callMinaCloudApi(
           'mediaplayer',
@@ -4196,7 +4246,7 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
         );
       }
 
-      // Fallback 5: player_play_url raw url
+      // Fallback 4: player_play_url raw url
       if (!cloudResult?.success) {
         cloudResult = await callMinaCloudApi(
           'mediaplayer',
@@ -4204,46 +4254,6 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
           { url: resolvedStreamUrl },
           targetDevice.did
         );
-      }
-
-      // Priority 3: MIoT Cloud Action fallback
-      if (!cloudResult?.success && (miotConfig as any).ssecurity && miotConfig.userId) {
-        try {
-          // Try intelligent speaker directive on siid 7 (Modern Pro / OH2P)
-          const directiveText = `播放${songTitle || ''} ${songArtist || ''}`.trim();
-          let rpcRes = await miotRpcEngine.executeAction(
-            targetDevice,
-            7,
-            4,
-            [directiveText, false],
-            {
-              userId: String(miotConfig.userId),
-              serviceToken: (miotConfig as any).xiaomiioServiceToken || activeMicoToken,
-              ssecurity: (miotConfig as any).ssecurity
-            }
-          );
-          if (rpcRes.code === 0) {
-            cloudResult = { success: true, data: rpcRes.result, method: 'miot_directive_siid7' };
-          } else {
-            // Try standard Play action (siid 3, aiid 2 for OH2P/Sound/Pro)
-            rpcRes = await miotRpcEngine.executeAction(
-              targetDevice,
-              3,
-              2,
-              [],
-              {
-                userId: String(miotConfig.userId),
-                serviceToken: (miotConfig as any).xiaomiioServiceToken || activeMicoToken,
-                ssecurity: (miotConfig as any).ssecurity
-              }
-            );
-            if (rpcRes.code === 0) {
-              cloudResult = { success: true, data: rpcRes.result, method: 'miot_play_action_siid3_aiid2' };
-            }
-          }
-        } catch (rpcErr: any) {
-          console.warn('MIoT Action Cloud fallback failed:', rpcErr.message);
-        }
       }
     } catch (e: any) {
       cloudResult = { success: false, error: e.message };
@@ -4444,17 +4454,37 @@ app.post('/api/miot/test-sound', async (req: Request, res: Response) => {
   let localResult: any = null;
   const logs: string[] = [];
 
+  // Local DLNA check
+  if (targetDevice.ip) {
+    try {
+      const dlnaRes = await sendDlnaAvTransportPlay(targetDevice.ip, testAudioUrl, '听澜测声', '小爱音箱');
+      if (dlnaRes.success) {
+        localResult = { success: true, method: `DLNA UPnP (Port ${dlnaRes.port})` };
+        logs.push(`✓ 局域网 DLNA UPnP (Port ${dlnaRes.port}) 下发成功`);
+      }
+    } catch {}
+  }
+
   if (isCloudAvailable) {
     try {
-      logs.push(`正在通过小米云端 UBUS (mediaplayer/player_play_music) 投播高保真测试流...`);
+      logs.push(`正在通过小米云端 UBUS (mediaplayer/player_play_url) 投播高保真测试流...`);
       cloudResult = await callMinaCloudApi(
         'mediaplayer',
-        'player_play_music',
-        { music: testAudioUrl, startOffset: 0, loadMoreOffset: 0, media: 'app_ios', src: 'app' },
+        'player_play_url',
+        { url: testAudioUrl, type: 1 },
         targetDevice.did
       );
       if (!cloudResult?.success) {
-        logs.push(`尝试备用 player_play_url 格式...`);
+        logs.push(`尝试备用 player_play_url (type 0) 格式...`);
+        cloudResult = await callMinaCloudApi(
+          'mediaplayer',
+          'player_play_url',
+          { url: testAudioUrl, type: 0 },
+          targetDevice.did
+        );
+      }
+      if (!cloudResult?.success) {
+        logs.push(`尝试 player_play_url (media app_ios) 格式...`);
         cloudResult = await callMinaCloudApi(
           'mediaplayer',
           'player_play_url',
@@ -4472,22 +4502,22 @@ app.post('/api/miot/test-sound', async (req: Request, res: Response) => {
     }
   }
 
-  if (isLocalTokenAvailable && targetDevice.ip) {
+  if (!localResult?.success && isLocalTokenAvailable && targetDevice.ip) {
     try {
       logs.push(`正在通过局域网 miIO UDP (${targetDevice.ip}) 下发测试流...`);
       localResult = await sendMiioCommand(
         targetDevice.ip,
         targetDevice.token,
-        'player_play_music',
-        { music: testAudioUrl, startOffset: 0, media: 'app_ios' },
+        'play_specify_url',
+        [testAudioUrl, 0],
         2000
       );
       if (!localResult?.success) {
         localResult = await sendMiioCommand(
           targetDevice.ip,
           targetDevice.token,
-          'play_specify_url',
-          { url: testAudioUrl, type: 1, media: 'app_ios' },
+          'player_play_url',
+          [testAudioUrl],
           2000
         );
       }
