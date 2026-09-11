@@ -4263,6 +4263,47 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
           targetDevice.did
         );
       }
+
+      // Track 4: Official MIoT Spec Cloud Action (api.io.mi.com)
+      // Highly compatible when logged in via Mi Home (米家 App) or when Mina Cloud returns 401
+      const activeIoToken = (miotConfig as any).xiaomiioServiceToken || miotConfig.serviceToken;
+      const activeSsec = (miotConfig as any).ssecurity;
+      if (!cloudResult?.success && miotConfig.isLoggedIn && miotConfig.userId && (activeIoToken || activeSsec)) {
+        const miotAuth = {
+          userId: String(miotConfig.userId),
+          serviceToken: activeIoToken,
+          ssecurity: activeSsec
+        };
+
+        // 1. Play-Control service (siid=3, aiid=1 play-url: [resolvedStreamUrl])
+        try {
+          const rpc1 = await miotRpcEngine.executeAction(targetDevice, 3, 1, [resolvedStreamUrl], miotAuth);
+          if (rpc1.code === 0) {
+            cloudResult = { success: true, data: rpc1.result, method: 'cloud_miot_siid3_aiid1' };
+          }
+        } catch {}
+
+        // 2. Intelligent Speaker service (siid=7, aiid=3: play-url)
+        if (!cloudResult?.success) {
+          try {
+            const rpc2 = await miotRpcEngine.executeAction(targetDevice, 7, 3, [resolvedStreamUrl], miotAuth);
+            if (rpc2.code === 0) {
+              cloudResult = { success: true, data: rpc2.result, method: 'cloud_miot_siid7_aiid3' };
+            }
+          } catch {}
+        }
+
+        // 3. Intelligent Speaker directive (siid=7, aiid=4: text-directive [播放 歌名, false])
+        if (!cloudResult?.success) {
+          try {
+            const songQuery = songArtist ? `${songArtist} 的 ${songTitle}` : (songTitle || '音乐');
+            const rpc3 = await miotRpcEngine.executeAction(targetDevice, 7, 4, [`播放 ${songQuery}`, false], miotAuth);
+            if (rpc3.code === 0) {
+              cloudResult = { success: true, data: rpc3.result, method: 'cloud_miot_siid7_aiid4' };
+            }
+          } catch {}
+        }
+      }
     } catch (e: any) {
       cloudResult = { success: false, error: e.message };
     }

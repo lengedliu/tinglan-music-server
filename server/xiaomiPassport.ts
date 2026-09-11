@@ -424,66 +424,72 @@ export class XiaomiPassport {
       const cleanUid = String(userId || '').replace(/^uid_/, '').replace(/^["']|["']$/g, '').trim();
       const cleanPassToken = String(passToken || '').replace(/^["']|["']$/g, '').trim();
 
-      // 1. Use standard Xiaomi passToken authorization via serviceLogin (GET)
-      // This correctly negotiates STS tokens without requiring password authentication or throwing code 70016
-      const loginUrl = `https://account.xiaomi.com/pass/serviceLogin?sid=${encodeURIComponent(targetSid)}&_json=true`;
-      const baseCookies = [
-        `userId=${cleanUid}`,
-        cUserId ? `cUserId=${cUserId}` : '',
-        `passToken=${cleanPassToken}`,
-        'uLocale=zh_CN',
-        'sdkVersion=3.9'
-      ].filter(Boolean).join('; ');
+      const hosts = ['https://account.xiaomi.com', 'https://cn.account.xiaomi.com'];
+      let lastErr = '';
 
-      const res = await fetch(loginUrl, {
-        method: 'GET',
-        headers: {
-          'User-Agent': 'APP/com.xiaomi.mihome APPV/11.3.203 iosPassportSDK/4.2.50 iOS/26.3.1 MK/aVBob25lMTcsMg== DEVT/aVBob25l DEVS/aU9T BRA/QXBwbGU= L/zh_CN',
-          'Cookie': baseCookies
+      for (const host of hosts) {
+        try {
+          const loginUrl = `${host}/pass/serviceLogin?sid=${encodeURIComponent(targetSid)}&_json=true`;
+          const baseCookies = [
+            `userId=${cleanUid}`,
+            cUserId ? `cUserId=${cUserId}` : '',
+            `passToken=${cleanPassToken}`,
+            'uLocale=zh_CN',
+            'sdkVersion=3.9'
+          ].filter(Boolean).join('; ');
+
+          const res = await fetch(loginUrl, {
+            method: 'GET',
+            headers: {
+              'User-Agent': this.userAgent,
+              'Cookie': baseCookies
+            }
+          });
+
+          const setCookiesArr: string[] = typeof (res.headers as any).getSetCookie === 'function'
+            ? (res.headers as any).getSetCookie()
+            : [res.headers.get('set-cookie') || ''];
+          const responseCookies = setCookiesArr.filter(Boolean).map(c => c.split(';')[0].trim()).filter(Boolean).join('; ');
+          const combinedCookieHeader = [baseCookies, responseCookies].filter(Boolean).join('; ');
+
+          const raw = await res.text();
+          const clean = raw.replace('&&&START&&&', '');
+          let json: any = {};
+          try {
+            json = JSON.parse(clean);
+          } catch {
+            continue;
+          }
+
+          const returnedUserId = json.userId ? String(json.userId) : (json.cUserId || cleanUid);
+
+          if (json.code === 0 && json.location) {
+            const sts = await this.exchangeStsToken(json.location, combinedCookieHeader, json.ssecurity);
+            if (sts.serviceToken) {
+              return {
+                serviceToken: sts.serviceToken,
+                ssecurity: json.ssecurity || (sts as any).ssecurity,
+                userId: returnedUserId
+              };
+            }
+          }
+
+          if (json.code === 0 && json.serviceToken) {
+            return {
+              serviceToken: json.serviceToken,
+              ssecurity: json.ssecurity,
+              userId: returnedUserId
+            };
+          }
+
+          lastErr = json.desc || json.message || `认证流程未完成 (code: ${json.code})`;
+        } catch (hErr: any) {
+          lastErr = hErr.message;
         }
-      });
-
-      const setCookiesArr: string[] = typeof (res.headers as any).getSetCookie === 'function'
-        ? (res.headers as any).getSetCookie()
-        : [res.headers.get('set-cookie') || ''];
-      const responseCookies = setCookiesArr.filter(Boolean).map(c => c.split(';')[0].trim()).filter(Boolean).join('; ');
-      const combinedCookieHeader = [baseCookies, responseCookies].filter(Boolean).join('; ');
-
-      const raw = await res.text();
-      const clean = raw.replace('&&&START&&&', '');
-      let json: any = {};
-      try {
-        json = JSON.parse(clean);
-      } catch {
-        console.warn(`[STS ${targetSid}] Failed to parse response:`, raw);
-        return { error: `无法解析小米认证响应: ${raw.slice(0, 100)}` };
-      }
-
-      console.log(`[STS ${targetSid}] serviceLogin result:`, json.code, json.desc || json.message || 'OK');
-      const returnedUserId = json.userId ? String(json.userId) : (json.cUserId || cleanUid);
-
-      if (json.code === 0 && json.location) {
-        const sts = await this.exchangeStsToken(json.location, combinedCookieHeader, json.ssecurity);
-        if (sts.serviceToken) {
-          return {
-            serviceToken: sts.serviceToken,
-            ssecurity: json.ssecurity || (sts as any).ssecurity,
-            userId: returnedUserId
-          };
-        }
-      }
-
-      if (json.code === 0 && json.serviceToken) {
-        return {
-          serviceToken: json.serviceToken,
-          ssecurity: json.ssecurity,
-          userId: returnedUserId
-        };
       }
 
       return {
-        error: json.desc || json.message || `认证流程未完成 (code: ${json.code})`,
-        userId: returnedUserId
+        error: lastErr || '未能完成 STS 令牌换取'
       };
     } catch (err: any) {
       console.warn(`[STS ${targetSid}] exception:`, err.message);
