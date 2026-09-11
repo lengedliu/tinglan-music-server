@@ -3784,6 +3784,14 @@ async function callMinaCloudApi(
 
   let deviceId = targetDid || miotConfig.activeDeviceId || '';
 
+  const isSyntheticId = (id?: string) =>
+    !id ||
+    id.startsWith('did-') ||
+    id.startsWith('manual_') ||
+    id.startsWith('detected_') ||
+    id.startsWith('lan_') ||
+    id.startsWith('miio_');
+
   // Look up actual device to find real Mina hardware deviceID
   const matchedDev = xiaomiDevices.find(d => 
     d.did === targetDid || 
@@ -3793,30 +3801,40 @@ async function callMinaCloudApi(
   );
 
   if (matchedDev) {
-    if ((matchedDev as any).deviceID) deviceId = (matchedDev as any).deviceID;
-    else if ((matchedDev as any).hardwareDeviceId) deviceId = (matchedDev as any).hardwareDeviceId;
-    else if ((matchedDev as any).cloudDid) deviceId = (matchedDev as any).cloudDid;
-    else if (matchedDev.did && !matchedDev.did.startsWith('manual_') && !matchedDev.did.startsWith('detected_') && !matchedDev.did.startsWith('lan_') && !matchedDev.did.startsWith('miio_')) {
+    if ((matchedDev as any).deviceID && !isSyntheticId((matchedDev as any).deviceID)) {
+      deviceId = (matchedDev as any).deviceID;
+    } else if ((matchedDev as any).hardwareDeviceId && !isSyntheticId((matchedDev as any).hardwareDeviceId)) {
+      deviceId = (matchedDev as any).hardwareDeviceId;
+    } else if ((matchedDev as any).cloudDid && !isSyntheticId((matchedDev as any).cloudDid)) {
+      deviceId = (matchedDev as any).cloudDid;
+    } else if (!isSyntheticId(matchedDev.did)) {
       deviceId = matchedDev.did;
     }
   }
 
-  // Handle synthetic local DIDs if still unmapped
-  if (!deviceId || deviceId.startsWith('manual_') || deviceId.startsWith('detected_') || deviceId.startsWith('lan_') || deviceId.startsWith('miio_')) {
-    const realCloudDev = xiaomiDevices.find(d => 
-      d.did && !d.did.startsWith('manual_') && !d.did.startsWith('detected_') && !d.did.startsWith('lan_') && !d.did.startsWith('miio_')
-    );
+  // Handle synthetic local DIDs (auto-link to account's cloud speakers by IP, MAC, name or single-speaker fallback)
+  if (isSyntheticId(deviceId)) {
+    // 1. Match by exact IP in cloud devices
+    const cloudByIp = xiaomiDevices.find(d => !isSyntheticId(d.did) && d.ip && matchedDev?.ip && d.ip === matchedDev.ip);
+    // 2. Match by MAC
+    const cloudByMac = xiaomiDevices.find(d => !isSyntheticId(d.did) && d.mac && matchedDev?.mac && d.mac === matchedDev.mac);
+    // 3. Match by Name
+    const cloudByName = xiaomiDevices.find(d => !isSyntheticId(d.did) && d.name && matchedDev?.name && d.name.trim() === matchedDev.name.trim());
+    // 4. Any real cloud speaker
+    const realCloudDev = cloudByIp || cloudByMac || cloudByName || xiaomiDevices.find(d => !isSyntheticId(d.did));
+
     if (realCloudDev) {
       deviceId = (realCloudDev as any).deviceID || realCloudDev.did;
-    } else if (miotConfig.activeDeviceId && !miotConfig.activeDeviceId.startsWith('manual_') && !miotConfig.activeDeviceId.startsWith('detected_')) {
+      console.log(`[Mina] Mapped local speaker ${targetDid} (${matchedDev?.name || 'Local'}) -> Cloud deviceId: ${deviceId}`);
+    } else if (!isSyntheticId(miotConfig.activeDeviceId)) {
       deviceId = miotConfig.activeDeviceId;
     }
   }
 
-  if (!deviceId || deviceId.startsWith('manual_') || deviceId.startsWith('detected_') || deviceId.startsWith('lan_') || deviceId.startsWith('miio_')) {
+  if (isSyntheticId(deviceId)) {
     return {
       success: false,
-      error: '当前音箱为纯局域网手动添加设备，无关联的小米云端 DID。云端容器因网络隔离无法直连 192.168.x.x。请在设备管理中点击【扫描/同步云端音箱】拉取绑定账号下的小爱音箱即可通过云端成功投播！'
+      error: '该音箱当前仅配置了局域网 IP，未关联小米官方云端音箱。请在设备管理中点击【同步小米云端音箱】关联对应音箱，即可通过云端通道直接下发。'
     };
   }
 
@@ -4228,18 +4246,20 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
   const isSuccess = Boolean(dlnaResult?.success) || Boolean(localMiioResult?.success) || Boolean(cloudResult?.success);
   const responseTimeMs = Date.now() - startTime;
 
-  const isCloudContainer = Boolean(process.env.K_SERVICE || process.env.CLOUD_RUN || process.env.RENDER || process.env.VERCEL);
-
   let errorMessage: string | undefined;
   if (!isSuccess) {
-    if (cloudResult?.error) {
-      errorMessage = `云端投播未完成: ${cloudResult.error}${dlnaResult?.error ? ` (局域网 DLNA: ${dlnaResult.error})` : ''}${localMiioResult?.error ? ` (miIO: ${localMiioResult.error})` : ''}`;
-    } else if (targetDevice.ip && !isCloudContainer) {
-      // Local home network / NAS deployment
-      const dlnaMsg = dlnaResult?.error || 'DLNA 影音端口未响应';
-      errorMessage = `向音箱 (${targetDevice.ip}) 发送投播指令未获响应。排查建议：\n1. 请在手机【小爱音箱 App】->【设置】中确认已开启【DLNA】投屏（小爱音箱 Pro 局域网直连依赖 DLNA 协议，无需 Token）；\n2. 确认音箱与本机处于同一物理局域网网段（若使用 Docker 部署，建议以 --net=host 模式运行）；\n3. 或前往【账号与服务配置】扫码登录米家账号，即可通过小米云端通道下发指令。`;
-    } else if (isCloudContainer) {
-      errorMessage = `云端容器无法直接访问家庭私有 IP (${targetDevice.ip})。请在【账号与服务配置】中扫码登录米家账号，以通过米家云端推流通道下发播放。`;
+    if (targetDevice.ip) {
+      const dlnaTip = dlnaResult?.error || 'DLNA 端口未响应（请在手机【小爱音箱 App】->【设置】中开启【DLNA】投屏开关）';
+      const miioTip = targetDevice.token ? (localMiioResult?.error || 'UDP 54321 握手超时') : '未配置设备 32 位局域网 Token';
+      const cloudTip = cloudResult?.error || (miotConfig.isLoggedIn ? '云端未关联该音箱' : '未登录米家账号');
+
+      errorMessage = `未能成功向音箱【${targetDevice.name}】(${targetDevice.ip}) 投播：\n` +
+        `1. 局域网 DLNA 直连: ${dlnaTip}\n` +
+        `2. 局域网 miIO 通道: ${miioTip}\n` +
+        `3. 米家云端通道: ${cloudTip}\n` +
+        `💡 部署提示：小爱音箱局域网投播推荐在小爱音箱 App 中开启【DLNA】投屏开关，无需 Token 即可即投即播；若部署在 NAS Docker 中，请使用 --net=host 网络模式。`;
+    } else if (cloudResult?.error) {
+      errorMessage = `云端投播未完成: ${cloudResult.error}`;
     } else {
       errorMessage = dlnaResult?.error || localMiioResult?.error || '投播指令执行失败，音箱未响应或网络断开';
     }

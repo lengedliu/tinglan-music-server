@@ -1,1 +1,28 @@
-[]
+[
+  {
+    "did": "did-1789129459008",
+    "name": "小爱音箱Pro",
+    "model": "xiaomi.wifispeaker.sound",
+    "hardware": "L16A",
+    "ip": "192.168.31.25",
+    "mac": "00:1A:7D:A22047",
+    "platform": "dlna",
+    "source": "lan",
+    "capabilities": {
+      "hasPlayControl": true,
+      "hasTts": true,
+      "hasVolumeControl": true,
+      "hasClock": false,
+      "supportsDlna": true,
+      "supportsLocalMiio": true
+    },
+    "online": true,
+    "isOnline": true,
+    "status": {
+      "playing": false,
+      "volume": 45,
+      "muted": false,
+      "updatedAt": "2026-09-11T12:28:47.972Z"
+    }
+  }
+]

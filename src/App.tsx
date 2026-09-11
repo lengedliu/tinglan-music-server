@@ -380,11 +380,14 @@ export default function App() {
     });
 
     const cleanId = song.id.replace(/\.(mp3|flac|wav|m4a|aac|ogg|opus|ape)$/i, '');
-    const streamUrl = `${miotConfig.serverHost}/api/stream/${encodeURIComponent(cleanId)}.mp3`;
+    const streamBase = miotConfig.serverHost && miotConfig.serverHost.startsWith('http')
+      ? miotConfig.serverHost.replace(/\/$/, '')
+      : window.location.origin;
+    const streamUrl = `${streamBase}/api/stream/${encodeURIComponent(cleanId)}.mp3`;
 
-    // 15-second timeout controller to detect un-reachable device
+    // 25-second timeout controller to allow full DLNA/miIO/Cloud multi-track fallback
     const controller = new AbortController();
-    const timeoutTimer = setTimeout(() => controller.abort(), 15000);
+    const timeoutTimer = setTimeout(() => controller.abort(), 25000);
 
     apiFetch('/api/miot/cast', {
       method: 'POST',

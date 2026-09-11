@@ -39,9 +39,10 @@ function sendSoapRequest(
   serviceType: string,
   action: string,
   bodyXml: string,
-  timeoutMs = 2500
+  timeoutMs = 1500
 ): Promise<{ success: boolean; statusCode: number; responseText: string; error?: string }> {
   return new Promise((resolve) => {
+    let finished = false;
     const postData = `<?xml version="1.0" encoding="utf-8"?>
 <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
   <s:Body>
@@ -57,7 +58,6 @@ function sendSoapRequest(
       port,
       path: normalizedPath,
       method: 'POST',
-      timeout: timeoutMs,
       headers: {
         'Content-Type': 'text/xml; charset="utf-8"',
         'Content-Length': Buffer.byteLength(postData, 'utf8'),
@@ -72,6 +72,9 @@ function sendSoapRequest(
       res.setEncoding('utf8');
       res.on('data', (chunk) => { data += chunk; });
       res.on('end', () => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
         const statusCode = res.statusCode || 200;
         const isOk = statusCode >= 200 && statusCode < 300;
         resolve({
@@ -82,50 +85,74 @@ function sendSoapRequest(
       });
     });
 
-    req.on('timeout', () => {
-      req.destroy();
+    // Hard timeout timer to break through stalled TCP SYN handshakes
+    const timer = setTimeout(() => {
+      if (finished) return;
+      finished = true;
+      try { req.destroy(new Error('Connect timeout')); } catch {}
       resolve({ success: false, statusCode: 408, responseText: '', error: `SOAP 请求超时 (${timeoutMs}ms)` });
-    });
+    }, timeoutMs);
 
     req.on('error', (err) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
       resolve({ success: false, statusCode: 500, responseText: '', error: err.message });
     });
 
-    req.write(postData);
-    req.end();
+    try {
+      req.write(postData);
+      req.end();
+    } catch (e: any) {
+      if (!finished) {
+        finished = true;
+        clearTimeout(timer);
+        resolve({ success: false, statusCode: 500, responseText: '', error: e.message });
+      }
+    }
   });
 }
 
 /**
- * Simple HTTP GET for XML fetching
+ * Simple HTTP GET for XML fetching with strict connection timeout
  */
-function httpGet(urlStr: string, timeoutMs = 2000): Promise<{ ok: boolean; status: number; text: string }> {
+function httpGet(urlStr: string, timeoutMs = 800): Promise<{ ok: boolean; status: number; text: string }> {
   return new Promise((resolve) => {
+    let finished = false;
+    let timer: NodeJS.Timeout | null = null;
     try {
       const url = new URL(urlStr);
       const req = http.get({
         hostname: url.hostname,
         port: url.port ? Number(url.port) : 80,
         path: url.pathname + url.search,
-        timeout: timeoutMs,
         headers: {
-          'User-Agent': 'TinglanMusic/1.0 UPnP/1.0'
+          'User-Agent': 'TinglanMusic/1.0 UPnP/1.0',
+          'Connection': 'close'
         }
       }, (res) => {
         let body = '';
         res.setEncoding('utf8');
         res.on('data', (c) => { body += c; });
         res.on('end', () => {
+          if (finished) return;
+          finished = true;
+          if (timer) clearTimeout(timer);
           resolve({ ok: (res.statusCode || 200) >= 200 && (res.statusCode || 200) < 300, status: res.statusCode || 200, text: body });
         });
       });
 
-      req.on('timeout', () => {
-        req.destroy();
+      timer = setTimeout(() => {
+        if (finished) return;
+        finished = true;
+        try { req.destroy(new Error('Connect timeout')); } catch {}
         resolve({ ok: false, status: 408, text: '' });
-      });
+      }, timeoutMs);
 
       req.on('error', () => {
+        if (finished) return;
+        finished = true;
+        if (timer) clearTimeout(timer);
         resolve({ ok: false, status: 500, text: '' });
       });
     } catch {
@@ -136,80 +163,70 @@ function httpGet(urlStr: string, timeoutMs = 2000): Promise<{ ok: boolean; statu
 
 export class DlnaEngine {
   /**
-   * Probe and find DLNA AVTransport control endpoint on a given IP
+   * Fast, non-blocking probe for DLNA AVTransport control endpoint on a given IP
+   * XiaoAi speakers (Pro, Sound, Sound Pro, Art, Touchscreen) listen on port 1420 by standard.
    */
   public async probeDevice(ip: string, preferredPort?: number): Promise<DlnaEndpoint | null> {
     const cleanIp = ip.trim();
-    if (!cleanIp) return null;
+    if (!cleanIp || cleanIp === '127.0.0.1' || cleanIp === 'localhost') return null;
 
     // Check cache first
     const cached = dlnaEndpointCache.get(cleanIp);
     if (cached) return cached;
 
-    const portsToTry: number[] = [];
-    if (preferredPort && !portsToTry.includes(preferredPort)) {
-      portsToTry.push(preferredPort);
-    }
-    for (const p of COMMON_DLNA_PORTS) {
-      if (!portsToTry.includes(p)) portsToTry.push(p);
-    }
+    // Standard XiaoAi ports: 1420 (primary XiaoAi DLNA), 49152 (secondary UPnP)
+    const portsToTry = preferredPort ? [preferredPort, 1420, 49152] : [1420, 49152];
+    const uniquePorts = Array.from(new Set(portsToTry));
 
-    // Try probing known description paths
-    const descPaths = ['/description.xml', '/upnp/dev/0', '/MediaRenderer_desc.xml', '/rootDesc.xml', '/dd.xml'];
+    // Fast parallel probe with 650ms timeout
+    const probeTasks: Promise<DlnaEndpoint | null>[] = [];
 
-    for (const port of portsToTry) {
-      for (const p of descPaths) {
-        try {
-          const res = await httpGet(`http://${cleanIp}:${port}${p}`, 1000);
-          if (res.ok && res.text.includes('AVTransport')) {
-            const endpoint = this.parseDeviceXml(cleanIp, port, res.text);
-            if (endpoint) {
-              dlnaEndpointCache.set(cleanIp, endpoint);
-              console.log(`[DLNA] Found MediaRenderer on ${cleanIp}:${port} (${endpoint.friendlyName || 'Speaker'})`);
-              return endpoint;
-            }
+    for (const port of uniquePorts) {
+      // 1. Try description.xml
+      probeTasks.push(
+        httpGet(`http://${cleanIp}:${port}/description.xml`, 650).then(res => {
+          if (res.ok && (res.text.includes('AVTransport') || res.text.includes('MediaRenderer') || res.text.includes('RenderingControl'))) {
+            return this.parseDeviceXml(cleanIp, port, res.text);
           }
-        } catch {}
-      }
-    }
+          return null;
+        }).catch(() => null)
+      );
 
-    // Fallback: Test direct SOAP AVTransport ping on common paths without full description.xml
-    const commonControlPaths = [
-      '/upnp/control/AVTransport',
-      '/upnp/control/AVTransport1',
-      '/AVTransport/control',
-      '/AVTransport/control.xml',
-      '/MediaRenderer/AVTransport/control'
-    ];
-
-    for (const port of portsToTry.slice(0, 4)) {
-      for (const ctrlPath of commonControlPaths) {
-        try {
-          const probe = await sendSoapRequest(
-            cleanIp,
-            port,
-            ctrlPath,
-            'urn:schemas-upnp-org:service:AVTransport:1',
-            'GetTransportInfo',
-            '<InstanceID>0</InstanceID>',
-            800
-          );
-          // If the endpoint returned 200 or 500 SOAP Fault with UPnP error code, it IS a valid AVTransport endpoint!
-          if (probe.statusCode === 200 || (probe.responseText && probe.responseText.includes('UPnPError'))) {
-            const endpoint: DlnaEndpoint = {
+      // 2. Try direct SOAP GetTransportInfo on /upnp/control/AVTransport (for devices hiding description.xml)
+      probeTasks.push(
+        sendSoapRequest(
+          cleanIp,
+          port,
+          '/upnp/control/AVTransport',
+          'urn:schemas-upnp-org:service:AVTransport:1',
+          'GetTransportInfo',
+          '<InstanceID>0</InstanceID>',
+          650
+        ).then(soapRes => {
+          if (soapRes.statusCode === 200 || (soapRes.responseText && (soapRes.responseText.includes('UPnPError') || soapRes.responseText.includes('TransportInfo')))) {
+            return {
               ip: cleanIp,
               port,
-              controlUrl: ctrlPath,
+              controlUrl: '/upnp/control/AVTransport',
               renderingControlUrl: '/upnp/control/RenderingControl',
               friendlyName: `小爱音箱 (${cleanIp})`
-            };
-            dlnaEndpointCache.set(cleanIp, endpoint);
-            console.log(`[DLNA] Direct SOAP probe confirmed AVTransport on ${cleanIp}:${port}${ctrlPath}`);
-            return endpoint;
+            } as DlnaEndpoint;
           }
-        } catch {}
-      }
+          return null;
+        }).catch(() => null)
+      );
     }
+
+    try {
+      const results = await Promise.allSettled(probeTasks);
+      for (const r of results) {
+        if (r.status === 'fulfilled' && r.value) {
+          dlnaEndpointCache.set(cleanIp, r.value);
+          console.log(`[DLNA] Discovered MediaRenderer on ${cleanIp}:${r.value.port} (${r.value.friendlyName || 'Speaker'})`);
+          return r.value;
+        }
+      }
+    } catch {}
 
     return null;
   }

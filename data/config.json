@@ -2,7 +2,7 @@
   "miUser": "",
   "isLoggedIn": false,
   "serverHost": "",
-  "activeDeviceId": "",
+  "activeDeviceId": "did-1789129459008",
   "autoCast": true,
   "ttsAnnouncement": false,
   "ttsPrefix": "正在为您播放",
