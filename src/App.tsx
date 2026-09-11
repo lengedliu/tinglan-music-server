@@ -30,7 +30,7 @@ export default function App() {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [securityStatus, setSecurityStatus] = useState<SecurityStatus | null>(null);
 
-  // Navigation: 音乐曲库, 歌词播放, 播放协议控制, Subsonic API, 设置
+  // Navigation: 音乐曲库, 歌词播放, 智能音箱, Subsonic API, 设置
   const [activeTab, setActiveTab] = useState<'library' | 'lyrics' | 'xiaomi' | 'subsonic' | 'settings'>(() => {
     try {
       const saved = localStorage.getItem('tinglan_active_tab');

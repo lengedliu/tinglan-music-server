@@ -99,7 +99,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
       </div>
 
-      {/* Bottom Row (中枢导航): 音乐曲库, 播放协议控制, Subsonic API, 歌词播放, 设置 */}
+      {/* Bottom Row (中枢导航): 音乐曲库, 智能音箱, Subsonic API, 歌词播放, 设置 */}
       <div className="border-t border-white/5 bg-zinc-950/50 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-12 flex items-center justify-between">
           <nav className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar py-1">
@@ -126,7 +126,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               }`}
             >
               <Cast className="w-4 h-4 text-[#FF6700]" />
-              <span>播放协议控制</span>
+              <span>智能音箱</span>
               {isCasting && (
                 <span className="flex h-2 w-2 relative">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#FF6700] opacity-75"></span>

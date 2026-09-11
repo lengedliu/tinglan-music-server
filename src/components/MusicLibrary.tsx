@@ -245,7 +245,7 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
               Featured Master Audio
             </span>
             <h1 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">
-              私有高保真音乐曲库
+              私有音乐曲库
             </h1>
             <p className="text-xs sm:text-sm text-zinc-300 max-w-2xl leading-relaxed">
               支持 FLAC / 320k MP3 / DSD 纯净串流，通过 MIoT 协议一键推送到小米小爱音箱。本地目录实时挂载，适配 NAS 与 Docker 独立部署。
