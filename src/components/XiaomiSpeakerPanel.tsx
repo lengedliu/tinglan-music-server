@@ -3360,6 +3360,15 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                   placeholder="http://192.168.1.100:3000"
                   className="w-full px-4 py-2.5 bg-zinc-950/80 border border-white/10 rounded-xl text-sm font-mono text-zinc-100 focus:outline-none focus:border-[#FF6700] transition"
                 />
+                {devices.some(d => d.ip && serverHostInput.includes(d.ip)) && (
+                  <div className="mt-2 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-semibold">串流地址冲突警告：</span>
+                      当前填写的 IP 属于小爱音箱自身 ({devices.find(d => d.ip && serverHostInput.includes(d.ip))?.ip})！小爱音箱无法向自己拉取音频流（会导致直接静音）。请填写运行本程序的主机/NAS 局域网 IP，或点击上方检测到的主机 IP。
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Speaker Stream Pull Monitor */}
