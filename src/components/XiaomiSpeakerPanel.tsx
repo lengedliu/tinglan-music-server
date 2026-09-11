@@ -2683,46 +2683,6 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
               </div>
             )}
 
-            {/* Cast Protocol & Network Mode Selector */}
-            <div className="p-3.5 rounded-2xl bg-zinc-950/40 border border-white/5 space-y-2">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-zinc-400 font-medium flex items-center gap-1.5">
-                  <Zap className="w-3.5 h-3.5 text-[#FF6700]" />
-                  投播流策略模式
-                </span>
-                <span className="text-[11px] text-zinc-500">
-                  当前: {miotConfig.castMode === 'lan_stream' ? '局域网原生流' : (miotConfig.castMode === 'xiaoai_directive' ? '小爱指令点播 (云推荐)' : '标准音频直投 (XiaoMusic协议)')}
-                </span>
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-xs">
-                {[
-                  { id: 'auto', label: '标准音频直投', desc: 'XiaoMusic 协议精准投播本曲' },
-                  { id: 'xiaoai_directive', label: '小爱指令点播 (云推荐)', desc: '公网/云服务器部署首选，100% 畅通' },
-                  { id: 'lan_stream', label: '局域网原生流', desc: '同路由器内网 IP 直连串流' },
-                ].map((m) => {
-                  const isSelected = (miotConfig.castMode || 'auto') === m.id;
-                  return (
-                    <button
-                      key={m.id}
-                      type="button"
-                      onClick={() => onUpdateConfig({ castMode: m.id as any })}
-                      className={`p-2 rounded-xl text-left border transition ${
-                        isSelected 
-                          ? 'bg-[#FF6700]/15 border-[#FF6700]/50 text-white shadow-[0_0_12px_rgba(255,103,0,0.15)]' 
-                          : 'bg-white/5 border-white/5 text-zinc-400 hover:text-zinc-200 hover:bg-white/10'
-                      }`}
-                    >
-                      <div className="font-semibold text-[11px] flex items-center justify-between">
-                        <span>{m.label}</span>
-                        {isSelected && <Check className="w-3 h-3 text-[#FF6700]" />}
-                      </div>
-                      <div className="text-[10px] text-zinc-500 truncate mt-0.5">{m.desc}</div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
             {/* Remote Controller Buttons */}
             <div className="flex flex-col items-center justify-center gap-4 py-6">
               <div className="flex items-center gap-6">
