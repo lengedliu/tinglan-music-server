@@ -3978,7 +3978,8 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
       requestMethod: 'POST /api/miot/cast',
       httpStatus: 400,
       errorCode: 'ERR_DUMMY_DEVICE',
-      responseTimeMs: 2
+      responseTimeMs: 2,
+      streamUrl: streamUrl || ''
     });
     if (castLogs.length > 50) castLogs.pop();
 
@@ -5205,7 +5206,7 @@ const streamAudioHandler = async (req: Request, res: Response) => {
         'Content-Range': `bytes ${start}-${end}/${fileSize}`,
         'Accept-Ranges': 'bytes',
         'Content-Length': chunksize,
-        'Content-Type': contentType,
+        'Content-Type': contentType
       };
       res.writeHead(206, head);
       file.pipe(res);

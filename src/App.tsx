@@ -440,7 +440,7 @@ export default function App() {
           );
         }
 
-        // Add local log
+        // Add local log with full stream URL and device details
         setCastLogs(prev => [
           {
             id: `log-${Date.now()}`,
@@ -448,10 +448,27 @@ export default function App() {
             type: 'cast',
             message: `已下发投播指令到【${dev.name}】`,
             detail: `曲目: ${song.title} | 串流源: ${data.streamUrl || streamUrl}`,
-            success: true
+            success: true,
+            streamUrl: data.streamUrl || streamUrl,
+            did: dev.did,
+            ip: dev.ip,
+            model: dev.model,
+            protocol: data.dlnaResult?.success ? 'DLNA LAN' : (data.localMiioResult?.success ? 'miIO LAN' : 'MIoT Cloud'),
+            httpStatus: 200,
+            responseTimeMs: data.responseTimeMs || 15
           },
           ...prev
         ]);
+
+        // Re-sync authoritative diagnostic logs from server
+        apiFetch('/api/miot/logs')
+          .then(res => res.ok ? res.json() : null)
+          .then(serverLogs => {
+            if (Array.isArray(serverLogs) && serverLogs.length > 0) {
+              setCastLogs(serverLogs);
+            }
+          })
+          .catch(() => {});
 
         // Actively monitor whether the speaker hardware connects and fetches the audio stream
         const castStartTime = Date.now();
@@ -564,7 +581,7 @@ export default function App() {
           'error'
         );
 
-        // Record real failure log
+        // Record real failure log with stream URL
         setCastLogs(prev => [
           {
             id: `log-${Date.now()}`,
@@ -572,10 +589,26 @@ export default function App() {
             type: 'cast',
             message: `投放失败【${dev.name}】`,
             detail: `${errorDesc} | 串流源: ${streamUrl}`,
-            success: false
+            success: false,
+            streamUrl: streamUrl,
+            did: dev.did,
+            ip: dev.ip,
+            model: dev.model,
+            protocol: 'MIoT / DLNA',
+            httpStatus: 502
           },
           ...prev
         ]);
+
+        // Sync latest logs from server
+        apiFetch('/api/miot/logs')
+          .then(res => res.ok ? res.json() : null)
+          .then(serverLogs => {
+            if (Array.isArray(serverLogs) && serverLogs.length > 0) {
+              setCastLogs(serverLogs);
+            }
+          })
+          .catch(() => {});
       });
   };
 

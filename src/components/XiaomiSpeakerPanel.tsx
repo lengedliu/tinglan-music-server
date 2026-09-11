@@ -4151,10 +4151,11 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
 
                       <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase ${
                         log.type === 'cast' ? 'bg-[#FF6700]/20 text-[#FF6700] border border-[#FF6700]/30' :
+                        (log.id.startsWith('log-stream') || log.message.includes('拉取音频流') || log.message.includes('请求音频流')) ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' :
                         log.type === 'sync' ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' :
                         'bg-zinc-800 text-zinc-300 border border-white/10'
                       }`}>
-                        {log.type === 'cast' ? '投播指令' : log.type === 'sync' ? '音频流拉取' : log.type}
+                        {log.type === 'cast' ? '投播指令' : (log.id.startsWith('log-stream') || log.message.includes('拉取音频流') || log.message.includes('请求音频流')) ? '音频拉流' : log.type === 'sync' ? '设备/账号同步' : log.type}
                       </span>
 
                       {log.protocol && (
@@ -4198,8 +4199,16 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                     </div>
                   </div>
 
+                  {/* Summary / Detail info */}
+                  {log.detail && (
+                    <div className="text-[11px] text-zinc-300 font-mono bg-black/40 px-3 py-1.5 rounded-xl border border-white/5 break-all mt-2.5 flex items-center gap-2">
+                      <span className="text-zinc-500 text-[10px] font-sans uppercase font-bold flex-shrink-0">详情:</span>
+                      <span className="text-zinc-300 truncate">{log.detail}</span>
+                    </div>
+                  )}
+
                   {/* Comprehensive Parameters Grid */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-3 text-xs font-mono">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-2 text-xs font-mono">
                     <div className="bg-zinc-900/60 p-2 rounded-xl border border-white/5">
                       <span className="text-[10px] text-zinc-500 block uppercase font-sans font-semibold">设备 DID</span>
                       <span className="text-zinc-200 truncate block">{log.did || '未知/全局'}</span>
@@ -4241,33 +4250,61 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                       </span>
                     </div>
 
-                    <div className="bg-zinc-900/60 p-2 rounded-xl border border-white/5 col-span-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] text-zinc-500 uppercase font-sans font-semibold">完整拉流 / 串流 URL</span>
-                        {log.streamUrl && (
-                          <button
-                            type="button"
-                            onClick={() => copyToClipboard(log.streamUrl!, `log-url-${log.id}`)}
-                            className="flex items-center gap-1 text-[10px] text-zinc-400 hover:text-white transition cursor-pointer"
-                          >
-                            {copiedKey === `log-url-${log.id}` ? (
-                              <>
-                                <Check className="w-3 h-3 text-emerald-400" />
-                                <span className="text-emerald-400">已复制</span>
-                              </>
-                            ) : (
-                              <>
-                                <Copy className="w-3 h-3" />
-                                <span>复制 URL</span>
-                              </>
-                            )}
-                          </button>
-                        )}
-                      </div>
-                      <span className="text-zinc-300 font-mono select-all block text-[10px] truncate mt-0.5" title={log.streamUrl}>
-                        {log.streamUrl || 'N/A'}
-                      </span>
+                    <div className="bg-zinc-900/60 p-2 rounded-xl border border-white/5">
+                      <span className="text-[10px] text-zinc-500 block uppercase font-sans font-semibold">协议模式</span>
+                      <span className="text-zinc-200 truncate block">{log.protocol || 'MIoT / DLNA'}</span>
                     </div>
+
+                    {/* Dedicated Full Width Stream URL Bar */}
+                    {(() => {
+                      const effectiveStreamUrl = log.streamUrl ||
+                        (log.detail?.match(/(?:串流源|拉流URL|http[s]?:\/\/)[：:]\s*(https?:\/\/[^\s|]+)/i)?.[1]) ||
+                        (log.detail?.match(/(https?:\/\/[^\s|]+)/)?.[1]);
+                      return (
+                        <div className="bg-zinc-900/90 p-2.5 sm:p-3 rounded-xl border border-white/10 col-span-2 sm:col-span-4 space-y-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] text-[#FF6700] uppercase font-sans font-bold flex items-center gap-1.5">
+                              <Radio className="w-3.5 h-3.5 text-[#FF6700]" />
+                              <span>下发给音箱的音频拉流 / 串流 URL (Stream URL)</span>
+                            </span>
+                            {effectiveStreamUrl && (
+                              <div className="flex items-center gap-2">
+                                <a
+                                  href={effectiveStreamUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 text-[10px] text-zinc-400 hover:text-emerald-400 transition"
+                                  title="在新标签页中打开试听此音频流"
+                                >
+                                  <ExternalLink className="w-3 h-3" />
+                                  <span>浏览器试听</span>
+                                </a>
+                                <button
+                                  type="button"
+                                  onClick={() => copyToClipboard(effectiveStreamUrl, `log-url-${log.id}`)}
+                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-[10px] text-zinc-300 hover:text-white transition cursor-pointer"
+                                >
+                                  {copiedKey === `log-url-${log.id}` ? (
+                                    <>
+                                      <Check className="w-3 h-3 text-emerald-400" />
+                                      <span className="text-emerald-400 font-semibold">已复制</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Copy className="w-3 h-3" />
+                                      <span>复制 URL</span>
+                                    </>
+                                  )}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                          <div className="bg-black/60 px-2.5 py-1.5 rounded-lg border border-white/5 font-mono text-[11px] text-emerald-300 break-all select-all flex items-center justify-between gap-2">
+                            <span>{effectiveStreamUrl || '未记录拉流地址 (N/A)'}</span>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* One-Glance Timeline Chain Sequence */}
