@@ -1289,6 +1289,73 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                 </div>
               ))}
             </div>
+            {/* Diagnostic Card for Stream Pull Failure or Network Isolation */}
+            {(() => {
+              const hasStreamFailed = commandState.stageHistory?.some(
+                s => s.stage === 'STREAM_CONNECTED' && s.success === false && !s.pending
+              );
+              if (hasStreamFailed && !commandState.error) {
+                return (
+                  <div className="mt-3 text-xs text-amber-200 bg-amber-500/10 border border-amber-500/25 p-3.5 rounded-xl font-medium space-y-2.5">
+                    <div className="flex items-start gap-2.5">
+                      <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                      <div className="flex-1 leading-relaxed">
+                        <div className="font-bold text-amber-300 text-sm flex items-center gap-1.5">
+                          <span>指令已成功下发，但音箱尚未拉取音频流</span>
+                        </div>
+                        <p className="mt-1 text-zinc-300 text-[11px] leading-relaxed">
+                          小米云端已接单确认，但物理音箱向当前串流地址 <span className="font-mono text-amber-300">{miotConfig.serverHost || '当前串流地址'}</span> 拉取音频时未建立连接。请检查局域网连通性或点击重新下发。
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-amber-500/20">
+                      <button
+                        type="button"
+                        onClick={onCastCurrentSong}
+                        className="px-3.5 py-1.5 rounded-lg bg-[#FF6700] hover:bg-[#ff7b1a] text-white text-xs font-bold shadow-md transition active:scale-95 flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>重新向音箱下发拉流</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onUpdateConfig({ castMode: 'cdn_direct' });
+                          setTimeout(() => {
+                            onCastCurrentSong();
+                          }, 150);
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-blue-600/80 hover:bg-blue-600 text-white text-xs font-semibold border border-blue-400/30 transition active:scale-95 flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Globe className="w-3.5 h-3.5" />
+                        <span>🌐 切换为【公网 CDN 直链】重试</span>
+                      </button>
+
+                      {onSwitchToBrowserAudio && (
+                        <button
+                          type="button"
+                          onClick={onSwitchToBrowserAudio}
+                          className="px-3 py-1.5 rounded-lg bg-emerald-900/40 hover:bg-emerald-800/60 text-emerald-200 text-xs font-medium border border-emerald-500/20 transition cursor-pointer flex items-center gap-1.5"
+                        >
+                          <span>🎧 切换为浏览器本地播放</span>
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => setActiveSubTab('settings')}
+                        className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-300 text-xs border border-white/5 transition cursor-pointer"
+                      >
+                        ⚙️ 修改串流地址配置
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+              return null;
+            })()}
+
             {commandState.error && (
               <div className="mt-3 text-xs text-rose-300 bg-rose-500/10 border border-rose-500/20 p-3 rounded-xl font-medium space-y-2">
                 <div className="flex items-start gap-2">
@@ -2691,13 +2758,13 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                   投播流策略模式
                 </span>
                 <span className="text-[11px] text-zinc-500">
-                  当前: {miotConfig.castMode === 'lan_stream' ? '局域网原生流' : (miotConfig.castMode === 'xiaoai_directive' ? '小爱指令点播 (云推荐)' : '标准音频直投 (XiaoMusic协议)')}
+                  当前: {miotConfig.castMode === 'lan_stream' ? '局域网原生流' : (miotConfig.castMode === 'cdn_direct' ? '公网 CDN 直链' : '标准音频直投 (XiaoMusic协议)')}
                 </span>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-xs">
                 {[
                   { id: 'auto', label: '标准音频直投', desc: 'XiaoMusic 协议精准投播本曲' },
-                  { id: 'xiaoai_directive', label: '小爱指令点播 (云推荐)', desc: '公网/云服务器部署首选，100% 畅通' },
+                  { id: 'cdn_direct', label: '公网 CDN 直链', desc: '公网高速音频流即投即响' },
                   { id: 'lan_stream', label: '局域网原生流', desc: '同路由器内网 IP 直连串流' },
                 ].map((m) => {
                   const isSelected = (miotConfig.castMode || 'auto') === m.id;
