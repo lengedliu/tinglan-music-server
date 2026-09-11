@@ -379,7 +379,8 @@ export default function App() {
       stageHistory: initialStages
     });
 
-    const streamUrl = `${miotConfig.serverHost}/api/stream/${song.id}`;
+    const cleanId = song.id.replace(/\.(mp3|flac|wav|m4a|aac|ogg|opus|ape)$/i, '');
+    const streamUrl = `${miotConfig.serverHost}/api/stream/${encodeURIComponent(cleanId)}.mp3`;
 
     // 15-second timeout controller to detect un-reachable device
     const controller = new AbortController();

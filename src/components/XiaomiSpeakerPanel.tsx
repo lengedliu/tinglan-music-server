@@ -2633,15 +2633,14 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                   投播流策略模式
                 </span>
                 <span className="text-[11px] text-zinc-500">
-                  当前: {miotConfig.castMode === 'cdn_direct' ? '公网高保真直链 (推荐)' : (miotConfig.castMode === 'lan_stream' ? '局域网串流' : (miotConfig.castMode === 'xiaoai_directive' ? '小爱指令点播' : '智能自适应'))}
+                  当前: {miotConfig.castMode === 'lan_stream' ? '局域网原生流' : (miotConfig.castMode === 'xiaoai_directive' ? '小爱指令点播' : '标准音频直投 (XiaoMusic协议)')}
                 </span>
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-xs">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-xs">
                 {[
-                  { id: 'auto', label: '智能自适应', desc: '根据网络环境自动决策' },
-                  { id: 'cdn_direct', label: '公网 CDN 直链', desc: '云端容器/异地推荐' },
-                  { id: 'lan_stream', label: '局域网串流', desc: '同路由器本地播放' },
-                  { id: 'xiaoai_directive', label: '小爱指令点播', desc: '小爱官方媒体库' },
+                  { id: 'auto', label: '标准音频直投', desc: 'XiaoMusic 协议精准投播本曲' },
+                  { id: 'lan_stream', label: '局域网原生流', desc: '同路由器内网 IP 直连串流' },
+                  { id: 'xiaoai_directive', label: '小爱指令点播', desc: '小爱官方曲库搜索点播' },
                 ].map((m) => {
                   const isSelected = (miotConfig.castMode || 'auto') === m.id;
                   return (
