@@ -516,9 +516,15 @@ export default function App() {
       .catch((err: any) => {
         clearTimeout(timeoutTimer);
         const isTimeout = err.name === 'AbortError';
-        const errorDesc = isTimeout
-          ? '向音箱下发投播指令超时（8秒未响应），设备可能未联网或局域网不可达'
+        let errorDesc = isTimeout
+          ? '向音箱下发投播指令超时，设备未响应或网络不可达'
           : (err.message || '音箱拒绝或未响应投播请求');
+
+        if (!miotConfig.isLoggedIn && (errorDesc.includes('超时') || errorDesc.includes('不可达') || errorDesc.includes('拒绝') || isTimeout)) {
+          if (!errorDesc.includes('米家账号') && !errorDesc.includes('扫码登录')) {
+            errorDesc += '（提示：当前未登录小米账号。若音箱不在本机相同局域网，请前往【智能音箱】->【账号与服务配置】扫码登录米家账号以开启云端推流）';
+          }
+        }
 
         const errTime = new Date().toLocaleTimeString();
         const failedStages = [

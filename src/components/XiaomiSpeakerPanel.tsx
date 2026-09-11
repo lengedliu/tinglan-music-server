@@ -1284,24 +1284,39 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                       : commandState.error}
                   </div>
                 </div>
-                {(commandState.error.includes('401') || commandState.error.includes('令牌') || commandState.error.includes('Unauthorized')) && (
-                  <div className="flex flex-wrap gap-2 pt-1 border-t border-rose-500/15">
+                <div className="flex flex-wrap gap-2 pt-1.5 border-t border-rose-500/15">
+                  {!miotConfig.isLoggedIn ? (
                     <button
                       type="button"
-                      onClick={() => setActiveSubTab('account')}
-                      className="px-3 py-1 rounded-lg bg-[#FF6700]/20 hover:bg-[#FF6700]/30 text-[#FF6700] text-[11px] font-semibold border border-[#FF6700]/30 transition"
+                      onClick={() => {
+                        setActiveSubTab('settings');
+                        setBindMode('qrcode');
+                      }}
+                      className="px-3.5 py-1.5 rounded-lg bg-[#FF6700] hover:bg-[#ff7b1a] text-white text-xs font-bold shadow-sm transition active:scale-95 flex items-center gap-1.5 cursor-pointer"
                     >
-                      ➔ 前往【账号管理】重新登录
+                      <QrCode className="w-3.5 h-3.5" />
+                      <span>➔ 立即扫码登录米家账号（开启云端投播）</span>
                     </button>
+                  ) : (
                     <button
                       type="button"
-                      onClick={() => setActiveSubTab('protocol')}
-                      className="px-3 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[11px] font-semibold border border-white/10 transition"
+                      onClick={() => {
+                        setActiveSubTab('settings');
+                        setBindMode('qrcode');
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-[#FF6700]/20 hover:bg-[#FF6700]/30 text-[#FF6700] text-xs font-semibold border border-[#FF6700]/30 transition cursor-pointer"
                     >
-                      ➔ 切换为【局域网直连】
+                      ➔ 重新扫码或刷新小米云端授权
                     </button>
-                  </div>
-                )}
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setActiveSubTab('control')}
+                    className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold border border-white/10 transition cursor-pointer"
+                  >
+                    ➔ 检查音箱控制与属性
+                  </button>
+                </div>
               </div>
             )}
           </div>
