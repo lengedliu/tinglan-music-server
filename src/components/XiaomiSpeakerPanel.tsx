@@ -3374,11 +3374,31 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                   </span>
                 </div>
                 {streamStatus?.lastSpeakerStream ? (
-                  <div className="text-[11px] text-zinc-400 font-mono bg-black/40 p-2 rounded-lg border border-white/5 flex flex-wrap items-center gap-x-4 gap-y-1">
-                    <span>最近拉流时间: <strong className="text-zinc-200">{streamStatus.lastSpeakerStream.timestamp}</strong></span>
-                    <span>音箱 IP: <strong className="text-zinc-200">{streamStatus.lastSpeakerStream.clientIp}</strong></span>
-                    <span>歌曲: <strong className="text-zinc-200">{streamStatus.lastSpeakerStream.songId}</strong></span>
-                    <span>状态码: <strong className="text-emerald-400">{streamStatus.lastSpeakerStream.status}</strong></span>
+                  <div className="space-y-2">
+                    <div className="text-[11px] text-zinc-400 font-mono bg-black/40 p-2 rounded-lg border border-white/5 flex flex-wrap items-center gap-x-4 gap-y-1">
+                      <span>最近拉流时间: <strong className="text-zinc-200">{streamStatus.lastSpeakerStream.timestamp}</strong></span>
+                      <span>音箱 IP: <strong className="text-zinc-200">{streamStatus.lastSpeakerStream.clientIp}</strong></span>
+                      <span>歌曲: <strong className="text-zinc-200">{streamStatus.lastSpeakerStream.songId}</strong></span>
+                      <span>状态码: <strong className="text-emerald-400">{streamStatus.lastSpeakerStream.status}</strong></span>
+                    </div>
+                    {streamStatus.lastSpeakerStream.streamUrl && (
+                      <div className="text-[11px] font-mono bg-black/40 p-2 rounded-lg border border-white/5 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                          <span className="text-zinc-500 text-[10px] uppercase font-sans font-semibold flex-shrink-0">拉流 URL:</span>
+                          <span className="text-zinc-200 truncate select-all" title={streamStatus.lastSpeakerStream.streamUrl}>
+                            {streamStatus.lastSpeakerStream.streamUrl}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => copyToClipboard(streamStatus.lastSpeakerStream.streamUrl, 'last-stream-url')}
+                          className="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white text-[10px] cursor-pointer flex-shrink-0 transition flex items-center gap-1"
+                        >
+                          {copiedKey === 'last-stream-url' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                          <span>{copiedKey === 'last-stream-url' ? '已复制' : '复制 URL'}</span>
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <p className="text-[11px] text-zinc-400 leading-relaxed">
@@ -4212,10 +4232,31 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                       </span>
                     </div>
 
-                    <div className="bg-zinc-900/60 p-2 rounded-xl border border-white/5">
-                      <span className="text-[10px] text-zinc-500 block uppercase font-sans font-semibold">Stream URL</span>
-                      <span className="text-zinc-300 truncate block text-[10px]" title={log.streamUrl}>
-                        {log.streamUrl ? log.streamUrl.replace(/^https?:\/\/[^\/]+/, '') : 'N/A'}
+                    <div className="bg-zinc-900/60 p-2 rounded-xl border border-white/5 col-span-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] text-zinc-500 uppercase font-sans font-semibold">完整拉流 / 串流 URL</span>
+                        {log.streamUrl && (
+                          <button
+                            type="button"
+                            onClick={() => copyToClipboard(log.streamUrl!, `log-url-${log.id}`)}
+                            className="flex items-center gap-1 text-[10px] text-zinc-400 hover:text-white transition cursor-pointer"
+                          >
+                            {copiedKey === `log-url-${log.id}` ? (
+                              <>
+                                <Check className="w-3 h-3 text-emerald-400" />
+                                <span className="text-emerald-400">已复制</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3 h-3" />
+                                <span>复制 URL</span>
+                              </>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                      <span className="text-zinc-300 font-mono select-all block text-[10px] truncate mt-0.5" title={log.streamUrl}>
+                        {log.streamUrl || 'N/A'}
                       </span>
                     </div>
                   </div>

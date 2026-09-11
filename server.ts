@@ -1460,6 +1460,8 @@ interface StreamEventInfo {
   status: number;
   format: string;
   bytesSent?: number;
+  streamUrl?: string;
+  path?: string;
 }
 let recentStreamEvents: StreamEventInfo[] = [];
 
@@ -5148,6 +5150,9 @@ const streamAudioHandler = async (req: Request, res: Response) => {
     const clientIp = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1').replace('::ffff:', '');
     const isPartial = Boolean(range);
     const nowStr = new Date().toLocaleTimeString();
+    const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
+    const host = (req.headers['x-forwarded-host'] as string) || req.headers.host || req.get('host') || `localhost:${PORT}`;
+    const fullRequestedUrl = `${proto}://${host}${req.originalUrl || req.url}`;
 
     const matchedDev = xiaomiDevices.find(d => d.ip && clientIp.includes(d.ip)) || 
       (miotConfig.activeDeviceId ? xiaomiDevices.find(d => d.did === miotConfig.activeDeviceId) : null);
@@ -5168,7 +5173,9 @@ const streamAudioHandler = async (req: Request, res: Response) => {
       userAgent,
       status: isPartial ? 206 : 200,
       format: matchedExt,
-      bytesSent: fileSize
+      bytesSent: fileSize,
+      streamUrl: fullRequestedUrl,
+      path: req.originalUrl || req.url
     });
     if (recentStreamEvents.length > 50) recentStreamEvents.pop();
 
@@ -5178,16 +5185,16 @@ const streamAudioHandler = async (req: Request, res: Response) => {
       timestamp: nowStr,
       type: 'sync' as const,
       message: isBrowserClient ? `网页端试听拉取音频流: ${songId}` : `音箱请求音频流: ${songId}`,
-      detail: `${isPartial ? 'HTTP 206 Partial Content (Range)' : 'HTTP 200 OK (Full Stream)'} | 来自: ${clientIp} (${isBrowserClient ? '浏览器客户端' : '音频终端设备'})`,
+      detail: `${isPartial ? 'HTTP 206 Partial Content (Range)' : 'HTTP 200 OK (Full Stream)'} | 拉流URL: ${fullRequestedUrl} | 来自: ${clientIp} (${isBrowserClient ? '浏览器客户端' : '音频终端设备'})`,
       success: true,
       ip: clientIp,
       isBrowser: isBrowserClient,
       did: resolvedDid,
       model: resolvedModel,
       protocol: 'HTTP Stream',
-      requestMethod: `GET /api/stream/${songId}`,
+      requestMethod: `GET ${req.originalUrl || req.url}`,
       httpStatus: isPartial ? 206 : 200,
-      streamUrl: `/api/stream/${songId}`,
+      streamUrl: fullRequestedUrl,
       responseTimeMs: 8,
       steps: [
         {
@@ -5196,6 +5203,13 @@ const streamAudioHandler = async (req: Request, res: Response) => {
           status: 'OK',
           statusCode: isPartial ? 206 : 200,
           message: isPartial ? `HTTP 206 Partial Content (${range})` : 'HTTP 200 Full Content'
+        },
+        {
+          timestamp: nowStr,
+          step: 'STREAM_URL',
+          status: 'OK',
+          statusCode: 200,
+          message: `完整拉流URL: ${fullRequestedUrl}`
         },
         {
           timestamp: nowStr,
