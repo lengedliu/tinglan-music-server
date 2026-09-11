@@ -564,8 +564,13 @@ export default function App() {
           return d;
         }));
 
+        // XiaoMusic smart fallback: ensure local browser audio continues playing seamlessly
+        if (audioRef.current && audioRef.current.paused) {
+          audioRef.current.play().catch(() => {});
+        }
+
         showToast(
-          `投放到【${dev.name}】失败`,
+          `投放到【${dev.name}】未完成`,
           errorDesc,
           'error'
         );
@@ -583,6 +588,22 @@ export default function App() {
           ...prev
         ]);
       });
+  };
+
+  const handleDismissCommandState = () => {
+    setCommandState(null);
+  };
+
+  const handleSwitchToBrowserAudio = () => {
+    setIsCasting(false);
+    setCommandState(null);
+    if (miotConfig.autoCast) {
+      handleUpdateConfig({ autoCast: false });
+    }
+    if (audioRef.current && audioRef.current.paused) {
+      audioRef.current.play().catch(() => {});
+    }
+    showToast('已切换至浏览器播放', '已退出音箱投播模式，恢复为当前设备/浏览器本地音频输出', 'info');
   };
 
   const handleToggleCast = () => {
@@ -1133,6 +1154,8 @@ export default function App() {
               onDevicesUpdated={(synced) => setDevices(synced)}
               onPingDevice={handlePingDevice}
               onOpenSecurityModal={() => setActiveTab('settings')}
+              onDismissCommandState={handleDismissCommandState}
+              onSwitchToBrowserAudio={handleSwitchToBrowserAudio}
             />
           )}
 

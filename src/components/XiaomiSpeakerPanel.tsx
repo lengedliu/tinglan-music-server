@@ -82,6 +82,8 @@ interface XiaomiSpeakerPanelProps {
   onDevicesUpdated?: (devices: XiaomiDevice[]) => void;
   onPingDevice?: (ip: string, port?: number) => Promise<{ reachable: boolean; latency: number; message: string }>;
   onOpenSecurityModal?: () => void;
+  onDismissCommandState?: () => void;
+  onSwitchToBrowserAudio?: () => void;
 }
 
 export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
@@ -106,7 +108,9 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
   onResetDevices,
   onDevicesUpdated,
   onPingDevice,
-  onOpenSecurityModal
+  onOpenSecurityModal,
+  onDismissCommandState,
+  onSwitchToBrowserAudio,
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<'devices' | 'control' | 'tts' | 'rpc' | 'settings' | 'logs'>('devices');
   const [ttsInput, setTtsInput] = useState('');
@@ -1240,11 +1244,23 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                   投播指令全生命周期追踪 ({commandState.status === 'pending' ? '下发推进中...' : commandState.status === 'success' ? '✓ 全链路通畅' : '✕ 下发失败'})
                 </span>
               </div>
-              {commandState.timestamp && (
-                <span className="text-[11px] font-mono text-zinc-400">
-                  {new Date(commandState.timestamp).toLocaleTimeString()}
-                </span>
-              )}
+              <div className="flex items-center gap-3">
+                {commandState.timestamp && (
+                  <span className="text-[11px] font-mono text-zinc-400">
+                    {new Date(commandState.timestamp).toLocaleTimeString()}
+                  </span>
+                )}
+                {onDismissCommandState && (
+                  <button
+                    type="button"
+                    onClick={onDismissCommandState}
+                    title="关闭状态追踪提示"
+                    className="p-1 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-white/10 transition cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Lifecycle Stages Grid */}
@@ -1309,6 +1325,24 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                       ➔ 重新扫码或刷新小米云端授权
                     </button>
                   )}
+                  {onSwitchToBrowserAudio && (
+                    <button
+                      type="button"
+                      onClick={onSwitchToBrowserAudio}
+                      className="px-3 py-1.5 rounded-lg bg-emerald-800/80 hover:bg-emerald-700 text-emerald-100 text-xs font-semibold border border-emerald-500/30 transition cursor-pointer flex items-center gap-1.5"
+                    >
+                      <span>🎧 切换为浏览器本地播放</span>
+                    </button>
+                  )}
+                  {miotConfig.autoCast && (
+                    <button
+                      type="button"
+                      onClick={() => onUpdateConfig({ autoCast: false })}
+                      className="px-3 py-1.5 rounded-lg bg-amber-900/40 hover:bg-amber-800/60 text-amber-200 text-xs font-medium border border-amber-500/30 transition cursor-pointer"
+                    >
+                      关闭自动投播
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setActiveSubTab('control')}
@@ -1316,6 +1350,15 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                   >
                     ➔ 检查音箱控制与属性
                   </button>
+                  {onDismissCommandState && (
+                    <button
+                      type="button"
+                      onClick={onDismissCommandState}
+                      className="px-2.5 py-1.5 rounded-lg bg-zinc-900/80 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 text-xs border border-white/5 transition cursor-pointer"
+                    >
+                      ✕ 忽略
+                    </button>
+                  )}
                 </div>
               </div>
             )}
