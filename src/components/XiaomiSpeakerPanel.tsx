@@ -2691,14 +2691,14 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                   投播流策略模式
                 </span>
                 <span className="text-[11px] text-zinc-500">
-                  当前: {miotConfig.castMode === 'lan_stream' ? '局域网原生流' : (miotConfig.castMode === 'xiaoai_directive' ? '小爱指令点播' : '标准音频直投 (XiaoMusic协议)')}
+                  当前: {miotConfig.castMode === 'lan_stream' ? '局域网原生流' : (miotConfig.castMode === 'xiaoai_directive' ? '小爱指令点播 (云推荐)' : '标准音频直投 (XiaoMusic协议)')}
                 </span>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-xs">
                 {[
                   { id: 'auto', label: '标准音频直投', desc: 'XiaoMusic 协议精准投播本曲' },
+                  { id: 'xiaoai_directive', label: '小爱指令点播 (云推荐)', desc: '公网/云服务器部署首选，100% 畅通' },
                   { id: 'lan_stream', label: '局域网原生流', desc: '同路由器内网 IP 直连串流' },
-                  { id: 'xiaoai_directive', label: '小爱指令点播', desc: '小爱官方曲库搜索点播' },
                 ].map((m) => {
                   const isSelected = (miotConfig.castMode || 'auto') === m.id;
                   return (
