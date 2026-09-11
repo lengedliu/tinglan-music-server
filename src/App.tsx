@@ -87,7 +87,15 @@ export default function App() {
   const [isScanning, setIsScanning] = useState(false);
   const [toastMessage, setToastMessage] = useState<{ title: string; desc?: string; type: 'success' | 'info' | 'error' } | null>(null);
 
-  // Keep command status banner and failure prompt persistent until manual dismissal
+  // Auto-dismiss command status banner after completion
+  useEffect(() => {
+    if (commandState.status === 'success' || commandState.status === 'failed' || commandState.status === 'timeout') {
+      const timer = setTimeout(() => {
+        setCommandState({ status: 'idle' });
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [commandState.status, commandState.timestamp]);
 
   const fetchSongsFromBackend = () => {
     apiFetch('/api/songs')
@@ -107,6 +115,9 @@ export default function App() {
 
   const showToast = (title: string, desc?: string, type: 'success' | 'info' | 'error' = 'success') => {
     setToastMessage({ title, desc, type });
+    setTimeout(() => {
+      setToastMessage(null);
+    }, 4000);
   };
 
   const loadAllAppData = () => {
@@ -1261,8 +1272,7 @@ export default function App() {
             </div>
             <button 
               onClick={() => setToastMessage(null)}
-              className="text-zinc-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition cursor-pointer -mr-1 -mt-1"
-              title="关闭提示"
+              className="text-zinc-400 hover:text-zinc-200 p-0.5"
             >
               <X className="w-4 h-4" />
             </button>

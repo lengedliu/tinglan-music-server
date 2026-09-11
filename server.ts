@@ -460,21 +460,8 @@ function authMiddleware(req: Request, res: Response, next: any) {
   // Xiaomi smart speakers and standard HTML5 <audio> / <img> pull media directly via HTTP GET without custom headers
   if (
     fullPath.startsWith('/api/stream') ||
-    fullPath.startsWith('/stream') ||
-    fullPath.startsWith('/music') ||
     fullPath.startsWith('/api/tts') ||
-    fullPath.includes('/stream') ||
-    fullPath.includes('/cover') ||
-    fullPath.endsWith('.mp3') ||
-    fullPath.endsWith('.flac') ||
-    fullPath.endsWith('.wav') ||
-    fullPath.endsWith('.m4a') ||
-    fullPath.endsWith('.aac') ||
-    fullPath.endsWith('.ogg') ||
-    relative.startsWith('/stream') ||
-    relative.startsWith('/music') ||
-    relative.includes('/stream') ||
-    relative.endsWith('.mp3')
+    (fullPath.startsWith('/api/songs/') && (fullPath.endsWith('/stream') || fullPath.endsWith('/cover')))
   ) {
     return next();
   }
@@ -1426,7 +1413,7 @@ const DEFAULT_CONFIG = {
   userId: '',
   serviceToken: '',
   bindMode: 'account',
-  castMode: 'auto' // auto | cdn_direct | lan_stream
+  castMode: 'auto' // auto | cdn_direct | xiaoai_directive | lan_stream
 };
 
 // In-memory state synchronized with JSON files
@@ -4001,7 +3988,7 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
   }
 
   // 1. Resolve absolute stream URL & Cast Mode
-  const selectedCastMode = (req.body.castMode || miotConfig.castMode || 'auto') as 'auto' | 'cdn_direct' | 'lan_stream';
+  const selectedCastMode = (req.body.castMode || miotConfig.castMode || 'auto') as 'auto' | 'cdn_direct' | 'xiaoai_directive' | 'lan_stream';
   const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'https';
   const host = (req.headers['x-forwarded-host'] as string) || req.headers.host || req.get('host');
   const reqOrigin = `${proto}://${host}`;
@@ -4051,18 +4038,7 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
 
   // Smart Stream URL selection: always point to the actual audio endpoint for the requested song
   let resolvedStreamUrl = '';
-  if (selectedCastMode === 'cdn_direct') {
-    // High-speed public CDN streams guaranteed accessible from any external network
-    const cdnMap: Record<string, string> = {
-      'song-1': 'https://music.163.com/song/media/outer/url?id=186016.mp3',
-      'song-2': 'https://music.163.com/song/media/outer/url?id=436514312.mp3',
-      'song-3': 'https://music.163.com/song/media/outer/url?id=1330348068.mp3',
-      'song-4': 'https://music.163.com/song/media/outer/url?id=1411358329.mp3',
-      'song-5': 'https://music.163.com/song/media/outer/url?id=1842025914.mp3',
-      'song-6': 'https://music.163.com/song/media/outer/url?id=1859245776.mp3'
-    };
-    resolvedStreamUrl = cdnMap[cleanSongId] || `https://music.163.com/song/media/outer/url?id=186016.mp3`;
-  } else if (streamUrl && streamUrl.startsWith('http') && !streamUrl.includes('localhost') && !streamUrl.includes('127.0.0.1')) {
+  if (streamUrl && streamUrl.startsWith('http') && !streamUrl.includes('localhost') && !streamUrl.includes('127.0.0.1')) {
     resolvedStreamUrl = streamUrl;
   } else {
     resolvedStreamUrl = `${baseHost}/api/stream/${encodeURIComponent(cleanSongId)}.mp3`;
@@ -4075,7 +4051,7 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
   let localMiioResult: any = null;
 
   // 2. Track 1: DLNA / UPnP Local Streaming (Standard for XiaoAi Pro / Sound Pro / LAN renderers, zero credentials needed)
-  if (targetDevice.ip) {
+  if (targetDevice.ip && selectedCastMode !== 'xiaoai_directive') {
     try {
       dlnaResult = await dlnaEngine.castSong(targetDevice.ip, resolvedStreamUrl, {
         title: songTitle || foundSong?.title,
@@ -4190,6 +4166,27 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
         }
       }
 
+      // Native XiaoAi Directive Mode (if user explicitly requested xiaoai_directive mode)
+      if (selectedCastMode === 'xiaoai_directive' && (miotConfig as any).ssecurity && miotConfig.userId) {
+        try {
+          const directiveText = `播放${songTitle || ''} ${songArtist || ''}`.trim();
+          const rpcRes = await miotRpcEngine.executeAction(
+            targetDevice,
+            7,
+            4,
+            [directiveText, false],
+            {
+              userId: String(miotConfig.userId),
+              serviceToken: (miotConfig as any).xiaomiioServiceToken || activeMicoToken,
+              ssecurity: (miotConfig as any).ssecurity
+            }
+          );
+          if (rpcRes.code === 0) {
+            cloudResult = { success: true, data: rpcRes.result, method: 'xiaoai_directive_siid7' };
+          }
+        } catch {}
+      }
+
       // Priority 1: XiaoMusic / MiService Gold Standard: player_play_url with type 1
       // Directly streams the custom URL to the speaker and halts old playback cleanly
       if (!cloudResult?.success) {
@@ -4239,47 +4236,6 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
           { music: resolvedStreamUrl, startOffset: 0, media: 'app_ios' },
           targetDevice.did
         );
-      }
-
-      // Track 4: Official MIoT Spec Cloud Action (api.io.mi.com)
-      // Highly compatible when logged in via Mi Home (米家 App) or when Mina Cloud returns 401
-      const activeIoToken = (miotConfig as any).xiaomiioServiceToken || miotConfig.serviceToken;
-      const activeSsec = (miotConfig as any).ssecurity;
-      if (!cloudResult?.success && miotConfig.isLoggedIn && miotConfig.userId && (activeIoToken || activeSsec)) {
-        const miotAuth = {
-          userId: String(miotConfig.userId),
-          serviceToken: activeIoToken,
-          ssecurity: activeSsec
-        };
-
-        // 1. Play-Control service (siid=3, aiid=1 play-url: [resolvedStreamUrl])
-        try {
-          const rpc1 = await miotRpcEngine.executeAction(targetDevice, 3, 1, [resolvedStreamUrl], miotAuth);
-          if (rpc1.code === 0) {
-            cloudResult = { success: true, data: rpc1.result, method: 'cloud_miot_siid3_aiid1' };
-          }
-        } catch {}
-
-        // 2. Intelligent Speaker service (siid=7, aiid=3: play-url)
-        if (!cloudResult?.success) {
-          try {
-            const rpc2 = await miotRpcEngine.executeAction(targetDevice, 7, 3, [resolvedStreamUrl], miotAuth);
-            if (rpc2.code === 0) {
-              cloudResult = { success: true, data: rpc2.result, method: 'cloud_miot_siid7_aiid3' };
-            }
-          } catch {}
-        }
-
-        // 3. Intelligent Speaker directive (siid=7, aiid=4: text-directive [播放 歌名, false])
-        if (!cloudResult?.success) {
-          try {
-            const songQuery = songArtist ? `${songArtist} 的 ${songTitle}` : (songTitle || '音乐');
-            const rpc3 = await miotRpcEngine.executeAction(targetDevice, 7, 4, [`播放 ${songQuery}`, false], miotAuth);
-            if (rpc3.code === 0) {
-              cloudResult = { success: true, data: rpc3.result, method: 'cloud_miot_siid7_aiid4' };
-            }
-          } catch {}
-        }
       }
     } catch (e: any) {
       cloudResult = { success: false, error: e.message };
@@ -4961,10 +4917,10 @@ app.get('/api/miot/logs', (req: Request, res: Response) => {
 
 // ---------------- AUDIO STREAMING (HTTP 206 Partial Content Range & DLNA/Mina Support) ----------------
 const streamAudioHandler = async (req: Request, res: Response) => {
-  const rawId = req.params.songId || (req.query.id as string) || (req.query.songId as string) || (req.query.path as string) || '';
-  const decodedSongId = decodeURIComponent(rawId || '');
+  const { songId } = req.params;
+  const decodedSongId = decodeURIComponent(songId || '');
   // Strip any artificial format extension (.mp3, .wav, .flac, .m4a, etc.)
-  const cleanSongId = (rawId || '').replace(/\.(wav|mp3|flac|m4a|ogg|aac|opus|ape|dsf|dff)$/i, '');
+  const cleanSongId = (songId || '').replace(/\.(wav|mp3|flac|m4a|ogg|aac|opus|ape|dsf|dff)$/i, '');
   const decodedCleanSongId = (decodedSongId || '').replace(/\.(wav|mp3|flac|m4a|ogg|aac|opus|ape|dsf|dff)$/i, '');
 
   // Set permissive CORS headers for local speakers and browsers
@@ -4978,7 +4934,7 @@ const streamAudioHandler = async (req: Request, res: Response) => {
 
   // Find song in library metadata if available
   const foundSong = storedSongs.find(s => 
-    s.id === rawId || 
+    s.id === songId || 
     s.id === decodedSongId || 
     s.id === cleanSongId || 
     s.id === decodedCleanSongId
@@ -5217,15 +5173,6 @@ const streamAudioHandler = async (req: Request, res: Response) => {
 
 app.get('/api/stream/:songId', streamAudioHandler);
 app.head('/api/stream/:songId', streamAudioHandler);
-app.get('/api/stream', streamAudioHandler);
-app.head('/api/stream', streamAudioHandler);
-app.get('/stream/:songId', streamAudioHandler);
-app.head('/stream/:songId', streamAudioHandler);
-app.get('/api/songs/:songId/stream', streamAudioHandler);
-app.head('/api/songs/:songId/stream', streamAudioHandler);
-app.get('/api/songs/:songId/stream.mp3', streamAudioHandler);
-app.get('/api/songs/:songId/audio.mp3', streamAudioHandler);
-app.get('/music/:songId', streamAudioHandler);
 
 // ---------------- SUBSONIC & OPENSUBSONIC REST API (Songloft Standard) ----------------
 const subsonicResponse = (req: Request, res: Response, dataKey: string, dataValue: any) => {

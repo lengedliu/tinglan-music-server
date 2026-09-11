@@ -403,8 +403,7 @@ export class MiotRpcEngine {
 
     // 2. Fallback to Cloud MIoT
     if (cloudAuth?.userId && cloudAuth?.serviceToken) {
-      const targetDid = (device as any).cloudDid || (device as any).deviceID || device.did;
-      return this.executeCloudMiot('miotspec/prop/get', { params: [{ did: targetDid, siid, piid }] }, cloudAuth.userId, cloudAuth.serviceToken, cloudAuth.ssecurity);
+      return this.executeCloudMiot('miotspec/prop/get', { params: [{ did: device.did, siid, piid }] }, cloudAuth.userId, cloudAuth.serviceToken, cloudAuth.ssecurity);
     }
 
     return { code: -1, error: '设备未配置局域网 Token 且未登录云端账号' };
@@ -429,8 +428,7 @@ export class MiotRpcEngine {
 
     // 2. Fallback to Cloud MIoT
     if (cloudAuth?.userId && cloudAuth?.serviceToken) {
-      const targetDid = (device as any).cloudDid || (device as any).deviceID || device.did;
-      return this.executeCloudMiot('miotspec/prop/set', { params: [{ did: targetDid, siid, piid, value }] }, cloudAuth.userId, cloudAuth.serviceToken, cloudAuth.ssecurity);
+      return this.executeCloudMiot('miotspec/prop/set', { params: [{ did: device.did, siid, piid, value }] }, cloudAuth.userId, cloudAuth.serviceToken, cloudAuth.ssecurity);
     }
 
     return { code: -1, error: '设备未配置局域网 Token 且未登录云端账号' };
@@ -440,7 +438,7 @@ export class MiotRpcEngine {
    * High-Level: Execute MIoT Action
    */
   public async executeAction(
-    device: { ip?: string; token?: string; did: string; cloudDid?: string; deviceID?: string },
+    device: { ip?: string; token?: string; did: string },
     siid: number,
     aiid: number,
     inParams: any[] = [],
@@ -455,8 +453,7 @@ export class MiotRpcEngine {
 
     // 2. Fallback to Cloud MIoT
     if (cloudAuth?.userId && cloudAuth?.serviceToken) {
-      const targetDid = (device as any).cloudDid || (device as any).deviceID || device.did;
-      return this.executeCloudMiot('miotspec/action', { params: { did: targetDid, siid, aiid, in: inParams } }, cloudAuth.userId, cloudAuth.serviceToken, cloudAuth.ssecurity);
+      return this.executeCloudMiot('miotspec/action', { params: { did: device.did, siid, aiid, in: inParams } }, cloudAuth.userId, cloudAuth.serviceToken, cloudAuth.ssecurity);
     }
 
     return { code: -1, error: '设备未配置局域网 Token 且未登录云端账号' };

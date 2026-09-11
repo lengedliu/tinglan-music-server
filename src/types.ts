@@ -94,7 +94,7 @@ export interface MiotConfig {
   serviceToken?: string;
   hasServiceToken?: boolean;
   bindMode?: 'account' | 'token' | 'cookie';
-  castMode?: 'auto' | 'cdn_direct' | 'lan_stream';
+  castMode?: 'auto' | 'cdn_direct' | 'xiaoai_directive' | 'lan_stream';
 }
 
 export interface DiagnosticStepLog {
