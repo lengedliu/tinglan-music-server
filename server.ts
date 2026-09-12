@@ -1660,12 +1660,24 @@ function sanitizeDevice(dev: any) {
     deviceState = 'online';
   }
 
+  const isGenuineUuid = (id?: string) => {
+    if (!id) return false;
+    const s = String(id).trim();
+    if (s.startsWith('did-') || s.startsWith('manual_')) return false;
+    if (/^\d{6,16}$/.test(s)) return false; // Pure digits is a DID, not a genuine Mina UUID
+    return true;
+  };
+
+  const rawDevId = dev.deviceID || dev.uuid || dev.hardwareDeviceId;
+  const genuineDeviceID = isGenuineUuid(rawDevId) ? String(rawDevId) : undefined;
+  const genuineHwId = isGenuineUuid(dev.hardwareDeviceId) ? String(dev.hardwareDeviceId) : genuineDeviceID;
+
   return {
     did: String(dev.did),
-    deviceID: dev.deviceID || dev.uuid || dev.hardwareDeviceId || undefined,
-    uuid: dev.uuid || dev.deviceID || dev.hardwareDeviceId || undefined,
-    hardwareDeviceId: dev.hardwareDeviceId || dev.deviceID || undefined,
-    cloudDid: dev.cloudDid || undefined,
+    deviceID: genuineDeviceID,
+    uuid: genuineDeviceID,
+    hardwareDeviceId: genuineHwId,
+    cloudDid: (dev.cloudDid && String(dev.cloudDid) !== genuineDeviceID) ? String(dev.cloudDid) : undefined,
     homeId: dev.homeId || dev.home_id || undefined,
     roomId: dev.roomId || dev.room_id || undefined,
     model: dev.model || 'xiaomi.wifispeaker.sound',
@@ -3756,6 +3768,7 @@ app.post('/api/miot/devices/resolve', async (req: Request, res: Response) => {
     const result = await xiaoaiResolverEngine.resolveDevices({
       userId: miotConfig.userId,
       serviceToken: (miotConfig as any).micoServiceToken || miotConfig.serviceToken,
+      micoServiceToken: (miotConfig as any).micoServiceToken || miotConfig.serviceToken,
       xiaomiioServiceToken: (miotConfig as any).xiaomiioServiceToken || miotConfig.serviceToken,
       ssecurity: (miotConfig as any).ssecurity,
       subnetPrefix,
@@ -3804,6 +3817,7 @@ app.post('/api/miot/devices/scan', async (req: Request, res: Response) => {
     const result = await xiaoaiResolverEngine.resolveDevices({
       userId: miotConfig.userId,
       serviceToken: (miotConfig as any).micoServiceToken || miotConfig.serviceToken,
+      micoServiceToken: (miotConfig as any).micoServiceToken || miotConfig.serviceToken,
       xiaomiioServiceToken: (miotConfig as any).xiaomiioServiceToken || miotConfig.serviceToken,
       ssecurity: (miotConfig as any).ssecurity,
       subnetPrefix,

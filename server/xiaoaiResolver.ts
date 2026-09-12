@@ -350,10 +350,16 @@ export class XiaoAiResolverEngine {
     ];
 
     const queryMinaEndpoint = async (ep: string) => {
-      if (!cleanMicoToken || cleanMicoToken === 'undefined' || cleanMicoToken === 'null') return;
+      if (!cleanMicoToken || cleanMicoToken === 'undefined' || cleanMicoToken === 'null') {
+        console.warn(`[Mina Discovery] ⚠️ 未提供有效的 micoServiceToken，跳过小爱官方 Mina 接口: ${ep}`);
+        return;
+      }
       const startT = Date.now();
+      const clientDeviceId = `app_ios_${crypto.randomBytes(8).toString('hex')}`;
+      console.log(`[Mina Discovery] 📡 发起小爱接口请求: ${ep}`);
+      console.log(`[Mina Discovery] 🔑 userId=${cleanUid}, token=${cleanMicoToken.slice(0, 4)}••••, clientDeviceId=${clientDeviceId}`);
+
       try {
-        const clientDeviceId = `app_ios_${crypto.randomBytes(8).toString('hex')}`;
         const headers: Record<string, string> = {
           'User-Agent': 'MISoundBox/1.4.0 (iPhone; iOS 14.4; Scale/3.00)',
           'Cookie': `userId=${cleanUid}; serviceToken=${cleanMicoToken}; deviceId=${clientDeviceId}; channel=MI_APP_STORE; PassportDeviceId=${clientDeviceId}`,
@@ -364,21 +370,41 @@ export class XiaoAiResolverEngine {
         const text = await res.text();
         const durationMs = Date.now() - startT;
 
+        console.log(`[Mina Discovery] 📥 接口响应: HTTP ${res.status} ${res.statusText}, 耗时: ${durationMs}ms`);
+        console.log(`[Mina Discovery] 📄 原始返回片段: ${text.slice(0, 300)}`);
+
         let minaData: any = null;
         try {
           minaData = JSON.parse(text);
-        } catch {}
+        } catch (e: any) {
+          console.warn(`[Mina Discovery Warning] ⚠️ 接口返回非 JSON 数据: ${text.slice(0, 200)}`);
+        }
+
+        if (!res.ok) {
+          console.warn(`[Mina Discovery Warning] ⚠️ 小爱接口 HTTP ${res.status} 异常! 可能原因: 1) serviceToken 非 micoapi 域或已过期; 2) 小米网关限制`);
+        } else if (minaData && minaData.code !== 0 && minaData.code !== 200) {
+          console.warn(`[Mina Discovery Warning] ⚠️ 小爱接口返回业务错误: code=${minaData.code}, message=${minaData.message || minaData.msg || '未知错误'}`);
+        }
 
         const list = extractDevicesFromMinaResponse(minaData || text);
         const extracted: any[] = [];
 
         if (Array.isArray(list) && list.length > 0) {
+          console.log(`[Mina Discovery Success] ✅ 小爱接口成功获取到 ${list.length} 台设备数据:`, list.map((d: any) => ({
+            name: d.name || d.alias || d.nick_name,
+            miotDID: d.miotDID || d.did,
+            deviceID: d.deviceID || d.hardwareDeviceId || d.device_id,
+            model: d.model || d.hardware
+          })));
+
           for (const item of list) {
             const rawMiotDid = item.miotDID || item.did || item.miot_did;
-            const rawDeviceUuid = item.deviceID || item.hardwareDeviceId || item.device_id;
+            const rawDeviceUuid = item.deviceID || item.hardwareDeviceId || item.device_id || item.uuid;
+            // A genuine Xiaoai UUID is not identical to numeric miotDID
+            const cleanDeviceUuid = (rawDeviceUuid && String(rawDeviceUuid) !== String(rawMiotDid)) ? String(rawDeviceUuid) : undefined;
             const did = String(
               rawMiotDid || 
-              rawDeviceUuid || 
+              cleanDeviceUuid || 
               item.id || 
               item.serialNumber || 
               item.mac || 
@@ -402,9 +428,9 @@ export class XiaoAiResolverEngine {
 
             const cloudItem: CloudDiscoveredItem = {
               did,
-              deviceID: rawDeviceUuid ? String(rawDeviceUuid) : (item.deviceID || did),
-              hardwareDeviceId: item.hardwareDeviceId || (rawDeviceUuid ? String(rawDeviceUuid) : undefined) || item.deviceID,
-              cloudDid: rawMiotDid ? String(rawMiotDid) : (item.did || item.miotDID || did),
+              deviceID: cleanDeviceUuid,
+              hardwareDeviceId: item.hardwareDeviceId ? String(item.hardwareDeviceId) : cleanDeviceUuid,
+              cloudDid: rawMiotDid ? String(rawMiotDid) : undefined,
               model,
               name: cleanName,
               ip,
@@ -419,13 +445,15 @@ export class XiaoAiResolverEngine {
             if (!cloudMap.has(did)) {
               cloudMap.set(did, cloudItem);
             }
-            if (rawDeviceUuid && !cloudMap.has(String(rawDeviceUuid))) {
-              cloudMap.set(String(rawDeviceUuid), cloudItem);
+            if (cleanDeviceUuid && !cloudMap.has(cleanDeviceUuid)) {
+              cloudMap.set(cleanDeviceUuid, cloudItem);
             }
             if (rawMiotDid && !cloudMap.has(String(rawMiotDid))) {
               cloudMap.set(String(rawMiotDid), cloudItem);
             }
           }
+        } else {
+          console.warn(`[Mina Discovery Info] ℹ️ 小爱接口调用成功但返回设备列表为空 (0 devices). 可能原因: 1) 当前账号下未绑定小爱音箱; 2) serviceToken 无 mico 权限`);
         }
 
         this.recordSnapshot({
@@ -442,6 +470,7 @@ export class XiaoAiResolverEngine {
           extractedDevices: extracted
         });
       } catch (err: any) {
+        console.error(`[Mina Discovery Error] ❌ 请求小爱接口异常: ${ep}`, err.message);
         this.recordSnapshot({
           id: `snap-mina-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
           timestamp: new Date().toLocaleTimeString(),
@@ -911,6 +940,15 @@ export class XiaoAiResolverEngine {
     };
 
     // 1. Process Cloud devices
+    // Helper to verify if an ID is a genuine Xiaoai UUID (not a pure numeric MIoT DID or synthetic string)
+    const isGenuineUuid = (id?: string) => {
+      if (!id) return false;
+      const s = String(id).trim();
+      if (s.startsWith('did-') || s.startsWith('manual_')) return false;
+      if (/^\d{6,16}$/.test(s)) return false; // Pure numeric digits is a MIoT DID or UserID, NOT a Xiaoai Hardware UUID
+      return true;
+    };
+
     for (const [did, cDev] of cloudMap.entries()) {
       // Find LAN match by DID, IP or MAC
       const lanMatch = lanMap.get(did) || Array.from(lanMap.values()).find(l => 
@@ -918,18 +956,22 @@ export class XiaoAiResolverEngine {
       );
       const exDev = findMatchingExisting(cDev);
 
-      const resolvedDeviceID = (cDev.deviceID && !cDev.deviceID.startsWith('did-') && !cDev.deviceID.startsWith('manual_'))
+      const resolvedDeviceID = isGenuineUuid(cDev.deviceID)
         ? cDev.deviceID
-        : (exDev?.deviceID || cDev.deviceID || did);
+        : (isGenuineUuid(exDev?.deviceID) ? exDev?.deviceID : undefined);
 
-      const resolvedCloudDid = cDev.cloudDid || exDev?.cloudDid || (cDev.did !== resolvedDeviceID ? cDev.did : undefined) || did;
+      const resolvedHardwareDeviceId = isGenuineUuid(cDev.hardwareDeviceId)
+        ? cDev.hardwareDeviceId
+        : (isGenuineUuid(exDev?.hardwareDeviceId) ? exDev?.hardwareDeviceId : resolvedDeviceID);
+
+      const resolvedCloudDid = cDev.cloudDid || exDev?.cloudDid || (cDev.did !== resolvedDeviceID ? cDev.did : undefined);
 
       if (lanMatch) {
         // Hybrid: Exists in both Cloud and LAN
         mergedMap.set(did, {
           did,
           deviceID: resolvedDeviceID,
-          hardwareDeviceId: cDev.hardwareDeviceId || exDev?.hardwareDeviceId || resolvedDeviceID,
+          hardwareDeviceId: resolvedHardwareDeviceId,
           cloudDid: resolvedCloudDid,
           model: (cDev.model && cDev.model !== 'xiaomi.wifispeaker') ? cDev.model : (exDev?.model || cDev.model),
           name: cDev.name || exDev?.name || '小米智能音箱',
@@ -948,7 +990,7 @@ export class XiaoAiResolverEngine {
         mergedMap.set(did, {
           did,
           deviceID: resolvedDeviceID,
-          hardwareDeviceId: cDev.hardwareDeviceId || exDev?.hardwareDeviceId || resolvedDeviceID,
+          hardwareDeviceId: resolvedHardwareDeviceId,
           cloudDid: resolvedCloudDid,
           model: (cDev.model && cDev.model !== 'xiaomi.wifispeaker') ? cDev.model : (exDev?.model || cDev.model),
           name: cDev.name || exDev?.name || '小米智能音箱',
@@ -987,10 +1029,13 @@ export class XiaoAiResolverEngine {
           name = `局域网 miIO 设备 (${lDev.ip})`;
         }
 
+        const resolvedLanDeviceID = isGenuineUuid(exDev?.deviceID) ? exDev.deviceID : undefined;
+        const resolvedLanHardwareDeviceId = isGenuineUuid(exDev?.hardwareDeviceId) ? exDev.hardwareDeviceId : resolvedLanDeviceID;
+
         mergedMap.set(did, {
           did,
-          deviceID: exDev?.deviceID,
-          hardwareDeviceId: exDev?.hardwareDeviceId,
+          deviceID: resolvedLanDeviceID,
+          hardwareDeviceId: resolvedLanHardwareDeviceId,
           cloudDid: exDev?.cloudDid,
           model,
           name: name || `局域网 miIO 设备 (${lDev.ip})`,
@@ -1016,10 +1061,13 @@ export class XiaoAiResolverEngine {
         (m.ip && exDev.ip && m.ip === exDev.ip)
       );
       if (!alreadyMerged) {
+        const resolvedExDeviceID = isGenuineUuid(exDev.deviceID) ? exDev.deviceID : undefined;
+        const resolvedExHardwareDeviceId = isGenuineUuid(exDev.hardwareDeviceId) ? exDev.hardwareDeviceId : resolvedExDeviceID;
+
         mergedMap.set(did, {
           did,
-          deviceID: exDev.deviceID,
-          hardwareDeviceId: exDev.hardwareDeviceId,
+          deviceID: resolvedExDeviceID,
+          hardwareDeviceId: resolvedExHardwareDeviceId,
           cloudDid: exDev.cloudDid,
           model: exDev.model || 'xiaomi.wifispeaker',
           name: exDev.name || '小米智能音箱',
