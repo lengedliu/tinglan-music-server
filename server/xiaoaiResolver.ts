@@ -319,16 +319,16 @@ export class XiaoAiResolverEngine {
   public async discoverCloudDevices(
     userId: string,
     serviceToken: string,
-    options?: { xiaomiioServiceToken?: string; ssecurity?: string }
+    options?: { xiaomiioServiceToken?: string; micoServiceToken?: string; ssecurity?: string }
   ): Promise<CloudDiscoveredItem[]> {
-    if (!userId || !serviceToken) return [];
+    if (!userId || (!serviceToken && !options?.micoServiceToken && !options?.xiaomiioServiceToken)) return [];
 
     const cleanUid = String(userId).replace(/^["']|["']$/g, '').replace(/^uid_/, '').replace(/;$/, '').trim();
-    const cleanToken = String(serviceToken).replace(/^["']|["']$/g, '').replace(/;$/, '').trim();
+    const cleanMicoToken = String(options?.micoServiceToken || serviceToken).replace(/^["']|["']$/g, '').replace(/;$/, '').trim();
     const cleanMiioToken = String(options?.xiaomiioServiceToken || serviceToken).replace(/^["']|["']$/g, '').replace(/;$/, '').trim();
     const cleanSsecurity = options?.ssecurity ? String(options.ssecurity).trim() : '';
 
-    if (!cleanUid || cleanUid === 'undefined' || cleanUid === 'null' || !cleanToken || cleanToken === 'undefined' || cleanToken === 'null') {
+    if (!cleanUid || cleanUid === 'undefined' || cleanUid === 'null') {
       return [];
     }
 
@@ -350,11 +350,13 @@ export class XiaoAiResolverEngine {
     ];
 
     const queryMinaEndpoint = async (ep: string) => {
+      if (!cleanMicoToken || cleanMicoToken === 'undefined' || cleanMicoToken === 'null') return;
       const startT = Date.now();
       try {
+        const clientDeviceId = `app_ios_${crypto.randomBytes(8).toString('hex')}`;
         const headers: Record<string, string> = {
           'User-Agent': 'MISoundBox/1.4.0 (iPhone; iOS 14.4; Scale/3.00)',
-          'Cookie': `userId=${cleanUid}; serviceToken=${cleanToken}; deviceId=${cleanUid}`,
+          'Cookie': `userId=${cleanUid}; serviceToken=${cleanMicoToken}; deviceId=${clientDeviceId}; channel=MI_APP_STORE; PassportDeviceId=${clientDeviceId}`,
           'Accept': 'application/json, text/plain, */*'
         };
 
@@ -372,11 +374,11 @@ export class XiaoAiResolverEngine {
 
         if (Array.isArray(list) && list.length > 0) {
           for (const item of list) {
+            const rawMiotDid = item.miotDID || item.did || item.miot_did;
+            const rawDeviceUuid = item.deviceID || item.hardwareDeviceId || item.device_id;
             const did = String(
-              item.miotDID || 
-              item.deviceID || 
-              item.device_id || 
-              item.did || 
+              rawMiotDid || 
+              rawDeviceUuid || 
               item.id || 
               item.serialNumber || 
               item.mac || 
@@ -400,9 +402,9 @@ export class XiaoAiResolverEngine {
 
             const cloudItem: CloudDiscoveredItem = {
               did,
-              deviceID: item.deviceID || item.hardwareDeviceId || item.device_id || did,
-              hardwareDeviceId: item.hardwareDeviceId || item.deviceID,
-              cloudDid: item.did || item.miotDID || did,
+              deviceID: rawDeviceUuid ? String(rawDeviceUuid) : (item.deviceID || did),
+              hardwareDeviceId: item.hardwareDeviceId || (rawDeviceUuid ? String(rawDeviceUuid) : undefined) || item.deviceID,
+              cloudDid: rawMiotDid ? String(rawMiotDid) : (item.did || item.miotDID || did),
               model,
               name: cleanName,
               ip,
@@ -416,6 +418,12 @@ export class XiaoAiResolverEngine {
             extracted.push(cloudItem);
             if (!cloudMap.has(did)) {
               cloudMap.set(did, cloudItem);
+            }
+            if (rawDeviceUuid && !cloudMap.has(String(rawDeviceUuid))) {
+              cloudMap.set(String(rawDeviceUuid), cloudItem);
+            }
+            if (rawMiotDid && !cloudMap.has(String(rawMiotDid))) {
+              cloudMap.set(String(rawMiotDid), cloudItem);
             }
           }
         }
@@ -830,6 +838,7 @@ export class XiaoAiResolverEngine {
   public async resolveDevices(options: {
     userId?: string;
     serviceToken?: string;
+    micoServiceToken?: string;
     xiaomiioServiceToken?: string;
     ssecurity?: string;
     subnetPrefix?: string;
@@ -846,12 +855,12 @@ export class XiaoAiResolverEngine {
       nonSpeakerIgnored: number;
     };
   }> {
-    const { userId = '', serviceToken = '', xiaomiioServiceToken, ssecurity, subnetPrefix, existingDevices = [], activeStreamIps = [] } = options;
+    const { userId = '', serviceToken = '', micoServiceToken, xiaomiioServiceToken, ssecurity, subnetPrefix, existingDevices = [], activeStreamIps = [] } = options;
 
     // Run LAN Discovery and Cloud Discovery in parallel
     const [lanList, cloudList] = await Promise.all([
       this.discoverLanDevices(subnetPrefix, 2000),
-      this.discoverCloudDevices(userId, serviceToken, { xiaomiioServiceToken, ssecurity })
+      this.discoverCloudDevices(userId, serviceToken, { xiaomiioServiceToken, micoServiceToken, ssecurity })
     ]);
 
     const lanMap = new Map<string, LanDiscoveredItem>();
@@ -890,27 +899,47 @@ export class XiaoAiResolverEngine {
       }
     }
 
+    // Helper: Find existing matching device across multiple keys
+    const findMatchingExisting = (target: { did: string; cloudDid?: string; deviceID?: string; mac?: string; ip?: string }) => {
+      if (existingMap.has(target.did)) return existingMap.get(target.did);
+      return Array.from(existingMap.values()).find(ex => 
+        (target.cloudDid && (ex.did === target.cloudDid || ex.cloudDid === target.cloudDid)) ||
+        (target.deviceID && (ex.did === target.deviceID || ex.deviceID === target.deviceID)) ||
+        (ex.mac && target.mac && ex.mac.toLowerCase() === target.mac.toLowerCase()) ||
+        (ex.ip && target.ip && ex.ip === target.ip)
+      );
+    };
+
     // 1. Process Cloud devices
     for (const [did, cDev] of cloudMap.entries()) {
-      const lanMatch = lanMap.get(did);
-      const exDev = existingMap.get(did);
+      // Find LAN match by DID, IP or MAC
+      const lanMatch = lanMap.get(did) || Array.from(lanMap.values()).find(l => 
+        (cDev.ip && l.ip === cDev.ip) || (cDev.mac && l.mac && l.mac.toLowerCase() === cDev.mac.toLowerCase())
+      );
+      const exDev = findMatchingExisting(cDev);
+
+      const resolvedDeviceID = (cDev.deviceID && !cDev.deviceID.startsWith('did-') && !cDev.deviceID.startsWith('manual_'))
+        ? cDev.deviceID
+        : (exDev?.deviceID || cDev.deviceID || did);
+
+      const resolvedCloudDid = cDev.cloudDid || exDev?.cloudDid || (cDev.did !== resolvedDeviceID ? cDev.did : undefined) || did;
 
       if (lanMatch) {
         // Hybrid: Exists in both Cloud and LAN
         mergedMap.set(did, {
           did,
-          deviceID: cDev.deviceID || exDev?.deviceID || did,
-          hardwareDeviceId: cDev.hardwareDeviceId || exDev?.hardwareDeviceId,
-          cloudDid: cDev.cloudDid || exDev?.cloudDid || did,
-          model: cDev.model,
-          name: cDev.name,
-          ip: lanMatch.ip,
-          mac: cDev.mac || exDev?.mac,
+          deviceID: resolvedDeviceID,
+          hardwareDeviceId: cDev.hardwareDeviceId || exDev?.hardwareDeviceId || resolvedDeviceID,
+          cloudDid: resolvedCloudDid,
+          model: (cDev.model && cDev.model !== 'xiaomi.wifispeaker') ? cDev.model : (exDev?.model || cDev.model),
+          name: cDev.name || exDev?.name || '小米智能音箱',
+          ip: lanMatch.ip || cDev.ip || exDev?.ip,
+          mac: cDev.mac || exDev?.mac || lanMatch.mac,
           token: cDev.token || exDev?.token,
           source: 'hybrid',
           platform: (cDev.token || exDev?.token) ? 'miio' : 'mina',
           online: true,
-          hardware: cDev.hardware,
+          hardware: cDev.hardware || exDev?.hardware,
           existingStatus: exDev?.status
         });
       } else {
@@ -918,18 +947,18 @@ export class XiaoAiResolverEngine {
         const resolvedIp = cDev.ip || exDev?.ip || undefined;
         mergedMap.set(did, {
           did,
-          deviceID: cDev.deviceID || exDev?.deviceID || did,
-          hardwareDeviceId: cDev.hardwareDeviceId || exDev?.hardwareDeviceId,
-          cloudDid: cDev.cloudDid || exDev?.cloudDid || did,
-          model: cDev.model,
-          name: cDev.name,
+          deviceID: resolvedDeviceID,
+          hardwareDeviceId: cDev.hardwareDeviceId || exDev?.hardwareDeviceId || resolvedDeviceID,
+          cloudDid: resolvedCloudDid,
+          model: (cDev.model && cDev.model !== 'xiaomi.wifispeaker') ? cDev.model : (exDev?.model || cDev.model),
+          name: cDev.name || exDev?.name || '小米智能音箱',
           ip: resolvedIp,
           mac: cDev.mac || exDev?.mac,
           token: cDev.token || exDev?.token,
           source: resolvedIp ? 'hybrid' : 'cloud',
-          platform: 'mina',
-          online: cDev.online,
-          hardware: cDev.hardware,
+          platform: (cDev.token || exDev?.token && resolvedIp) ? 'miio' : 'mina',
+          online: cDev.online || exDev?.online || true,
+          hardware: cDev.hardware || exDev?.hardware,
           existingStatus: exDev?.status
         });
       }
@@ -938,7 +967,7 @@ export class XiaoAiResolverEngine {
     // 2. Process LAN-only devices
     for (const [did, lDev] of lanMap.entries()) {
       if (!mergedMap.has(did)) {
-        const exDev = existingMap.get(did);
+        const exDev = existingMap.get(did) || Array.from(existingMap.values()).find(ex => ex.ip === lDev.ip);
         let model = exDev?.model;
         let name = exDev?.name;
 
@@ -960,10 +989,13 @@ export class XiaoAiResolverEngine {
 
         mergedMap.set(did, {
           did,
+          deviceID: exDev?.deviceID,
+          hardwareDeviceId: exDev?.hardwareDeviceId,
+          cloudDid: exDev?.cloudDid,
           model,
           name: name || `局域网 miIO 设备 (${lDev.ip})`,
           ip: lDev.ip,
-          mac: exDev?.mac,
+          mac: exDev?.mac || lDev.mac,
           token: exDev?.token,
           source: 'lan',
           platform: 'miio',
@@ -974,11 +1006,21 @@ export class XiaoAiResolverEngine {
       }
     }
 
-    // 3. Keep manual / existing devices if they were not scanned this round
+    // 3. Keep manual / existing devices if they were not scanned this round and not already merged
     for (const [did, exDev] of existingMap.entries()) {
-      if (!mergedMap.has(did)) {
+      const alreadyMerged = Array.from(mergedMap.values()).find(m => 
+        m.did === did || 
+        (m.cloudDid && m.cloudDid === did) ||
+        (m.deviceID && m.deviceID === did) ||
+        (m.mac && exDev.mac && m.mac.toLowerCase() === exDev.mac.toLowerCase()) ||
+        (m.ip && exDev.ip && m.ip === exDev.ip)
+      );
+      if (!alreadyMerged) {
         mergedMap.set(did, {
           did,
+          deviceID: exDev.deviceID,
+          hardwareDeviceId: exDev.hardwareDeviceId,
+          cloudDid: exDev.cloudDid,
           model: exDev.model || 'xiaomi.wifispeaker',
           name: exDev.name || '小米智能音箱',
           ip: exDev.ip,

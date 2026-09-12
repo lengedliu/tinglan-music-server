@@ -3922,10 +3922,11 @@ async function callMinaCloudApi(
   // Songloft 动态设备映射：若 deviceId 仍未知或仅为数字 MIoT DID，向 Mina 查询官方 device_list 自动补全
   if (activeMicoToken && cleanUid && (!matchedDev || !(matchedDev as any).deviceID || isSyntheticId(deviceId))) {
     try {
+      const clientDeviceId = `app_ios_${crypto.randomBytes(8).toString('hex')}`;
       const minaDevListRes = await fetch('https://api2.mina.mi.com/admin/v2/device_list?master=1', {
         headers: {
           'User-Agent': 'MISoundBox/1.4.0 (iPhone; iOS 14.4; Scale/3.00)',
-          'Cookie': `userId=${cleanUid}; serviceToken=${activeMicoToken}; channel=MI_APP_STORE`
+          'Cookie': `userId=${cleanUid}; serviceToken=${activeMicoToken}; deviceId=${clientDeviceId}; channel=MI_APP_STORE; PassportDeviceId=${clientDeviceId}`
         },
         signal: AbortSignal.timeout(3000)
       });
