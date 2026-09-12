@@ -397,6 +397,25 @@ export class DlnaEngine {
   }
 
   /**
+   * Resume/Play playback via DLNA
+   */
+  public async play(ip: string): Promise<{ success: boolean; error?: string }> {
+    const endpoint = await this.probeDevice(ip);
+    if (!endpoint) return { success: false, error: '未找到 DLNA 设备' };
+
+    const res = await sendSoapRequest(
+      endpoint.ip,
+      endpoint.port,
+      endpoint.controlUrl,
+      'urn:schemas-upnp-org:service:AVTransport:1',
+      'Play',
+      '<InstanceID>0</InstanceID><Speed>1</Speed>',
+      2000
+    );
+    return { success: res.success, error: res.error };
+  }
+
+  /**
    * Pause playback via DLNA
    */
   public async pause(ip: string): Promise<{ success: boolean; error?: string }> {
