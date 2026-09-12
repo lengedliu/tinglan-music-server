@@ -212,9 +212,24 @@ export class XiaomiAdapter {
           ssecurity: activeSsec
         };
 
+        // Helper to accurately verify if MIoT Action genuinely succeeded
+        const isMiotActionSuccess = (res: any) => {
+          if (!res) return false;
+          if (res.code === 0) {
+            // Check if nested result contains an error code (e.g., { code: 0, result: { code: -704042011 } })
+            if (res.result && typeof res.result.code === 'number' && res.result.code !== 0) {
+              return false;
+            }
+            return true;
+          }
+          return false;
+        };
+
         // Action 1: Play-Control (siid=3, aiid=1 play-url: [streamUrl])
         let rpcRes = await miotRpcEngine.executeAction(targetDevice, 3, 1, [streamUrl], miotAuth);
-        if (rpcRes.code === 0 || rpcRes.result) {
+        console.log(`[XiaomiAdapter] [Tier 2 Action 1 (siid=3, aiid=1)] Result:`, JSON.stringify(rpcRes));
+        
+        if (isMiotActionSuccess(rpcRes)) {
           steps.push({
             timestamp: nowStr(),
             step: 'MIOT_ACTION_SIID3',
@@ -235,7 +250,9 @@ export class XiaomiAdapter {
 
         // Action 2: Intelligent Speaker (siid=7, aiid=3 play-url: [streamUrl])
         rpcRes = await miotRpcEngine.executeAction(targetDevice, 7, 3, [streamUrl], miotAuth);
-        if (rpcRes.code === 0 || rpcRes.result) {
+        console.log(`[XiaomiAdapter] [Tier 2 Action 2 (siid=7, aiid=3)] Result:`, JSON.stringify(rpcRes));
+
+        if (isMiotActionSuccess(rpcRes)) {
           steps.push({
             timestamp: nowStr(),
             step: 'MIOT_ACTION_SIID7',
@@ -254,12 +271,36 @@ export class XiaomiAdapter {
           };
         }
 
+        // Action 3: Text conversation directive fallback (siid=7, aiid=4)
+        const songQuery = options.songArtist ? `${options.songArtist} 的 ${songTitle}` : (songTitle || '音乐');
+        const textDirectiveRes = await miotRpcEngine.executeAction(targetDevice, 7, 4, [`播放 ${songQuery}`, false], miotAuth);
+        console.log(`[XiaomiAdapter] [Tier 2 Action 3 (siid=7, aiid=4 directive)] Result:`, JSON.stringify(textDirectiveRes));
+
+        if (isMiotActionSuccess(textDirectiveRes)) {
+          steps.push({
+            timestamp: nowStr(),
+            step: 'MIOT_ACTION_DIRECTIVE',
+            status: 'OK',
+            statusCode: 200,
+            message: `MIoT Cloud Action (siid=7, aiid=4 指令: 播放 ${songQuery}) 成功`
+          });
+          this.deviceManager.updatePlaybackState(targetDevice.did, true, songTitle);
+          return {
+            success: true,
+            message: `已通过 MIoT 云端指令成功下发播放到【${targetDevice.name}】`,
+            protocol: 'MIoT Cloud Directive (siid=7, aiid=4)',
+            streamUrl,
+            details: textDirectiveRes,
+            steps
+          };
+        }
+
         steps.push({
           timestamp: nowStr(),
           step: 'MIOT_ACTION',
           status: 'FAIL',
-          statusCode: rpcRes.code || 400,
-          message: `MIoT Cloud Action 返回 code=${rpcRes.code}`
+          statusCode: rpcRes?.code || 400,
+          message: `MIoT Cloud Action 返回未成功响应: code=${rpcRes?.code}`
         });
       } catch (miotErr: any) {
         console.warn(`[XiaomiAdapter] MIoT Cloud Action failed:`, miotErr.message);
@@ -271,6 +312,14 @@ export class XiaomiAdapter {
           message: `MIoT Cloud Action 异常: ${miotErr.message}`
         });
       }
+    } else {
+      console.log(`[XiaomiAdapter] [Tier 2] Skipped (isLoggedIn: ${miotConfig?.isLoggedIn}, hasIoToken: ${Boolean(activeIoToken)})`);
+      steps.push({
+        timestamp: nowStr(),
+        step: 'MIOT_ACTION_SKIPPED',
+        status: 'PENDING',
+        message: '未获取到有效 xiaomiio 凭证，跳过 MIoT Action 通道'
+      });
     }
 
     // =========================================================================
@@ -287,6 +336,7 @@ export class XiaomiAdapter {
           [streamUrl, 1],
           2000
         );
+        console.log(`[XiaomiAdapter] [Tier 3 play_specify_url] Result:`, JSON.stringify(localMiio));
 
         if (localMiio?.result === 'ok' || localMiio?.success) {
           steps.push({
@@ -315,6 +365,7 @@ export class XiaomiAdapter {
           [{ url: streamUrl, type: 1, media: 'app_ios' }],
           1800
         );
+        console.log(`[XiaomiAdapter] [Tier 3 player_play_url] Result:`, JSON.stringify(localMiio));
 
         if (localMiio?.result === 'ok' || localMiio?.success) {
           steps.push({
@@ -350,6 +401,8 @@ export class XiaomiAdapter {
           message: `miIO 异常: ${miioErr.message}`
         });
       }
+    } else {
+      console.log(`[XiaomiAdapter] [Tier 3] Skipped (ip: ${targetDevice.ip || 'none'}, token: ${targetDevice.token ? 'configured' : 'none'})`);
     }
 
     // =========================================================================
