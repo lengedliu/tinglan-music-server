@@ -450,7 +450,9 @@ export class MiotRpcEngine {
     if (device.ip && device.token) {
       const actionReq = { did: device.did, siid, aiid, in: inParams };
       const localRes = await this.executeLocalMiio(device.ip, device.token, 'action', actionReq);
-      if (localRes.code === 0) return localRes;
+      if (localRes.code === 0 && (!localRes.result || typeof localRes.result.code !== 'number' || localRes.result.code === 0)) {
+        return localRes;
+      }
     }
 
     // 2. Fallback to Cloud MIoT

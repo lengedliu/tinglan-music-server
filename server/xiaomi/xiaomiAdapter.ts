@@ -197,189 +197,173 @@ export class XiaomiAdapter {
       });
     }
 
-    // =========================================================================
-    // 2. TIER 2: MIoT Cloud Action RPC (api.io.mi.com)
-    // =========================================================================
-    const activeIoToken = miotConfig?.xiaomiioServiceToken || activeMicoToken;
-    const activeSsec = miotConfig?.ssecurity;
-
-    if (miotConfig?.isLoggedIn && miotConfig?.userId && (activeIoToken || activeSsec)) {
-      try {
-        console.log(`[XiaomiAdapter] [Tier 2] Trying MIoT Cloud Action for ${targetDevice.did}...`);
-        const miotAuth = {
-          userId: String(miotConfig.userId),
-          serviceToken: activeIoToken,
-          ssecurity: activeSsec
-        };
-
-        // Helper to accurately verify if MIoT Action genuinely succeeded
-        const isMiotActionSuccess = (res: any) => {
-          if (!res) return false;
-          if (res.code === 0) {
-            // Check if nested result contains an error code (e.g., { code: 0, result: { code: -704042011 } })
-            if (res.result && typeof res.result.code === 'number' && res.result.code !== 0) {
-              return false;
-            }
-            return true;
-          }
+    // Helper to accurately verify if MIoT Action genuinely succeeded (rejecting negative inner codes like -4003)
+    const isMiotActionSuccess = (res: any) => {
+      if (!res) return false;
+      if (res.code === 0) {
+        if (res.result && typeof res.result.code === 'number' && res.result.code !== 0) {
           return false;
-        };
-
-        // Action 1: Play-Control (siid=3, aiid=1 play-url: [streamUrl])
-        let rpcRes = await miotRpcEngine.executeAction(targetDevice, 3, 1, [streamUrl], miotAuth);
-        console.log(`[XiaomiAdapter] [Tier 2 Action 1 (siid=3, aiid=1)] Result:`, JSON.stringify(rpcRes));
-        
-        if (isMiotActionSuccess(rpcRes)) {
-          steps.push({
-            timestamp: nowStr(),
-            step: 'MIOT_ACTION_SIID3',
-            status: 'OK',
-            statusCode: 200,
-            message: 'MIoT Cloud Action (siid=3, aiid=1 play-url) 成功'
-          });
-          this.deviceManager.updatePlaybackState(targetDevice.did, true, songTitle);
-          return {
-            success: true,
-            message: `已通过 MIoT 云端 Action (siid=3, aiid=1) 成功下发播放到【${targetDevice.name}】`,
-            protocol: 'MIoT Cloud Action (siid=3, aiid=1)',
-            streamUrl,
-            details: rpcRes,
-            steps
-          };
         }
-
-        // Action 2: Intelligent Speaker (siid=7, aiid=3 play-url: [streamUrl])
-        rpcRes = await miotRpcEngine.executeAction(targetDevice, 7, 3, [streamUrl], miotAuth);
-        console.log(`[XiaomiAdapter] [Tier 2 Action 2 (siid=7, aiid=3)] Result:`, JSON.stringify(rpcRes));
-
-        if (isMiotActionSuccess(rpcRes)) {
-          steps.push({
-            timestamp: nowStr(),
-            step: 'MIOT_ACTION_SIID7',
-            status: 'OK',
-            statusCode: 200,
-            message: 'MIoT Cloud Action (siid=7, aiid=3 play-url) 成功'
-          });
-          this.deviceManager.updatePlaybackState(targetDevice.did, true, songTitle);
-          return {
-            success: true,
-            message: `已通过 MIoT 云端 Action (siid=7, aiid=3) 成功下发播放到【${targetDevice.name}】`,
-            protocol: 'MIoT Cloud Action (siid=7, aiid=3)',
-            streamUrl,
-            details: rpcRes,
-            steps
-          };
-        }
-
-        // Action 3: Text conversation directive fallback (siid=7, aiid=4)
-        const songQuery = options.songArtist ? `${options.songArtist} 的 ${songTitle}` : (songTitle || '音乐');
-        const textDirectiveRes = await miotRpcEngine.executeAction(targetDevice, 7, 4, [`播放 ${songQuery}`, false], miotAuth);
-        console.log(`[XiaomiAdapter] [Tier 2 Action 3 (siid=7, aiid=4 directive)] Result:`, JSON.stringify(textDirectiveRes));
-
-        if (isMiotActionSuccess(textDirectiveRes)) {
-          steps.push({
-            timestamp: nowStr(),
-            step: 'MIOT_ACTION_DIRECTIVE',
-            status: 'OK',
-            statusCode: 200,
-            message: `MIoT Cloud Action (siid=7, aiid=4 指令: 播放 ${songQuery}) 成功`
-          });
-          this.deviceManager.updatePlaybackState(targetDevice.did, true, songTitle);
-          return {
-            success: true,
-            message: `已通过 MIoT 云端指令成功下发播放到【${targetDevice.name}】`,
-            protocol: 'MIoT Cloud Directive (siid=7, aiid=4)',
-            streamUrl,
-            details: textDirectiveRes,
-            steps
-          };
-        }
-
-        steps.push({
-          timestamp: nowStr(),
-          step: 'MIOT_ACTION',
-          status: 'FAIL',
-          statusCode: rpcRes?.code || 400,
-          message: `MIoT Cloud Action 返回未成功响应: code=${rpcRes?.code}`
-        });
-      } catch (miotErr: any) {
-        console.warn(`[XiaomiAdapter] MIoT Cloud Action failed:`, miotErr.message);
-        steps.push({
-          timestamp: nowStr(),
-          step: 'MIOT_ACTION_EXCEPTION',
-          status: 'FAIL',
-          statusCode: 500,
-          message: `MIoT Cloud Action 异常: ${miotErr.message}`
-        });
+        return true;
       }
-    } else {
-      console.log(`[XiaomiAdapter] [Tier 2] Skipped (isLoggedIn: ${miotConfig?.isLoggedIn}, hasIoToken: ${Boolean(activeIoToken)})`);
-      steps.push({
-        timestamp: nowStr(),
-        step: 'MIOT_ACTION_SKIPPED',
-        status: 'PENDING',
-        message: '未获取到有效 xiaomiio 凭证，跳过 MIoT Action 通道'
-      });
-    }
+      return false;
+    };
+
+    // Helper to accurately verify if miIO command genuinely succeeded
+    const isMiioSuccess = (res: any) => {
+      if (!res || res.success === false) return false;
+      if (res.error) return false;
+      if (res.result === 'ok' || res.result === 'packet_acknowledged') return true;
+      if (Array.isArray(res.result) && res.result.length > 0 && res.result[0] === 'ok') return true;
+      if (typeof res.result === 'object' && res.result !== null) {
+        if (typeof res.result.code === 'number' && res.result.code !== 0) return false;
+        if (res.result.error) return false;
+        return true;
+      }
+      return Boolean(res.success);
+    };
 
     // =========================================================================
-    // 3. TIER 3: Local miIO UDP 54321
+    // 2. TIER 2: Local miIO UDP 54321 (XiaoMusic LAN Media Engine)
+    // When IP & Token are configured, run direct local playback protocols on LAN
     // =========================================================================
-    if (targetDevice.token && targetDevice.ip) {
+    if (targetDevice.token && targetDevice.ip && options.castMode !== 'xiaoai_directive') {
       try {
-        console.log(`[XiaomiAdapter] [Tier 3] Trying Local miIO UDP on ${targetDevice.ip}...`);
-        
+        console.log(`[XiaomiAdapter] [Tier 2] Trying Local miIO UDP on ${targetDevice.ip}...`);
+
+        // Sub-tier 2A: The 2-step Sequence (1. set uri -> 2. play)
+        // Step 1: Set Play URL / Resource
+        let setUrlRes = await sendMiioCommandFn(
+          targetDevice.ip,
+          targetDevice.token,
+          'set_play_url',
+          [streamUrl],
+          2000
+        );
+        if (!isMiioSuccess(setUrlRes)) {
+          setUrlRes = await sendMiioCommandFn(
+            targetDevice.ip,
+            targetDevice.token,
+            'set_play_url',
+            [{ url: streamUrl }],
+            2000
+          );
+        }
+        if (!isMiioSuccess(setUrlRes)) {
+          setUrlRes = await sendMiioCommandFn(
+            targetDevice.ip,
+            targetDevice.token,
+            'set_uri',
+            [streamUrl],
+            2000
+          );
+        }
+
+        console.log(`[XiaomiAdapter] [Tier 2 set_play_url] Result:`, JSON.stringify(setUrlRes));
+
+        if (isMiioSuccess(setUrlRes)) {
+          // Step 2: Trigger Playback
+          await new Promise((r) => setTimeout(r, 150));
+          let playRes = await sendMiioCommandFn(
+            targetDevice.ip,
+            targetDevice.token,
+            'player_play_operation',
+            [{ action: 'play' }],
+            2000
+          );
+          if (!isMiioSuccess(playRes)) {
+            playRes = await sendMiioCommandFn(
+              targetDevice.ip,
+              targetDevice.token,
+              'set_play',
+              [1],
+              2000
+            );
+          }
+          if (!isMiioSuccess(playRes)) {
+            playRes = await sendMiioCommandFn(
+              targetDevice.ip,
+              targetDevice.token,
+              'play',
+              [],
+              2000
+            );
+          }
+
+          console.log(`[XiaomiAdapter] [Tier 2 play after set_url] Result:`, JSON.stringify(playRes));
+
+          if (isMiioSuccess(playRes)) {
+            steps.push({
+              timestamp: nowStr(),
+              step: 'LOCAL_MIIO_SET_URI_PLAY',
+              status: 'OK',
+              statusCode: 200,
+              message: '局域网 miIO (set_play_url -> play) 成功'
+            });
+            this.deviceManager.updatePlaybackState(targetDevice.did, true, songTitle);
+            return {
+              success: true,
+              message: `已通过局域网 miIO (设置URL -> 开始播放) 成功下发播放到【${targetDevice.name}】`,
+              protocol: 'miIO UDP (set_play_url -> play)',
+              streamUrl,
+              details: { setUrlRes, playRes },
+              steps
+            };
+          }
+        }
+
+        // Sub-tier 2B: player_play_url (Direct XiaoAi player command)
         let localMiio = await sendMiioCommandFn(
           targetDevice.ip,
           targetDevice.token,
-          'play_specify_url',
-          [streamUrl, 1],
+          'player_play_url',
+          [{ url: streamUrl, type: 1, media: 'app_ios' }],
           2000
         );
-        console.log(`[XiaomiAdapter] [Tier 3 play_specify_url] Result:`, JSON.stringify(localMiio));
+        console.log(`[XiaomiAdapter] [Tier 2 player_play_url type=1] Result:`, JSON.stringify(localMiio));
 
-        if (localMiio?.result === 'ok' || localMiio?.success) {
+        if (isMiioSuccess(localMiio)) {
           steps.push({
             timestamp: nowStr(),
-            step: 'LOCAL_MIIO_UDP',
+            step: 'LOCAL_MIIO_PLAYER_PLAY_URL',
             status: 'OK',
             statusCode: 200,
-            message: `局域网 miIO UDP (54321 play_specify_url) 成功`
+            message: '局域网 miIO (player_play_url type=1) 成功'
           });
           this.deviceManager.updatePlaybackState(targetDevice.did, true, songTitle);
           return {
             success: true,
-            message: `已通过局域网 miIO UDP (54321) 成功下发播放到【${targetDevice.name}】`,
-            protocol: 'miIO UDP (54321)',
+            message: `已通过局域网 miIO (player_play_url) 成功下发播放到【${targetDevice.name}】`,
+            protocol: 'miIO UDP (player_play_url)',
             streamUrl,
             details: localMiio,
             steps
           };
         }
 
-        // Sub-fallback: player_play_url
+        // Sub-tier 2C: player_play_url type=0 / play_specify_url
         localMiio = await sendMiioCommandFn(
           targetDevice.ip,
           targetDevice.token,
-          'player_play_url',
-          [{ url: streamUrl, type: 1, media: 'app_ios' }],
-          1800
+          'play_specify_url',
+          [streamUrl, 1],
+          2000
         );
-        console.log(`[XiaomiAdapter] [Tier 3 player_play_url] Result:`, JSON.stringify(localMiio));
+        console.log(`[XiaomiAdapter] [Tier 2 play_specify_url] Result:`, JSON.stringify(localMiio));
 
-        if (localMiio?.result === 'ok' || localMiio?.success) {
+        if (isMiioSuccess(localMiio)) {
           steps.push({
             timestamp: nowStr(),
-            step: 'LOCAL_MIIO_UDP_ALT',
+            step: 'LOCAL_MIIO_SPECIFY_URL',
             status: 'OK',
             statusCode: 200,
-            message: `局域网 miIO UDP player_play_url 成功`
+            message: '局域网 miIO (play_specify_url) 成功'
           });
           this.deviceManager.updatePlaybackState(targetDevice.did, true, songTitle);
           return {
             success: true,
-            message: `已通过局域网 miIO UDP (player_play_url) 成功下发播放到【${targetDevice.name}】`,
-            protocol: 'miIO UDP (player_play_url)',
+            message: `已通过局域网 miIO (play_specify_url) 成功下发播放到【${targetDevice.name}】`,
+            protocol: 'miIO UDP (play_specify_url)',
             streamUrl,
             details: localMiio,
             steps
@@ -390,7 +374,7 @@ export class XiaomiAdapter {
           timestamp: nowStr(),
           step: 'LOCAL_MIIO',
           status: 'FAIL',
-          message: '局域网 miIO 54321 握手或指令超时'
+          message: '局域网 miIO 播放指令已下发但未获音箱确认为播放状态，进入 DLNA/MIoT 降级'
         });
       } catch (miioErr: any) {
         console.warn(`[XiaomiAdapter] Local miIO failed:`, miioErr.message);
@@ -402,15 +386,16 @@ export class XiaomiAdapter {
         });
       }
     } else {
-      console.log(`[XiaomiAdapter] [Tier 3] Skipped (ip: ${targetDevice.ip || 'none'}, token: ${targetDevice.token ? 'configured' : 'none'})`);
+      console.log(`[XiaomiAdapter] [Tier 2] Skipped (ip: ${targetDevice.ip || 'none'}, token: ${targetDevice.token ? 'configured' : 'none'})`);
     }
 
     // =========================================================================
-    // 4. TIER 4: DLNA UPnP AVTransport
+    // 3. TIER 3: DLNA UPnP AVTransport (Universal LAN Protocol for XiaoAi Pro/Sound)
+    // DLNA is inherently: 1. SetAVTransportURI -> 2. Play
     // =========================================================================
     if (targetDevice.ip && options.castMode !== 'xiaoai_directive') {
       try {
-        console.log(`[XiaomiAdapter] [Tier 4] Trying DLNA UPnP on ${targetDevice.ip}...`);
+        console.log(`[XiaomiAdapter] [Tier 3] Trying DLNA UPnP on ${targetDevice.ip}...`);
         const dlnaRes = await dlnaEngine.castSong(targetDevice.ip, streamUrl, {
           title: songTitle,
           artist: options.songArtist,
@@ -423,12 +408,12 @@ export class XiaomiAdapter {
             step: 'DLNA_AVTRANSPORT',
             status: 'OK',
             statusCode: 200,
-            message: `局域网 DLNA UPnP AVTransport 推送成功`
+            message: '局域网 DLNA UPnP (SetAVTransportURI -> Play) 成功'
           });
           this.deviceManager.updatePlaybackState(targetDevice.did, true, songTitle);
           return {
             success: true,
-            message: `已通过局域网 DLNA UPnP 成功推送到【${targetDevice.name}】`,
+            message: `已通过局域网 DLNA UPnP (SetURI -> Play) 成功推送到【${targetDevice.name}】`,
             protocol: 'DLNA / UPnP AVTransport',
             streamUrl,
             details: dlnaRes,
@@ -450,6 +435,111 @@ export class XiaomiAdapter {
           status: 'FAIL',
           message: `DLNA 异常: ${dlnaErr.message}`
         });
+      }
+    }
+
+    // =========================================================================
+    // 4. TIER 4: MIoT Spec Action RPC (Set URI / Resource -> Play-Control Play)
+    // =========================================================================
+    const activeIoToken = miotConfig?.xiaomiioServiceToken || activeMicoToken;
+    const activeSsec = miotConfig?.ssecurity;
+
+    if (miotConfig?.isLoggedIn && miotConfig?.userId && (activeIoToken || activeSsec) && options.castMode !== 'xiaoai_directive') {
+      try {
+        console.log(`[XiaomiAdapter] [Tier 4] Trying MIoT Spec Media Action for ${targetDevice.did}...`);
+        const miotAuth = {
+          userId: String(miotConfig.userId),
+          serviceToken: activeIoToken,
+          ssecurity: activeSsec
+        };
+
+        // Step 1: Set Play URL resource via MIoT property or action if available
+        let setMiotUrlRes = await miotRpcEngine.setProperty(targetDevice, 3, 1, streamUrl, miotAuth);
+        console.log(`[XiaomiAdapter] [Tier 4 MIoT setProperty siid=3, piid=1] Result:`, JSON.stringify(setMiotUrlRes));
+
+        // Step 2: Play-Control Play (siid=3, aiid=1 or aiid=2 with empty params [])
+        let playActionRes = await miotRpcEngine.executeAction(targetDevice, 3, 1, [], miotAuth);
+        console.log(`[XiaomiAdapter] [Tier 4 MIoT Play (siid=3, aiid=1, in=[])] Result:`, JSON.stringify(playActionRes));
+
+        if (!isMiotActionSuccess(playActionRes)) {
+          playActionRes = await miotRpcEngine.executeAction(targetDevice, 3, 2, [], miotAuth);
+          console.log(`[XiaomiAdapter] [Tier 4 MIoT Play alt (siid=3, aiid=2, in=[])] Result:`, JSON.stringify(playActionRes));
+        }
+
+        if (isMiotActionSuccess(playActionRes)) {
+          steps.push({
+            timestamp: nowStr(),
+            step: 'MIOT_ACTION_PLAY',
+            status: 'OK',
+            statusCode: 200,
+            message: 'MIoT Play-Control (siid=3 play) 成功'
+          });
+          this.deviceManager.updatePlaybackState(targetDevice.did, true, songTitle);
+          return {
+            success: true,
+            message: `已通过 MIoT Play-Control (siid=3) 成功下发播放到【${targetDevice.name}】`,
+            protocol: 'MIoT Play-Control (siid=3)',
+            streamUrl,
+            details: { setMiotUrlRes, playActionRes },
+            steps
+          };
+        }
+
+        steps.push({
+          timestamp: nowStr(),
+          step: 'MIOT_ACTION',
+          status: 'FAIL',
+          statusCode: playActionRes?.code || 400,
+          message: `MIoT Media Action 返回未成功响应: code=${playActionRes?.code || -1}`
+        });
+      } catch (miotErr: any) {
+        console.warn(`[XiaomiAdapter] MIoT Spec Action failed:`, miotErr.message);
+        steps.push({
+          timestamp: nowStr(),
+          step: 'MIOT_ACTION_EXCEPTION',
+          status: 'FAIL',
+          statusCode: 500,
+          message: `MIoT Action 异常: ${miotErr.message}`
+        });
+      }
+    }
+
+    // =========================================================================
+    // 5. TIER 5: Voice Directive Fallback (Only when explicit or all stream channels failed)
+    // =========================================================================
+    if (miotConfig?.isLoggedIn && miotConfig?.userId && (activeIoToken || activeSsec)) {
+      const songQuery = options.songArtist ? `${options.songArtist} 的 ${songTitle}` : (songTitle || '音乐');
+      const miotAuth = {
+        userId: String(miotConfig.userId),
+        serviceToken: activeIoToken,
+        ssecurity: activeSsec
+      };
+
+      try {
+        console.log(`[XiaomiAdapter] [Tier 5] Trying Voice Directive (siid=7, aiid=4) for ${targetDevice.did}: "播放 ${songQuery}"`);
+        const textDirectiveRes = await miotRpcEngine.executeAction(targetDevice, 7, 4, [`播放 ${songQuery}`, false], miotAuth);
+        console.log(`[XiaomiAdapter] [Tier 5 Voice Directive] Result:`, JSON.stringify(textDirectiveRes));
+
+        if (isMiotActionSuccess(textDirectiveRes)) {
+          steps.push({
+            timestamp: nowStr(),
+            step: 'MIOT_VOICE_DIRECTIVE',
+            status: 'OK',
+            statusCode: 200,
+            message: `已降级为小爱云端语音指令 (siid=7, aiid=4: 播放 ${songQuery})`
+          });
+          this.deviceManager.updatePlaybackState(targetDevice.did, true, songTitle);
+          return {
+            success: true,
+            message: `本地串流通道未获音箱直连接收，已自动切换为小爱语音指令播放【${songQuery}】`,
+            protocol: 'XiaoAi Cloud Voice Directive (siid=7, aiid=4)',
+            streamUrl,
+            details: textDirectiveRes,
+            steps
+          };
+        }
+      } catch (dirErr: any) {
+        console.warn(`[XiaomiAdapter] Voice directive failed:`, dirErr.message);
       }
     }
 

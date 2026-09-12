@@ -3922,7 +3922,7 @@ async function callMinaCloudApi(
       if (response.ok && (resJson.code === 0 || resJson.message === 'ok' || resJson.info === 'ok')) {
         return { success: true, data: resJson, statusCode: 200 };
       } else {
-        if (response.status === 401 || responseText.includes('HTTP Status 401') || responseText.includes('Unauthorized')) {
+        if (response.status === 401 || response.status === 403 || responseText.includes('HTTP Status 401') || responseText.includes('HTTP Status 403') || responseText.includes('Unauthorized') || responseText.includes('Forbidden')) {
           // Attempt 1-time auto-refresh if passToken is available
           if (retryCount === 0 && (miotConfig as any).passToken && cleanUid) {
             try {
@@ -3935,14 +3935,14 @@ async function callMinaCloudApi(
                 return callMinaCloudApi(pathName, methodName, messageObj, targetDid, retryCount + 1);
               }
             } catch (rErr: any) {
-              console.warn('[Mina] 401 recovery STS refresh failed:', rErr.message);
+              console.warn('[Mina] 401/403 recovery STS refresh failed:', rErr.message);
             }
           }
 
           return {
             success: false,
-            statusCode: 401,
-            error: '小米服务令牌 (serviceToken) 已过期或无此设备控制权限 (HTTP 401 Unauthorized)。请在【米家账号绑定】中重新扫码/账号登录。',
+            statusCode: response.status || 401,
+            error: `小米服务令牌 (serviceToken) 已过期或无此设备控制权限 (HTTP ${response.status})。请在【米家账号绑定】中重新扫码/账号登录。`,
             raw: responseText
           };
         }
