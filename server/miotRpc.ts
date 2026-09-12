@@ -474,7 +474,10 @@ export class MiotRpcEngine {
 
     try {
       const url = `https://miot-spec.org/miot-spec-v2/instance?type=${encodeURIComponent(modelUrn)}`;
-      const res = await fetch(url);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2500);
+      const res = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
       if (res.ok) {
         const spec = await res.json();
         this.specCache.set(modelUrn, spec);
@@ -483,6 +486,119 @@ export class MiotRpcEngine {
     } catch {}
 
     return null;
+  }
+
+  /**
+   * Inspect device model MIoT Spec to determine whether it actually possesses
+   * a legitimate URL property or Action, preventing blind guesses (e.g. treating siid=3, piid=1 playing-state as URL).
+   */
+  public async inspectDeviceMediaSpec(
+    model: string
+  ): Promise<{
+    hasValidUrlProperty: boolean;
+    urlProp?: { siid: number; piid: number; description?: string };
+    playAction?: { siid: number; aiid: number; description?: string };
+    hasCustomPlayUrlAction: boolean;
+    playUrlAction?: { siid: number; aiid: number; description?: string };
+    rawServicesSummary: string[];
+  }> {
+    const summary: string[] = [];
+    if (!model) {
+      return {
+        hasValidUrlProperty: false,
+        hasCustomPlayUrlAction: false,
+        rawServicesSummary: ['未提供设备型号']
+      };
+    }
+
+    const cleanModel = model.toLowerCase();
+
+    // Standard XiaoAi Speaker models known to use standard play-control (siid=3, piid=1 is playing-state uint8 enum)
+    const knownStandardXiaoaiModels = [
+      'xiaomi.wifispeaker.lx06',
+      'xiaomi.wifispeaker.l06a',
+      'xiaomi.wifispeaker.lx04',
+      'xiaomi.wifispeaker.lx05',
+      'xiaomi.wifispeaker.l05b',
+      'xiaomi.wifispeaker.l05c',
+      'xiaomi.wifispeaker.l16a',
+      'xiaomi.wifispeaker.x08c',
+      'xiaomi.wifispeaker.s12',
+      'xiaomi.wifispeaker.s12a'
+    ];
+
+    try {
+      // 1. Fetch dynamic Spec from MIoT Spec instance registry if possible
+      let spec = await this.getMiotSpecInstance(`urn:miot-spec-v2:device:speaker:0000A015:${cleanModel.replace(/\./g, '-')}:1`);
+      if (!spec) {
+        spec = await this.getMiotSpecInstance(`urn:miot-spec-v2:device:speaker:0000A015:${cleanModel}:1`);
+      }
+
+      let foundUrlProp: { siid: number; piid: number; description?: string } | undefined;
+      let foundPlayAction: { siid: number; aiid: number; description?: string } | undefined;
+      let foundPlayUrlAction: { siid: number; aiid: number; description?: string } | undefined;
+
+      if (spec && Array.isArray(spec.services)) {
+        for (const s of spec.services) {
+          const sDesc = s.description || s.type || `siid:${s.iid}`;
+          summary.push(`siid:${s.iid} (${sDesc})`);
+
+          if (Array.isArray(s.properties)) {
+            for (const p of s.properties) {
+              const pDesc = (p.description || '').toLowerCase();
+              const pType = (p.format || p.type || '').toLowerCase();
+              // Check if this property is explicitly a string URL/URI
+              if ((pDesc.includes('url') || pDesc.includes('uri') || pDesc.includes('media-url')) && pType === 'string') {
+                foundUrlProp = { siid: s.iid, piid: p.iid, description: p.description };
+              }
+            }
+          }
+
+          if (Array.isArray(s.actions)) {
+            for (const a of s.actions) {
+              const aDesc = (a.description || '').toLowerCase();
+              if (aDesc === 'play' || aDesc.includes('start-play')) {
+                foundPlayAction = { siid: s.iid, aiid: a.iid, description: a.description };
+              }
+              if (aDesc.includes('play-url') || aDesc.includes('play-uri') || aDesc.includes('specify-url')) {
+                foundPlayUrlAction = { siid: s.iid, aiid: a.iid, description: a.description };
+              }
+            }
+          }
+        }
+
+        return {
+          hasValidUrlProperty: Boolean(foundUrlProp),
+          urlProp: foundUrlProp,
+          playAction: foundPlayAction,
+          hasCustomPlayUrlAction: Boolean(foundPlayUrlAction),
+          playUrlAction: foundPlayUrlAction,
+          rawServicesSummary: summary
+        };
+      }
+    } catch {}
+
+    // Fallback based on canonical Xiaomi MIoT Speaker Spec knowledge
+    const isKnownXiaoai = knownStandardXiaoaiModels.some(m => cleanModel.includes(m) || m.includes(cleanModel));
+    if (isKnownXiaoai) {
+      summary.push('siid:1 (device-information)');
+      summary.push('siid:2 (speaker, piid:1 volume, piid:2 mute)');
+      summary.push('siid:3 (play-control, piid:1 playing-state [uint8 status, NOT URL], aiid:1 play, aiid:2 pause)');
+      summary.push('siid:7 (intelligent-speaker, aiid:3 play-text, aiid:4 execute-text-directive)');
+
+      return {
+        hasValidUrlProperty: false, // Confirmed: piid=1 is playing-state, no URL property
+        playAction: { siid: 3, aiid: 1, description: 'play' },
+        hasCustomPlayUrlAction: false,
+        rawServicesSummary: summary
+      };
+    }
+
+    return {
+      hasValidUrlProperty: false,
+      hasCustomPlayUrlAction: false,
+      rawServicesSummary: summary.length > 0 ? summary : ['未检测到明确的 MIoT URL 属性']
+    };
   }
 }
 

@@ -164,7 +164,7 @@ function httpGet(urlStr: string, timeoutMs = 800): Promise<{ ok: boolean; status
 export class DlnaEngine {
   /**
    * Fast, non-blocking probe for DLNA AVTransport control endpoint on a given IP
-   * XiaoAi speakers (Pro, Sound, Sound Pro, Art, Touchscreen) listen on port 1420 by standard.
+   * XiaoAi speakers (Pro, Sound, Sound Pro, Art, Touchscreen) listen on port 1420 or 49152/49153/49154.
    */
   public async probeDevice(ip: string, preferredPort?: number): Promise<DlnaEndpoint | null> {
     const cleanIp = ip.trim();
@@ -174,25 +174,33 @@ export class DlnaEngine {
     const cached = dlnaEndpointCache.get(cleanIp);
     if (cached) return cached;
 
-    // Standard XiaoAi ports: 1420 (primary XiaoAi DLNA), 49152 (secondary UPnP)
-    const portsToTry = preferredPort ? [preferredPort, 1420, 49152] : [1420, 49152];
+    // Standard XiaoAi ports: 1420 (primary XiaoAi DLNA), 49152/49153/49154 (secondary UPnP), 8008 (Cast)
+    const portsToTry = preferredPort ? [preferredPort, 1420, 49152, 49153, 49154, 8008] : [1420, 49152, 49153, 49154, 8008];
     const uniquePorts = Array.from(new Set(portsToTry));
 
-    // Fast parallel probe with 650ms timeout
+    console.log(`[DLNA Probe] 正在探测音箱 ${cleanIp} 候选端口 [${uniquePorts.join(', ')}]...`);
+
+    const xmlPaths = ['/description.xml', '/rootDesc.xml', '/upnp/description.xml'];
     const probeTasks: Promise<DlnaEndpoint | null>[] = [];
 
     for (const port of uniquePorts) {
-      // 1. Try description.xml
-      probeTasks.push(
-        httpGet(`http://${cleanIp}:${port}/description.xml`, 650).then(res => {
-          if (res.ok && (res.text.includes('AVTransport') || res.text.includes('MediaRenderer') || res.text.includes('RenderingControl'))) {
-            return this.parseDeviceXml(cleanIp, port, res.text);
-          }
-          return null;
-        }).catch(() => null)
-      );
+      // 1. Try XML descriptor endpoints
+      for (const xmlPath of xmlPaths) {
+        probeTasks.push(
+          httpGet(`http://${cleanIp}:${port}${xmlPath}`, 1500).then(res => {
+            if (res.ok && (res.text.includes('AVTransport') || res.text.includes('MediaRenderer') || res.text.includes('RenderingControl'))) {
+              const ep = this.parseDeviceXml(cleanIp, port, res.text);
+              if (ep) {
+                console.log(`[DLNA Probe] ✅ 发现设备描述文件: http://${cleanIp}:${port}${xmlPath} (${ep.friendlyName || 'Speaker'})`);
+                return ep;
+              }
+            }
+            return null;
+          }).catch(() => null)
+        );
+      }
 
-      // 2. Try direct SOAP GetTransportInfo on /upnp/control/AVTransport (for devices hiding description.xml)
+      // 2. Direct SOAP GetTransportInfo on /upnp/control/AVTransport (for speakers with hidden XML descriptors)
       probeTasks.push(
         sendSoapRequest(
           cleanIp,
@@ -201,9 +209,10 @@ export class DlnaEngine {
           'urn:schemas-upnp-org:service:AVTransport:1',
           'GetTransportInfo',
           '<InstanceID>0</InstanceID>',
-          650
+          1500
         ).then(soapRes => {
-          if (soapRes.statusCode === 200 || (soapRes.responseText && (soapRes.responseText.includes('UPnPError') || soapRes.responseText.includes('TransportInfo')))) {
+          if (soapRes.statusCode === 200 || (soapRes.responseText && (soapRes.responseText.includes('UPnPError') || soapRes.responseText.includes('TransportInfo') || soapRes.responseText.includes('CurrentTransportState')))) {
+            console.log(`[DLNA Probe] ✅ 发现活动 AVTransport SOAP 端口: ${cleanIp}:${port}`);
             return {
               ip: cleanIp,
               port,
@@ -222,12 +231,13 @@ export class DlnaEngine {
       for (const r of results) {
         if (r.status === 'fulfilled' && r.value) {
           dlnaEndpointCache.set(cleanIp, r.value);
-          console.log(`[DLNA] Discovered MediaRenderer on ${cleanIp}:${r.value.port} (${r.value.friendlyName || 'Speaker'})`);
+          console.log(`[DLNA] 成功识别并锁定 MediaRenderer 端点: ${cleanIp}:${r.value.port}${r.value.controlUrl}`);
           return r.value;
         }
       }
     } catch {}
 
+    console.warn(`[DLNA Probe] ⚠️ 未能在端口 [${uniquePorts.join(', ')}] 自动捕获到活动 DLNA 服务`);
     return null;
   }
 
@@ -286,12 +296,45 @@ export class DlnaEngine {
     } = {}
   ): Promise<{ success: boolean; port?: number; controlUrl?: string; error?: string; latency?: number }> {
     const t0 = Date.now();
-    const endpoint = await this.probeDevice(ip);
+    console.log(`[DLNA] 准备向音箱 ${ip} 发送 DLNA 媒体流: ${streamUrl}`);
+
+    let endpoint = await this.probeDevice(ip);
+
+    // If probing description XML failed, try direct XiaoAi default port 1420 & 49152
+    if (!endpoint) {
+      console.log(`[DLNA] 正在尝试小爱标准直接端点 fallback (${ip}:1420 & ${ip}:49152)...`);
+      const fallbackPorts = [1420, 49152];
+      for (const fPort of fallbackPorts) {
+        const testRes = await sendSoapRequest(
+          ip,
+          fPort,
+          '/upnp/control/AVTransport',
+          'urn:schemas-upnp-org:service:AVTransport:1',
+          'GetTransportInfo',
+          '<InstanceID>0</InstanceID>',
+          1200
+        );
+        if (testRes.statusCode === 200 || (testRes.responseText && (testRes.responseText.includes('UPnPError') || testRes.responseText.includes('TransportInfo')))) {
+          endpoint = {
+            ip,
+            port: fPort,
+            controlUrl: '/upnp/control/AVTransport',
+            renderingControlUrl: '/upnp/control/RenderingControl',
+            friendlyName: `小爱音箱 (${ip})`
+          };
+          dlnaEndpointCache.set(ip, endpoint);
+          console.log(`[DLNA] ✅ 直接端点命中: ${ip}:${fPort}/upnp/control/AVTransport`);
+          break;
+        }
+      }
+    }
 
     if (!endpoint) {
+      const err = `未能发现设备 ${ip} 的 DLNA 影音渲染服务（请在小爱音箱 App 中开启【DLNA】支持，并确保与服务端处于同局域网）`;
+      console.warn(`[DLNA] ❌ ${err}`);
       return {
         success: false,
-        error: `未能发现设备 ${ip} 的 DLNA 影音渲染服务（请确认小爱音箱 App 中已开启【DLNA】投屏开关，且处于同局域网）`
+        error: err
       };
     }
 
@@ -312,7 +355,7 @@ export class DlnaEngine {
         'urn:schemas-upnp-org:service:AVTransport:1',
         'Stop',
         '<InstanceID>0</InstanceID>',
-        1000
+        800
       );
     } catch {}
 
@@ -331,6 +374,8 @@ export class DlnaEngine {
       2500
     );
 
+    console.log(`[DLNA] [${endpoint.ip}:${endpoint.port}] SetAVTransportURI 响应: status=${setUriRes.statusCode}, success=${setUriRes.success}`);
+
     if (!setUriRes.success && setUriRes.statusCode !== 200) {
       // Retry SetAVTransportURI with empty metadata (some lightweight UPnP renderers fail on long DIDL metadata)
       const simpleSetUri = await sendSoapRequest(
@@ -343,12 +388,16 @@ export class DlnaEngine {
         2000
       );
 
+      console.log(`[DLNA] [${endpoint.ip}:${endpoint.port}] SetAVTransportURI 简化重试: status=${simpleSetUri.statusCode}, success=${simpleSetUri.success}`);
+
       if (!simpleSetUri.success) {
+        const err = `DLNA SetAVTransportURI 拒绝: ${simpleSetUri.error || simpleSetUri.responseText || '音箱拒绝解析串流地址'}`;
+        console.warn(`[DLNA] ❌ ${err}`);
         return {
           success: false,
           port: endpoint.port,
           controlUrl: endpoint.controlUrl,
-          error: `DLNA SetAVTransportURI 拒绝: ${simpleSetUri.error || simpleSetUri.responseText || '音箱拒绝解析串流地址'}`
+          error: err
         };
       }
     }
@@ -363,6 +412,8 @@ export class DlnaEngine {
       '<InstanceID>0</InstanceID><Speed>1</Speed>',
       2000
     );
+
+    console.log(`[DLNA] [${endpoint.ip}:${endpoint.port}] Play 响应: status=${playRes.statusCode}, success=${playRes.success}`);
 
     const elapsed = Date.now() - t0;
 
@@ -386,6 +437,8 @@ export class DlnaEngine {
       '<InstanceID>0</InstanceID><Speed>1</Speed>',
       2000
     );
+
+    console.log(`[DLNA] [${endpoint.ip}:${endpoint.port}] Play 延迟重试: status=${retryPlay.statusCode}, success=${retryPlay.success}`);
 
     return {
       success: retryPlay.success || retryPlay.statusCode === 200,

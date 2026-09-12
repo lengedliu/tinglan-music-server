@@ -1495,6 +1495,74 @@ interface StreamEventInfo {
 }
 let recentStreamEvents: StreamEventInfo[] = [];
 
+type StreamConsumerCallback = (event: { clientIp: string; songId: string; userAgent: string; status: number; timeMs: number }) => void;
+const streamConsumerCallbacks: Set<StreamConsumerCallback> = new Set();
+
+function registerStreamConsumerCallback(cb: StreamConsumerCallback) {
+  streamConsumerCallbacks.add(cb);
+  return () => {
+    streamConsumerCallbacks.delete(cb);
+  };
+}
+
+function notifyStreamConsumed(event: { clientIp: string; songId: string; userAgent: string; status: number; timeMs: number }) {
+  for (const cb of streamConsumerCallbacks) {
+    try { cb(event); } catch {}
+  }
+}
+
+/**
+ * Playback Verification: Wait for speaker to issue HTTP GET /api/stream/...
+ * Guarantees that commands are only marked successful when the real audio stream is pulled.
+ */
+async function waitForStreamConsumption(
+  targetIp?: string,
+  songId?: string,
+  timeoutMs: number = 3500
+): Promise<{ consumed: boolean; latencyMs?: number; event?: any }> {
+  const startTime = Date.now();
+  const cleanSong = (songId || '').replace(/\.(mp3|flac|wav|m4a|aac|ogg|opus)$/i, '').toLowerCase();
+
+  // 1. Check if the speaker already requested the audio stream within the last 1500ms
+  const recent = recentStreamEvents.find(e => {
+    const matchIp = !targetIp || e.clientIp === targetIp || targetIp.includes(e.clientIp) || e.clientIp.includes(targetIp);
+    const cleanEventSong = (e.songId || '').replace(/\.(mp3|flac|wav|m4a|aac|ogg|opus)$/i, '').toLowerCase();
+    const matchSong = !cleanSong || cleanEventSong.includes(cleanSong) || cleanSong.includes(cleanEventSong);
+    return matchIp && matchSong && (e.timeMs >= startTime - 1500);
+  });
+
+  if (recent) {
+    return { consumed: true, latencyMs: Date.now() - startTime, event: recent };
+  }
+
+  // 2. Wait for incoming stream request
+  return new Promise(resolve => {
+    let resolved = false;
+    let unsubscribe: () => void;
+
+    const timer = setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        if (unsubscribe) unsubscribe();
+        resolve({ consumed: false });
+      }
+    }, timeoutMs);
+
+    unsubscribe = registerStreamConsumerCallback((ev) => {
+      if (resolved) return;
+      const matchIp = !targetIp || ev.clientIp === targetIp || targetIp.includes(ev.clientIp) || ev.clientIp.includes(targetIp);
+      const cleanEventSong = (ev.songId || '').replace(/\.(mp3|flac|wav|m4a|aac|ogg|opus)$/i, '').toLowerCase();
+      const matchSong = !cleanSong || cleanEventSong.includes(cleanSong) || cleanSong.includes(cleanEventSong);
+      if (matchIp && matchSong) {
+        resolved = true;
+        clearTimeout(timer);
+        unsubscribe();
+        resolve({ consumed: true, latencyMs: Date.now() - startTime, event: ev });
+      }
+    });
+  });
+}
+
 // Auto-recover session and speaker devices from passToken on startup if available
 if ((miotConfig as any).passToken) {
   const candidateUid = miotConfig.userId || (miotConfig as any).cUserId || '0';
@@ -4129,7 +4197,8 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
     {
       songArtist,
       duration,
-      castMode: selectedCastMode
+      castMode: selectedCastMode,
+      waitForStreamConsumption
     }
   );
 
@@ -4939,6 +5008,15 @@ const streamAudioHandler = async (req: Request, res: Response) => {
       path: req.originalUrl || req.url
     });
     if (recentStreamEvents.length > 50) recentStreamEvents.pop();
+
+    notifyStreamConsumed({
+      clientIp,
+      songId: String(songId),
+      userAgent,
+      status: isPartial ? 206 : 200,
+      timeMs: Date.now()
+    });
+    console.log(`[StreamServer] [ACCESS LOG] ${isPartial ? 'HTTP 206' : 'HTTP 200'} GET ${req.originalUrl || req.url} | 来源IP: ${clientIp} | UA: ${userAgent.slice(0, 60)}`);
 
     // Diagnostic Stream Fetch Log Entry
     const streamLogEntry = {
