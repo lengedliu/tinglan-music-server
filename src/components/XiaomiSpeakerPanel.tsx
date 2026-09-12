@@ -1946,6 +1946,18 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                               </span>
                             )}
 
+                            {(dev.model?.toLowerCase().includes('oh2p') || 
+                              dev.model?.toLowerCase().includes('l16a') || 
+                              dev.model?.toLowerCase().includes('lx06') || 
+                              dev.model?.toLowerCase().includes('l05c') || 
+                              dev.hardware?.toUpperCase() === 'OH2P' || 
+                              dev.hardware?.toUpperCase() === 'L16A') && (
+                              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1" title="匹配 Songloft XiaoWei CP 流媒体协议，已启用专用 player_play_music 直链投播">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                                Songloft CP 流媒体就绪
+                              </span>
+                            )}
+
                             {dev.capabilities?.hasTts && (
                               <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-300 border border-purple-500/20 font-medium">
                                 TTS

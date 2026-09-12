@@ -3919,6 +3919,40 @@ async function callMinaCloudApi(
     }
   }
 
+  // Songloft 动态设备映射：若 deviceId 仍未知或仅为数字 MIoT DID，向 Mina 查询官方 device_list 自动补全
+  if (activeMicoToken && cleanUid && (!matchedDev || !(matchedDev as any).deviceID || isSyntheticId(deviceId))) {
+    try {
+      const minaDevListRes = await fetch('https://api2.mina.mi.com/admin/v2/device_list?master=1', {
+        headers: {
+          'User-Agent': 'MISoundBox/1.4.0 (iPhone; iOS 14.4; Scale/3.00)',
+          'Cookie': `userId=${cleanUid}; serviceToken=${activeMicoToken}; channel=MI_APP_STORE`
+        },
+        signal: AbortSignal.timeout(3000)
+      });
+      if (minaDevListRes.ok) {
+        const listJson: any = await minaDevListRes.json();
+        const devList = Array.isArray(listJson?.data) ? listJson.data : (Array.isArray(listJson) ? listJson : []);
+        const foundMinaDev = devList.find((item: any) => 
+          String(item.miotDID) === String(targetDid) || 
+          String(item.deviceID) === String(targetDid) ||
+          (matchedDev?.name && item.name === matchedDev.name) ||
+          (matchedDev?.mac && item.mac === matchedDev.mac)
+        );
+        if (foundMinaDev && foundMinaDev.deviceID) {
+          deviceId = foundMinaDev.deviceID;
+          if (matchedDev) {
+            (matchedDev as any).deviceID = foundMinaDev.deviceID;
+            if (foundMinaDev.hardware) (matchedDev as any).hardware = foundMinaDev.hardware;
+            saveJson(DEVICES_FILE, xiaomiDevices);
+          }
+          console.log(`[Mina] Songloft 自动关联成功: DID ${targetDid} -> 云端 DeviceID: ${deviceId} (${foundMinaDev.hardware || 'XiaoAi'})`);
+        }
+      }
+    } catch (autoDevErr: any) {
+      console.warn('[Mina] Songloft 自动关联设备列表失败:', autoDevErr.message);
+    }
+  }
+
   // Handle synthetic local DIDs (auto-link to account's cloud speakers by IP, MAC, name or single-speaker fallback)
   if (isSyntheticId(deviceId)) {
     // 1. Match by exact IP in cloud devices
@@ -3972,7 +4006,7 @@ async function callMinaCloudApi(
         headers: {
           'User-Agent': 'MISoundBox/1.4.0 (iPhone; iOS 14.4; Scale/3.00)',
           'Content-Type': 'application/x-www-form-urlencoded',
-          'Cookie': `userId=${cleanUid}; serviceToken=${activeMicoToken}; deviceId=${deviceId}; PassportDeviceId=${cleanUid}`
+          'Cookie': `userId=${cleanUid}; serviceToken=${activeMicoToken}; deviceId=${deviceId}; channel=MI_APP_STORE; PassportDeviceId=${cleanUid}`
         },
         body: postBody.toString(),
         signal: AbortSignal.timeout(3500)
@@ -5016,7 +5050,11 @@ const streamAudioHandler = async (req: Request, res: Response) => {
       status: isPartial ? 206 : 200,
       timeMs: Date.now()
     });
-    console.log(`[StreamServer] [ACCESS LOG] ${isPartial ? 'HTTP 206' : 'HTTP 200'} GET ${req.originalUrl || req.url} | 来源IP: ${clientIp} | UA: ${userAgent.slice(0, 60)}`);
+    const isSpeakerIp = xiaomiDevices.some(d => d.ip && (d.ip === clientIp || clientIp.includes(d.ip)));
+    const clientTag = isSpeakerIp
+      ? '🎵【音箱拉流命中】'
+      : (isBrowserClient ? '💻【网页试听/预览】' : '📡【外部客户端】');
+    console.log(`[StreamServer] ${clientTag} ${isPartial ? 'HTTP 206' : 'HTTP 200'} GET ${req.originalUrl || req.url} | 来源IP: ${clientIp} | UA: ${userAgent.slice(0, 60)}`);
 
     // Diagnostic Stream Fetch Log Entry
     const streamLogEntry = {
