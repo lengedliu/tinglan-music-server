@@ -361,10 +361,10 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
     }
   };
 
-  // QR Code Channel selection: 'xiaomiio' (米家 App 授权 - 推荐) vs 'micoapi' (小爱音箱 App 授权)
-  const [qrChannel, setQrChannel] = useState<'xiaomiio' | 'micoapi'>('xiaomiio');
+  // QR Code Channel selection: 'micoapi' (小爱音箱专属授权 - 与 Songloft 架构一致，米家App与小爱App均可扫码)
+  const [qrChannel, setQrChannel] = useState<'xiaomiio' | 'micoapi'>('micoapi');
 
-  // Fetch QR Code for Login with Channel Support (sid=xiaomiio & dc=ak vs micoapi)
+  // Fetch QR Code for Login with Channel Support (sid=micoapi vs xiaomiio)
   const handleGenerateQrCode = async (channel?: 'xiaomiio' | 'micoapi') => {
     const targetChannel = channel || qrChannel;
     if (channel && channel !== qrChannel) {
@@ -377,9 +377,9 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
     setLoginError(null);
     setQrSyncSuccess(null);
     setQrStatusText(
-      targetChannel === 'xiaomiio'
-        ? '正在向国内认证中心 (cn.account.xiaomi.com) 申请米家原生登录二维码...'
-        : '正在向小米认证中心申请小爱音箱服务授权二维码...'
+      targetChannel === 'micoapi'
+        ? '正在申请小爱音箱专属授权二维码（米家 App / 小爱 App 均支持扫码）...'
+        : '正在向认证中心申请米家通用二维码...'
     );
     try {
       const res = await apiFetch(`/api/miot/passport/qrcode/get?sid=${encodeURIComponent(targetChannel)}&region=cn`);
@@ -402,9 +402,9 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
           lpUrl: data.lpUrl
         });
         setQrStatusText(
-          targetChannel === 'xiaomiio'
-            ? '请使用【米家 App】扫码，或点击下方【在浏览器打开授权】'
-            : '请使用【小爱音箱 App】扫码，或点击下方【在浏览器打开授权】'
+          targetChannel === 'micoapi'
+            ? '请使用【米家 App】或【小爱音箱 App】扫码授权登录'
+            : '请使用【米家 App】扫码授权登录'
         );
         startQrCodePolling(data.loginUrl, data.lpUrl, targetChannel);
       } else {

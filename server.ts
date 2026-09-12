@@ -3126,8 +3126,8 @@ app.post('/api/miot/logout', (req: Request, res: Response) => {
 app.get('/api/miot/passport/qrcode/get', async (req: Request, res: Response) => {
   if (!checkMiotAdminPermission(req, res)) return;
 
-  // Default to 'xiaomiio' for full compatibility with Mi Home App (米家 App) internal QR scanner
-  const sid = (req.query.sid as string) || 'xiaomiio';
+  // Default to 'micoapi' (matching Songloft architecture) for direct XiaoAi soundbox authorization
+  const sid = (req.query.sid as string) || 'micoapi';
   const region = (req.query.region as string) || 'cn';
   const qrRes = await xiaomiPassport.generateLoginQrCode(sid, region);
   if (qrRes.success) {

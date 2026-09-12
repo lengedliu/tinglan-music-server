@@ -616,10 +616,26 @@ export class XiaomiPassport {
         });
         clearTimeout(timeoutId);
 
+        // Extract any Set-Cookie headers returned by Xiaomi
+        const setCookiesArr: string[] = typeof (res.headers as any).getSetCookie === 'function'
+          ? (res.headers as any).getSetCookie()
+          : (res.headers.get('set-cookie') ? [res.headers.get('set-cookie')!] : []);
+        
+        let headerPassToken = '';
+        for (const sc of setCookiesArr) {
+          const match = sc.match(/(?:passToken|serviceToken)=([^;\s]+)/i);
+          if (match && sc.toLowerCase().includes('passtoken')) {
+            headerPassToken = match[1];
+          }
+        }
+
         const raw = await res.text();
         const clean = raw.replace('&&&START&&&', '');
         try {
           data = JSON.parse(clean);
+          if (headerPassToken && !data.passToken) {
+            data.passToken = headerPassToken;
+          }
         } catch {}
       } catch (pollErr: any) {
         // AbortError or network timeout during long-polling is expected when no scan event occurred yet -> STILL PENDING
