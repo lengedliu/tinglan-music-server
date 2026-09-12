@@ -1662,6 +1662,12 @@ function sanitizeDevice(dev: any) {
 
   return {
     did: String(dev.did),
+    deviceID: dev.deviceID || dev.uuid || dev.hardwareDeviceId || undefined,
+    uuid: dev.uuid || dev.deviceID || dev.hardwareDeviceId || undefined,
+    hardwareDeviceId: dev.hardwareDeviceId || dev.deviceID || undefined,
+    cloudDid: dev.cloudDid || undefined,
+    homeId: dev.homeId || dev.home_id || undefined,
+    roomId: dev.roomId || dev.room_id || undefined,
     model: dev.model || 'xiaomi.wifispeaker.sound',
     name: (dev.name || '小米智能音箱').replace(/\s*[\(（]点击(右侧)?编辑[\)）]/g, '').trim(),
     ip: dev.ip || undefined,
@@ -1688,7 +1694,8 @@ function sanitizeDevice(dev: any) {
       volume: 45,
       muted: false,
       updatedAt: new Date().toISOString()
-    }
+    },
+    raw: dev.raw || undefined
   };
 }
 
