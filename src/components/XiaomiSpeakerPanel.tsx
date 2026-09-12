@@ -725,7 +725,6 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
   const [editDevName, setEditDevName] = useState('');
   const [editDevIp, setEditDevIp] = useState('');
   const [editDevDid, setEditDevDid] = useState('');
-  const [editDevUuid, setEditDevUuid] = useState('');
   const [editDevModel, setEditDevModel] = useState('');
   const [editDevHardware, setEditDevHardware] = useState('');
   const [editDevToken, setEditDevToken] = useState('');
@@ -769,9 +768,8 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
   const openEditModal = (dev: XiaomiDevice) => {
     setEditingDevice(dev);
     setEditDevName(dev.name);
-    setEditDevIp(dev.ip || '');
+    setEditDevIp(dev.ip);
     setEditDevDid(dev.did);
-    setEditDevUuid(dev.deviceID || dev.uuid || dev.hardwareDeviceId || '');
     setEditDevModel(dev.model || 'xiaomi.wifispeaker');
     setEditDevHardware(dev.hardware || 'Xiaoai');
     setEditDevToken(dev.token || '');
@@ -786,9 +784,6 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
         name: editDevName.trim(),
         ip: editDevIp.trim(),
         did: editDevDid.trim() || editingDevice.did,
-        deviceID: editDevUuid.trim() || undefined,
-        uuid: editDevUuid.trim() || undefined,
-        hardwareDeviceId: editDevUuid.trim() || undefined,
         model: editDevModel.trim() || 'xiaomi.wifispeaker',
         hardware: editDevHardware.trim() || 'Xiaoai',
         token: editDevToken.trim() || undefined
@@ -2032,37 +2027,6 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                         <span className="text-zinc-500">设备 DID:</span>
                         <span className="text-zinc-200 font-mono ml-1.5">{dev.did}</span>
                       </div>
-                      <div className="col-span-2 flex items-center justify-between bg-zinc-900/40 p-2 rounded-xl border border-white/5">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <span className="text-zinc-400 flex-shrink-0 font-medium">小爱 Mina UUID:</span>
-                          {dev.deviceID || dev.uuid || dev.hardwareDeviceId ? (
-                            <span className="text-emerald-400 font-mono text-[11px] truncate select-all" title={dev.deviceID || dev.uuid || dev.hardwareDeviceId}>
-                              {dev.deviceID || dev.uuid || dev.hardwareDeviceId}
-                            </span>
-                          ) : (
-                            <span className="text-amber-400/80 font-mono text-[11px]">
-                              未绑定官方 UUID (扫码小爱服务后自动拉取)
-                            </span>
-                          )}
-                        </div>
-                        {(dev.deviceID || dev.uuid || dev.hardwareDeviceId) && (
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              copyToClipboard(dev.deviceID || dev.uuid || dev.hardwareDeviceId || '', `uuid_${dev.did}`);
-                            }}
-                            className="p-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition flex-shrink-0"
-                            title="复制小爱音箱 Mina 专属 UUID"
-                          >
-                            {copiedKey === `uuid_${dev.did}` ? (
-                              <Check className="w-3 h-3 text-emerald-400" />
-                            ) : (
-                              <Copy className="w-3 h-3" />
-                            )}
-                          </button>
-                        )}
-                      </div>
                       <div>
                         <span className="text-zinc-500">MAC 地址:</span>
                         <span className="text-zinc-200 font-mono ml-1.5">{dev.mac}</span>
@@ -2442,27 +2406,13 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                   </div>
 
                   <div>
-                    <label className="block text-xs text-zinc-400 mb-1 font-medium">设备 DID (米家设备唯一编号)</label>
+                    <label className="block text-xs text-zinc-400 mb-1 font-medium">设备 DID (设备唯一标识)</label>
                     <input
                       type="text"
                       placeholder="例如：381928471"
                       value={editDevDid}
                       onChange={(e) => setEditDevDid(e.target.value)}
                       className="w-full px-4 py-2 bg-zinc-950/80 border border-white/10 rounded-xl text-xs text-zinc-300 font-mono focus:outline-none focus:border-[#FF6700] transition"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs text-zinc-400 mb-1 font-medium flex items-center justify-between">
-                      <span>小爱 Mina UUID (音箱专属硬件标识)</span>
-                      <span className="text-[10px] text-zinc-500 font-normal">扫码登录小爱服务可自动获取</span>
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="例如：d0f8a846-563b-4896-b072-68a86a60e10b"
-                      value={editDevUuid}
-                      onChange={(e) => setEditDevUuid(e.target.value)}
-                      className="w-full px-4 py-2 bg-zinc-950/80 border border-white/10 rounded-xl text-xs text-emerald-400 font-mono focus:outline-none focus:border-[#FF6700] transition"
                     />
                   </div>
 

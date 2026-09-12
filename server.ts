@@ -3217,7 +3217,6 @@ app.post('/api/miot/passport/qrcode/check', async (req: Request, res: Response) 
       const resolvePromise = xiaoaiResolverEngine.resolveDevices({
         userId: checkRes.userId,
         serviceToken: micoServiceToken || effectiveToken,
-        micoServiceToken: micoServiceToken || effectiveToken,
         xiaomiioServiceToken: xiaomiioServiceToken || effectiveToken,
         ssecurity: ssecurity || (miotConfig as any).ssecurity,
         existingDevices: xiaomiDevices,
@@ -3586,7 +3585,7 @@ app.put('/api/miot/devices/:did', async (req: Request, res: Response) => {
   if (!checkMiotAdminPermission(req, res)) return;
 
   const { did } = req.params;
-  const { name, ip, did: newDid, model, hardware, token, deviceID, uuid, hardwareDeviceId } = req.body;
+  const { name, ip, did: newDid, model, hardware, token } = req.body;
 
   const index = xiaomiDevices.findIndex(d => d.did === did);
   if (index === -1) {
@@ -3603,18 +3602,12 @@ app.put('/api/miot/devices/:did', async (req: Request, res: Response) => {
   const specEval = await xiaoaiResolverEngine.evaluateMiotSpec(cleanModel);
   const targetIp = ip !== undefined ? ip.trim() : currentDev.ip;
   const hasToken = Boolean(resolvedToken && resolvedToken.length > 0);
-  const resolvedUuid = (deviceID || uuid || hardwareDeviceId) !== undefined
-    ? String(deviceID || uuid || hardwareDeviceId).trim()
-    : (currentDev.deviceID || currentDev.uuid || currentDev.hardwareDeviceId);
 
   xiaomiDevices[index] = {
     ...currentDev,
     name: name !== undefined ? name.trim() : currentDev.name,
     ip: targetIp,
     did: newDid !== undefined ? String(newDid).trim() : currentDev.did,
-    deviceID: resolvedUuid || undefined,
-    uuid: resolvedUuid || undefined,
-    hardwareDeviceId: resolvedUuid || undefined,
     model: cleanModel,
     hardware: hardware !== undefined ? hardware.trim() : currentDev.hardware,
     token: resolvedToken,
