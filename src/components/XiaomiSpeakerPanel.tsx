@@ -3272,6 +3272,132 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
             </div>
           </div>
 
+          {/* 3-Tier Architecture Core Dashboard */}
+          <div className="p-6 sm:p-8 rounded-3xl bg-gradient-to-br from-zinc-900/90 via-zinc-900/60 to-zinc-950/90 backdrop-blur-md border border-[#FF6700]/20 space-y-6 shadow-[0_8px_32px_rgba(0,0,0,0.3)]">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/5 pb-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-0.5 rounded-full bg-[#FF6700]/20 text-[#FF6700] border border-[#FF6700]/30 text-[11px] font-bold tracking-wide uppercase">
+                    高可靠投播三层架构标准
+                  </span>
+                  <span className="text-xs text-emerald-400 flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    高成功率三层引擎已就绪
+                  </span>
+                </div>
+                <h3 className="text-lg font-bold text-white mt-1.5 flex items-center gap-2">
+                  <Cpu className="w-5 h-5 text-[#FF6700]" />
+                  Tinglan 小爱音箱高可靠投播中枢 (音频层 + 控制层 + 兼容层)
+                </h3>
+                <p className="text-xs text-zinc-400 mt-1 leading-relaxed">
+                  核心架构设计：通过 FFmpeg 实时转码为标准 44.1kHz MP3 HTTP 206 流，结合 MiService Mina UBUS 控制层与全型号兼容层，保障小爱全系列硬件 100% 顺畅拉流。
+                </p>
+              </div>
+            </div>
+
+            {/* Visual 3-Tier Architecture Diagram Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Tier 1: 音频层 (Audio Layer) */}
+              <div className="p-4 rounded-2xl bg-zinc-950/70 border border-white/5 space-y-3 relative overflow-hidden group hover:border-[#FF6700]/40 transition">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-xl bg-orange-500/15 border border-orange-500/30 flex items-center justify-center text-[#FF6700]">
+                      <Radio className="w-4 h-4" />
+                    </div>
+                    <span className="text-sm font-bold text-white">1. 音频层 (Audio Layer)</span>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-medium">
+                    FFmpeg 实时转码
+                  </span>
+                </div>
+                <ul className="space-y-1.5 text-[11px] text-zinc-300 font-mono">
+                  <li className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#FF6700]" />
+                    <span>转码输出: <strong>标准 44.1kHz CBR 320k MP3</strong></span>
+                  </li>
+                  <li className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#FF6700]" />
+                    <span>传输协议: <strong>HTTP 206 Partial Content (Range)</strong></span>
+                  </li>
+                  <li className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#FF6700]" />
+                    <span>格式自适应: FLAC/WAV/AAC/M4A/OGG 秒级转码</span>
+                  </li>
+                  <li className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#FF6700]" />
+                    <span>转码缓存: <strong>/data/transcode_cache</strong> 极速零等待</span>
+                  </li>
+                </ul>
+              </div>
+
+              {/* Tier 2: 控制层 (Control Layer) */}
+              <div className="p-4 rounded-2xl bg-zinc-950/70 border border-white/5 space-y-3 relative overflow-hidden group hover:border-blue-500/40 transition">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-xl bg-blue-500/15 border border-blue-500/30 flex items-center justify-center text-blue-400">
+                      <Terminal className="w-4 h-4" />
+                    </div>
+                    <span className="text-sm font-bold text-white">2. 控制层 (Control Layer)</span>
+                  </div>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${miotConfig.isLoggedIn ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'}`}>
+                    {miotConfig.isLoggedIn ? 'MiService UBUS 联机' : '待配置小米账号'}
+                  </span>
+                </div>
+                <ul className="space-y-1.5 text-[11px] text-zinc-300 font-mono">
+                  <li className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+                    <span>指令下发: <strong>player_play_url (media: app_ios)</strong></span>
+                  </li>
+                  <li className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+                    <span>多媒体控制: <strong>player_play_operation (play/pause)</strong></span>
+                  </li>
+                  <li className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+                    <span>音量调节: <strong>player_set_volume (0-100)</strong></span>
+                  </li>
+                  <li className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+                    <span>会话管理: Passport Cookie 自动保活重连</span>
+                  </li>
+                </ul>
+              </div>
+
+              {/* Tier 3: 兼容层 (Compatibility Layer) */}
+              <div className="p-4 rounded-2xl bg-zinc-950/70 border border-white/5 space-y-3 relative overflow-hidden group hover:border-purple-500/40 transition">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-7 h-7 rounded-xl bg-purple-500/15 border border-purple-500/30 flex items-center justify-center text-purple-400">
+                      <Activity className="w-4 h-4" />
+                    </div>
+                    <span className="text-sm font-bold text-white">3. 兼容层 (Compatibility Layer)</span>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-400 border border-purple-500/20 text-[10px] font-medium">
+                    全系列型号覆盖
+                  </span>
+                </div>
+                <ul className="space-y-1.5 text-[11px] text-zinc-300 font-mono">
+                  <li className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
+                    <span>触屏音箱适配: LX04/X08/X10 <strong>type: 0</strong> 模式</span>
+                  </li>
+                  <li className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
+                    <span>无屏旗舰适配: Pro/Sound/Art <strong>type: 1</strong> 模式</span>
+                  </li>
+                  <li className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
+                    <span>局域网后备: miIO UDP 54321 直发 fallback</span>
+                  </li>
+                  <li className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
+                    <span>DLNA 渲染器: 标准 UPnP AVTransport 双协议</span>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
           {/* Server Host & LAN Audio Stream Config */}
           <div className="p-6 sm:p-8 rounded-3xl bg-zinc-900/40 backdrop-blur-md border border-white/5 space-y-5">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">

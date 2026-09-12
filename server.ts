@@ -13,14 +13,22 @@ import pg from 'pg';
 import mysql from 'mysql2/promise';
 import { parseFile, parseBuffer } from 'music-metadata';
 import { createServer as createViteServer } from 'vite';
-import { xiaomiPassport } from './server/xiaomiPassport';
-import { minaWsClient } from './server/minaWebSocket';
-import { miotRpcEngine, XIAOAI_MIOT_SPEC } from './server/miotRpc';
-import { deviceDiscoveryEngine } from './server/deviceDiscovery';
-import { xiaoaiResolverEngine, extractDevicesFromMinaResponse } from './server/xiaoaiResolver';
-import { ttsEngine, POPULAR_TTS_VOICES } from './server/ttsEngine';
-import { dlnaEngine } from './server/dlnaEngine';
+import { xiaomiPassport } from './server/xiaomiPassport.js';
+import { minaWsClient } from './server/minaWebSocket.js';
+import { miotRpcEngine, XIAOAI_MIOT_SPEC } from './server/miotRpc.js';
+import { deviceDiscoveryEngine } from './server/deviceDiscovery.js';
+import { xiaoaiResolverEngine, extractDevicesFromMinaResponse } from './server/xiaoaiResolver.js';
+import { ttsEngine, POPULAR_TTS_VOICES } from './server/ttsEngine.js';
+import { dlnaEngine } from './server/dlnaEngine.js';
 import { GoogleGenAI } from '@google/genai';
+import {
+  MusicEngine,
+  PlaylistEngine,
+  FfmpegTranscoder,
+  StreamServer,
+  DeviceManager,
+  XiaomiAdapter
+} from './server/index.js';
 
 const dynamicRequire = typeof require !== 'undefined'
   ? require
@@ -44,8 +52,9 @@ app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 // Directories
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
 const MUSIC_DIR = process.env.MUSIC_DIR || path.join(process.cwd(), 'music');
+const TRANSCODE_CACHE_DIR = path.join(DATA_DIR, 'transcode_cache');
 
-for (const dir of [DATA_DIR, MUSIC_DIR]) {
+for (const dir of [DATA_DIR, MUSIC_DIR, TRANSCODE_CACHE_DIR]) {
   if (!fs.existsSync(dir)) {
     try {
       fs.mkdirSync(dir, { recursive: true });
@@ -54,6 +63,27 @@ for (const dir of [DATA_DIR, MUSIC_DIR]) {
     }
   }
 }
+
+// ---------------- 6-MODULE ARCHITECTURE CORE INSTANCES ----------------
+// 1. ffmpeg-transcoder: Audio Transcode Engine
+export const ffmpegTranscoder = new FfmpegTranscoder(TRANSCODE_CACHE_DIR);
+
+// 2. music-engine: Songs Metadata & Repository Engine
+export const musicEngine = new MusicEngine(MUSIC_DIR, DATA_DIR, ffmpegTranscoder);
+
+// 3. playlist-engine: Queue, Playlist & Track Dispatching Engine
+export const playlistEngine = new PlaylistEngine(DATA_DIR);
+
+// 4. device-manager: XiaoAi Device Inventory & Model Matrix
+export const deviceManager = new DeviceManager(DATA_DIR);
+
+// 5. stream-server: RFC 7233 HTTP 206 Partial Content Stream Service
+export const streamServer = new StreamServer(MUSIC_DIR, musicEngine, ffmpegTranscoder, deviceManager, PORT);
+
+// 6. xiaomi-adapter: Multi-tier Cast Dispatcher (UBUS / MIoT / miIO / DLNA)
+export const xiaomiAdapter = new XiaomiAdapter(deviceManager);
+
+const audioTranscoder = ffmpegTranscoder;
 
 // Cryptographically secure, persistent JWT secret
 const JWT_SECRET_FILE = path.join(DATA_DIR, '.jwt_secret');
@@ -2312,6 +2342,13 @@ app.post('/api/songs/upload', async (req: Request, res: Response) => {
 
     storedSongs.unshift(newSong);
     saveJson(SONGS_FILE, storedSongs);
+
+    // Background warm transcode to Standard MP3 (XiaoMusic Audio Layer)
+    setTimeout(() => {
+      try {
+        audioTranscoder.ensureStandardMp3(targetPath, songId);
+      } catch {}
+    }, 50);
 
     castLogs.unshift({
       id: `log-${Date.now()}`,
@@ -5064,25 +5101,18 @@ const streamAudioHandler = async (req: Request, res: Response) => {
     });
   }
 
-  // Automatic on-demand MP3 transcode for maximum hardware speaker compatibility
-  // If the file on disk is not MP3 (e.g. WAV, FLAC, APE) and the request is for MP3 or from a hardware audio player,
-  // transcode to a cached .mp3 using ffmpeg so the speaker never fails to decode it.
+  // Automatic on-demand MP3 transcode for maximum hardware speaker compatibility (XiaoMusic Audio Layer Standard)
+  // If the file on disk is not MP3 (e.g. WAV, FLAC, APE) or when requested from a hardware audio player / stream endpoint,
+  // transcode to a standard 44.1kHz stereo MP3 using FFmpeg so XiaoAi speakers never fail or hang on non-standard formats.
   const reqUserAgent = String(req.headers['user-agent'] || '');
   const isHardwareSpeaker = /stagefright|Lavf|gstreamer|xm_player|mico|xiaomi|vlc|mediaplayer/i.test(reqUserAgent);
-  const requestedAsMp3 = String(req.url).includes('.mp3') || String(songId).endsWith('.mp3');
+  const requestedAsMp3 = String(req.url).includes('.mp3') || String(songId).endsWith('.mp3') || String(req.url).startsWith('/stream/');
 
-  if (matchedExt !== '.mp3' && (requestedAsMp3 || isHardwareSpeaker)) {
-    const cachedMp3Path = path.join(MUSIC_DIR, `${cleanSongId}.mp3`);
-    if (!fs.existsSync(cachedMp3Path)) {
-      try {
-        execSync(`ffmpeg -y -i "${localFilePath}" -vn -ar 44100 -ac 2 -b:a 320k "${cachedMp3Path}"`, { timeout: 15000 });
-      } catch (transErr: any) {
-        console.warn('[Stream] On-demand MP3 transcode failed, serving original:', transErr?.message);
-      }
-    }
-    if (fs.existsSync(cachedMp3Path)) {
-      localFilePath = cachedMp3Path;
-      matchedExt = '.mp3';
+  if (matchedExt !== '.mp3' || requestedAsMp3 || isHardwareSpeaker) {
+    const transcodeResult = audioTranscoder.ensureStandardMp3(localFilePath, cleanSongId);
+    if (transcodeResult.success && fs.existsSync(transcodeResult.filePath)) {
+      localFilePath = transcodeResult.filePath;
+      matchedExt = transcodeResult.format;
     }
   }
 
@@ -5206,7 +5236,9 @@ const streamAudioHandler = async (req: Request, res: Response) => {
         'Content-Range': `bytes ${start}-${end}/${fileSize}`,
         'Accept-Ranges': 'bytes',
         'Content-Length': chunksize,
-        'Content-Type': contentType
+        'Content-Type': contentType,
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive'
       };
       res.writeHead(206, head);
       file.pipe(res);
@@ -5214,7 +5246,9 @@ const streamAudioHandler = async (req: Request, res: Response) => {
       const head = {
         'Content-Length': fileSize,
         'Content-Type': contentType,
-        'Accept-Ranges': 'bytes'
+        'Accept-Ranges': 'bytes',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive'
       };
       res.writeHead(200, head);
       fs.createReadStream(localFilePath).pipe(res);
@@ -5225,8 +5259,65 @@ const streamAudioHandler = async (req: Request, res: Response) => {
   res.status(404).send('Audio track not found');
 };
 
+// Stream endpoints: both standard Tinglan & XiaoMusic routes
 app.get('/api/stream/:songId', streamAudioHandler);
 app.head('/api/stream/:songId', streamAudioHandler);
+app.get('/api/stream/:songId.mp3', streamAudioHandler);
+app.head('/api/stream/:songId.mp3', streamAudioHandler);
+app.get('/stream/:songId', streamAudioHandler);
+app.head('/stream/:songId', streamAudioHandler);
+app.get('/music/:filename', (req: Request, res: Response) => {
+  req.params.songId = req.params.filename;
+  return streamAudioHandler(req, res);
+});
+app.head('/music/:filename', (req: Request, res: Response) => {
+  req.params.songId = req.params.filename;
+  return streamAudioHandler(req, res);
+});
+
+// 3-Tier Architecture Status API
+app.get(['/api/system/3tier-architecture', '/api/system/xiaomusic-architecture'], (req: Request, res: Response) => {
+  const transcodeStats = audioTranscoder.getCacheStats();
+  const activeMicoToken = (miotConfig as any).micoServiceToken || miotConfig.serviceToken;
+  res.json({
+    success: true,
+    architecture: {
+      name: 'Tinglan 3-Tier Audio & Cast Engine',
+      version: '3.0.0',
+      audioLayer: {
+        engine: 'FFmpeg Standard MP3 Transcoder',
+        ffmpegAvailable: audioTranscoder.isAvailable(),
+        standardBitrate: '320kbps CBR',
+        sampleRate: '44.1 kHz Stereo',
+        http206RangeSupport: true,
+        cacheCount: transcodeStats.count,
+        cacheSize: transcodeStats.totalSizeMb,
+        routes: ['/api/stream/:songId', '/stream/:songId', '/music/:filename']
+      },
+      controlLayer: {
+        engine: 'MiService Mina UBUS Caller',
+        isLoggedIn: miotConfig.isLoggedIn,
+        hasServiceToken: Boolean(activeMicoToken),
+        userId: miotConfig.userId || 'N/A',
+        primaryCommand: 'player_play_url (media: app_ios, type: 1)',
+        fallbackCommands: [
+          'player_play_url (type: 0, media: app_ios) [Touchscreen]',
+          'player_play_url (type: 1)',
+          'player_play_music (media: app_ios)'
+        ]
+      },
+      compatibilityLayer: {
+        modelMatrix: {
+          touchscreenModels: ['LX04', 'X08A', 'X08C', 'X08E', 'X10A'],
+          proSoundModels: ['OH2P', 'L16A', 'LX06', 'Xiaomi Sound'],
+          playModels: ['LX05', 'L05B', 'L05C', 'L07A']
+        },
+        fallbackChains: ['MiService Mina Cloud', 'MIoT Cloud Action', 'LAN miIO UDP 54321', 'DLNA UPnP AVTransport'],
+        activeDeviceCount: xiaomiDevices.length
+      }
+    }
+  });
+});
 
 // ---------------- SUBSONIC & OPENSUBSONIC REST API (Songloft Standard) ----------------
 const subsonicResponse = (req: Request, res: Response, dataKey: string, dataValue: any) => {
