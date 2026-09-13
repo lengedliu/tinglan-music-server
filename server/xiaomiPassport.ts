@@ -394,12 +394,20 @@ export class XiaomiPassport {
 
         // Songloft 优化：针对 mina.mi.com 小爱官方接口，强制使用官方 App 客户端伪装，洗净 Cookie 干扰项
         const isMinaEndpoint = currentUrl.includes('mina.mi.com');
+        let effectiveDevId = '';
         if (isMinaEndpoint) {
           const cleanUid = cookieKvMap.get('userId') || '';
           const clientDevId = getPersistentClientDeviceId(cleanUid);
 
-          // 1. 替换 URL 中 Web 端的 d=wb_xxx 为 app_ios_xxx 格式
-          currentUrl = currentUrl.replace(/([?&]d=)wb_[^&]+/g, `$1${clientDevId}`);
+          // 关键修复：从 locationUrl 参数中提取 Passport 签发给该设备的 d 参数（如 wb_... 或 app_ios_...）
+          // 严禁对 locationUrl 中的 d 参数做魔改或正则替换，因为 URL 中的 query string 被包含在 _ssign HMAC 签名中！
+          // 修改 query string 会导致签名校验不匹配而触发 api2.mina.mi.com 下发 401 Unauthorized。
+          try {
+            const uObj = new URL(currentUrl);
+            effectiveDevId = uObj.searchParams.get('d') || clientDevId;
+          } catch {
+            effectiveDevId = clientDevId;
+          }
 
           // 2. 清理 Web 登录遗留的 Cookie 干扰项
           cookieKvMap.delete('pass_ua');
@@ -407,9 +415,9 @@ export class XiaomiPassport {
           cookieKvMap.delete('passInfo');
           cookieKvMap.delete('sdkVersion');
 
-          // 3. 强行补充 App 设备特征 Cookie
-          cookieKvMap.set('deviceId', clientDevId);
-          cookieKvMap.set('PassportDeviceId', clientDevId);
+          // 3. 强行补充 App 设备特征 Cookie，使其与 URL 里的 d= 参数保持一致
+          cookieKvMap.set('deviceId', effectiveDevId);
+          cookieKvMap.set('PassportDeviceId', effectiveDevId);
         }
 
         const cleanCookieHeader = Array.from(cookieKvMap.entries()).map(([k, v]) => `${k}=${v}`).join('; ');
@@ -430,7 +438,8 @@ export class XiaomiPassport {
         if (res.status === 401 && isMinaEndpoint) {
           const cleanUid = cookieKvMap.get('userId') || '';
           const clientDevId = getPersistentClientDeviceId(cleanUid);
-          const cleanMinimalCookie = `userId=${cleanUid}; passToken=${cookieKvMap.get('passToken') || ''}; deviceId=${clientDevId}; PassportDeviceId=${clientDevId}`;
+          const retryDevId = effectiveDevId || clientDevId;
+          const cleanMinimalCookie = `userId=${cleanUid}; passToken=${cookieKvMap.get('passToken') || ''}; deviceId=${retryDevId}; PassportDeviceId=${retryDevId}`;
 
           logDebug(`exchangeStsToken retrying Mina 401 with App UserAgent & minimal clean cookies`, { currentUrl, cleanMinimalCookie });
           res = await fetch(currentUrl, {
@@ -532,8 +541,10 @@ export class XiaomiPassport {
 
       for (const host of hosts) {
         try {
-          const loginUrl = `${host}/pass/serviceLogin?sid=${encodeURIComponent(targetSid)}&_json=true`;
           const clientDevId = getPersistentClientDeviceId(cleanUid);
+          const loginUrl = targetSid === 'micoapi'
+            ? `${host}/pass/serviceLogin?sid=micoapi&_json=true&_qrsize=280&deviceId=${encodeURIComponent(clientDevId)}&d=${encodeURIComponent(clientDevId)}`
+            : `${host}/pass/serviceLogin?sid=${encodeURIComponent(targetSid)}&_json=true`;
           const baseCookies = targetSid === 'micoapi'
             ? [
                 `userId=${cleanUid}`,
