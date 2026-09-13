@@ -72,6 +72,8 @@ export function buildMinaHeaders(userId: string, serviceToken: string, targetSpe
 
 function logDebug(message: string, data?: any) {
   const timestamp = new Date().toISOString();
+  const dataStr = data ? (typeof data === 'object' ? JSON.stringify(data) : String(data)) : '';
+  console.log(`[Passport Log ${timestamp.slice(11, 19)}] ${message}`, dataStr);
   const logMsg = `[${timestamp}] ${message} ${data ? (typeof data === 'object' ? JSON.stringify(data, null, 2) : data) : ''}\n`;
   try {
     fs.appendFileSync('./passport_debug.log', logMsg);
@@ -437,7 +439,7 @@ export class XiaomiPassport {
         if (cookieKvMap.has('serviceToken') && cookieKvMap.get('serviceToken')) {
           const st = cookieKvMap.get('serviceToken')!;
           logDebug(`exchangeStsToken success at hop ${hops}:`, st);
-          return { serviceToken: st, cookies: updatedCookieHeader };
+          return { serviceToken: st, passToken: cookieKvMap.get('passToken'), cookies: updatedCookieHeader };
         }
 
         // Check next location
@@ -449,7 +451,7 @@ export class XiaomiPassport {
             if (st) {
               logDebug(`exchangeStsToken found serviceToken in redirect URL at hop ${hops}:`, st);
               cookieKvMap.set('serviceToken', st);
-              return { serviceToken: st, cookies: Array.from(cookieKvMap.entries()).map(([k, v]) => `${k}=${v}`).join('; ') };
+              return { serviceToken: st, passToken: cookieKvMap.get('passToken'), cookies: Array.from(cookieKvMap.entries()).map(([k, v]) => `${k}=${v}`).join('; ') };
             }
             currentUrl = nextUrlObj.href;
           } catch {
@@ -462,7 +464,7 @@ export class XiaomiPassport {
           if (bodyMatch) {
             logDebug(`exchangeStsToken found serviceToken in response body at hop ${hops}:`, bodyMatch[1]);
             cookieKvMap.set('serviceToken', bodyMatch[1]);
-            return { serviceToken: bodyMatch[1], cookies: Array.from(cookieKvMap.entries()).map(([k, v]) => `${k}=${v}`).join('; ') };
+            return { serviceToken: bodyMatch[1], passToken: cookieKvMap.get('passToken'), cookies: Array.from(cookieKvMap.entries()).map(([k, v]) => `${k}=${v}`).join('; ') };
           }
           break;
         }
@@ -470,7 +472,7 @@ export class XiaomiPassport {
 
       const finalCookieHeader = Array.from(cookieKvMap.entries()).map(([k, v]) => `${k}=${v}`).join('; ');
       logDebug(`exchangeStsToken finished with NO serviceToken found after ${hops} hops`);
-      return { cookies: finalCookieHeader };
+      return { passToken: cookieKvMap.get('passToken'), cookies: finalCookieHeader };
     } catch (err: any) {
       logDebug(`exchangeStsToken ERROR`, err.message);
       console.warn('STS exchange failed:', err.message);
@@ -719,10 +721,11 @@ export class XiaomiPassport {
         // Confirmed! Extract token details
         const userId = String(data.userId || data.cUserId || '').trim();
         const ssecurity = data.ssecurity;
-        const passToken = data.passToken;
+        let passToken = data.passToken;
         let serviceToken = data.serviceToken || data.service_token || data.stsToken || data.micoToken || '';
 
         if (data.location) {
+          logDebug(`checkQrCodeStatus location redirect found: ${data.location}`);
           const cookieStr = [
             `userId=${userId}`,
             data.cUserId ? `cUserId=${data.cUserId}` : '',
@@ -731,6 +734,7 @@ export class XiaomiPassport {
           ].filter(Boolean).join('; ');
           const sts = await this.exchangeStsToken(data.location, cookieStr, ssecurity);
           if (sts.serviceToken) serviceToken = sts.serviceToken;
+          if (sts.passToken && !passToken) passToken = sts.passToken;
         }
 
         const result: QrCodeStatusResult = {
@@ -741,14 +745,16 @@ export class XiaomiPassport {
           ssecurity,
           passToken
         };
-        logDebug(`checkQrCodeStatus return result`, result);
+        logDebug(`checkQrCodeStatus return result: userId=${userId}, hasPassToken=${Boolean(passToken)}, hasServiceToken=${Boolean(serviceToken)}`, result);
         return result;
       } else if (data.code === 70014) {
+        logDebug(`checkQrCodeStatus code 70014: 等待扫码...`);
         return { success: true, status: 'pending' };
       } else if (data.code === 70013) {
+        logDebug(`checkQrCodeStatus code 70013: 手机已扫码，等待确认...`);
         return { success: true, status: 'scanned' };
       } else if (data.code === 70015 || data.code === 70016) {
-        // Explicit expiry from long-polling endpoint
+        logDebug(`checkQrCodeStatus code ${data.code}: 二维码已过期/失效`);
         return { success: true, status: 'expired' };
       }
 

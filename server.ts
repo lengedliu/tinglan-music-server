@@ -3202,6 +3202,7 @@ app.post('/api/miot/passport/qrcode/check', async (req: Request, res: Response) 
 
   const checkRes = await xiaomiPassport.checkQrCodeStatus(loginUrl || lpUrl, lpUrl);
   if (checkRes.success && checkRes.status === 'confirmed') {
+    console.log(`[QR Check Endpoint] 📱 收到扫码确认结果 -> userId: ${checkRes.userId}, hasPassToken: ${Boolean(checkRes.passToken)}, primaryToken: ${checkRes.serviceToken ? checkRes.serviceToken.slice(0, 6) + '••••' : '(空)'}, initialSid: ${sid}`);
     let primaryToken = checkRes.serviceToken || '';
     let micoServiceToken = sid === 'micoapi' ? primaryToken : undefined;
     let miotServiceToken = sid === 'micoapi' ? undefined : primaryToken;
@@ -3209,38 +3210,52 @@ app.post('/api/miot/passport/qrcode/check', async (req: Request, res: Response) 
 
     // With confirmed passToken, fetch both STS tokens to ensure complete double-credential setup
     if (checkRes.userId && checkRes.passToken) {
+      console.log(`[QR Check Endpoint] 🔑 尝试通过 passToken 置换双域 Token...`);
       // 1. Fetch micoapi token (for XiaoAi Mina cloud, speech synthesis & WS)
       if (!micoServiceToken) {
         try {
+          console.log(`[QR Check Endpoint] 🔄 正在申请 micoapi (小爱域) 凭证...`);
           const micoTokenRes = await xiaomiPassport.fetchAdditionalStsToken(checkRes.userId, checkRes.passToken, 'micoapi');
           if (micoTokenRes.serviceToken) {
             micoServiceToken = micoTokenRes.serviceToken;
+            console.log(`[QR Check Endpoint] ✅ 成功获取 micoapi 凭证: ${micoServiceToken.slice(0, 6)}••••`);
+          } else {
+            console.warn(`[QR Check Endpoint] ❌ 申请 micoapi 凭证失败: ${micoTokenRes.error}`);
           }
           if (micoTokenRes.ssecurity && !ssecurity) {
             ssecurity = micoTokenRes.ssecurity;
           }
         } catch (err: any) {
-          console.warn('Failed to fetch micoapi token via passToken:', err.message);
+          console.warn('[QR Check Endpoint] ❌ 申请 micoapi 凭证抛出异常:', err.message);
         }
       }
 
       // 2. Fetch xiaomiio token (for Mi Home smart devices and speaker sync)
       if (!miotServiceToken) {
         try {
+          console.log(`[QR Check Endpoint] 🔄 正在申请 xiaomiio (米家域) 凭证...`);
           const ioTokenRes = await xiaomiPassport.fetchAdditionalStsToken(checkRes.userId, checkRes.passToken, 'xiaomiio');
           if (ioTokenRes.serviceToken) {
             miotServiceToken = ioTokenRes.serviceToken;
+            console.log(`[QR Check Endpoint] ✅ 成功获取 xiaomiio 凭证: ${miotServiceToken.slice(0, 6)}••••`);
             if (ioTokenRes.ssecurity && !ssecurity) {
               ssecurity = ioTokenRes.ssecurity;
             }
+          } else {
+            console.warn(`[QR Check Endpoint] ❌ 申请 xiaomiio 凭证失败: ${ioTokenRes.error}`);
           }
         } catch (err: any) {
-          console.warn('Failed to fetch xiaomiio token via passToken:', err.message);
+          console.warn('[QR Check Endpoint] ❌ 申请 xiaomiio 凭证抛出异常:', err.message);
         }
       }
+    } else {
+      console.warn(`[QR Check Endpoint] ⚠️ checkRes 中缺失 passToken (hasUserId=${Boolean(checkRes.userId)})，无法触发双域 STS 置换！`);
     }
 
+    console.log(`[QR Check Endpoint] 📊 最终凭据结果: userId=${checkRes.userId}, micoToken=${micoServiceToken ? '已获取' : '❌缺失'}, miotToken=${miotServiceToken ? '已获取' : '❌缺失'}`);
+
     if (!checkRes.userId || (!micoServiceToken && !miotServiceToken && !primaryToken)) {
+      console.error(`[QR Check Endpoint] ❌ 未能获取到有效的服务凭据 Token，返回错误提示给前端`);
       return res.json({
         success: false,
         status: 'error',
