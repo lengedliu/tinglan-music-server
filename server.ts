@@ -2742,6 +2742,27 @@ function parseServiceTokenAndUserId(inputUid: string, inputToken: string, inputP
   return { userId, serviceToken, passToken, cUserId: cUserId || undefined };
 }
 
+// Verify that a serviceToken is actually scoped to the `micoapi` (Mina/XiaoAi) domain.
+// A serviceToken from another domain (e.g. xiaomiio, or a raw www.mi.com cookie) will
+// get rejected by Mina's gateway with 401/403 even though the string "looks like" a token.
+// We treat HTTP 401/403 as "definitely not a valid mico token"; any other response
+// (including 200 with an empty device list) is treated as "token accepted by mico".
+async function validateMicoServiceToken(userId: string, serviceToken: string): Promise<{ valid: boolean; status?: number; error?: string }> {
+  if (!userId || !serviceToken) return { valid: false, error: '缺少 userId 或 serviceToken' };
+  try {
+    const headers = buildMinaHeaders(userId, serviceToken);
+    const url = `https://api2.mina.mi.com/admin/v2/device_list?master=0&requestId=${generateMinaRequestId()}`;
+    const res = await fetch(url, { headers, signal: AbortSignal.timeout(5000) });
+    if (res.status === 401 || res.status === 403) {
+      return { valid: false, status: res.status, error: `mico 接口拒绝该 serviceToken (HTTP ${res.status})，该 token 很可能不属于 micoapi 域，或已过期` };
+    }
+    return { valid: true, status: res.status };
+  } catch (err: any) {
+    // Network failure isn't proof the token is bad — don't fail the whole login on a timeout.
+    return { valid: true, error: `校验请求异常，暂不能确认 mico 权限: ${err.message}` };
+  }
+}
+
 // Helper to query Xiaomi smart speaker device list from Mina Cloud API & Xiaomi Home APIs
 async function queryXiaomiMinaDevices(userId: string, serviceToken: string): Promise<any[]> {
   try {
@@ -2916,17 +2937,18 @@ app.post('/api/miot/login', async (req: Request, res: Response) => {
 
     let activeServiceToken = cleanToken;
     let xiaomiioServiceToken = '';
+    let micoExchangeAttempted = false;
+    let micoExchangeError: string | undefined;
 
-    // Candidate passToken for STS exchange: cleanPassToken or cleanToken if cleanPassToken is empty
-    const candidatePassToken = cleanPassToken || cleanToken;
-
-    // If candidate passToken is provided (e.g. from www.mi.com / account.xiaomi.com Cookie or PassToken field),
-    // automatically exchange it for official micoapi & xiaomiio serviceTokens!
-    if (candidatePassToken) {
+    // IMPORTANT: only a genuine passToken can be exchanged for a scoped micoapi/xiaomiio STS
+    // token. A serviceToken is not a passToken — trying to exchange it as one will always be
+    // rejected by Xiaomi, so we must NOT fall back to treating cleanToken as a passToken here.
+    if (cleanPassToken) {
+      micoExchangeAttempted = true;
       try {
         const [micoResult, miioResult] = await Promise.allSettled([
-          xiaomiPassport.fetchAdditionalStsToken(cleanUid, candidatePassToken, 'micoapi', cleanCUserId),
-          xiaomiPassport.fetchAdditionalStsToken(cleanUid, candidatePassToken, 'xiaomiio', cleanCUserId)
+          xiaomiPassport.fetchAdditionalStsToken(cleanUid, cleanPassToken, 'micoapi', cleanCUserId),
+          xiaomiPassport.fetchAdditionalStsToken(cleanUid, cleanPassToken, 'xiaomiio', cleanCUserId)
         ]);
 
         if (micoResult.status === 'fulfilled' && micoResult.value.serviceToken) {
@@ -2937,22 +2959,24 @@ app.post('/api/miot/login', async (req: Request, res: Response) => {
           if (micoResult.value.userId && /^\d+$/.test(micoResult.value.userId)) {
             cleanUid = micoResult.value.userId;
           }
+        } else {
+          micoExchangeError = (micoResult.status === 'fulfilled' && micoResult.value.error)
+            ? micoResult.value.error
+            : 'PassToken 置换失败，凭据可能已失效或需要二次验证';
         }
         if (miioResult.status === 'fulfilled' && miioResult.value.serviceToken) {
           xiaomiioServiceToken = miioResult.value.serviceToken;
         }
 
-        // If explicitly cleanPassToken was passed but exchange failed for both micoapi and xiaomiio
-        if (cleanPassToken && !activeServiceToken && !xiaomiioServiceToken) {
-          const errMsg = (micoResult.status === 'fulfilled' && micoResult.value.error)
-            ? micoResult.value.error
-            : 'PassToken 置换失败，凭据可能已失效或需要二次验证';
+        // Exchange was attempted with a real passToken but both mico and xiaomiio failed
+        if (!activeServiceToken && !xiaomiioServiceToken) {
           return res.status(401).json({
             success: false,
-            error: `小米安全授权失败: ${errMsg}。提示：www.mi.com 网站的 PassToken/Cookie 包含跨域与 IP 风控限制，小爱音箱需要专属的 micoapi 令牌。强力推荐使用【二维码扫码登录】或【账号密码登录】（自动生成全套专有令牌），或登录 https://mina.mi.com 复制小爱官网 Cookie。`
+            error: `小米安全授权失败: ${micoExchangeError}。提示：www.mi.com 网站的 PassToken/Cookie 包含跨域与 IP 风控限制，小爱音箱需要专属的 micoapi 令牌。强力推荐使用【二维码扫码登录】或【账号密码登录】（自动生成全套专有令牌），或登录 https://mina.mi.com 复制小爱官网 Cookie。`
           });
         }
       } catch (err: any) {
+        micoExchangeError = err.message;
         console.warn('Failed to exchange passToken for micoapi/xiaomiio serviceTokens:', err.message);
       }
     }
@@ -2961,8 +2985,25 @@ app.post('/api/miot/login', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: '未能提取到有效的 ServiceToken 或 PassToken。请确认从 account.xiaomi.com 或 www.mi.com 复制的 Cookie 包含 passToken 或 serviceToken' });
     }
 
+    // Whatever activeServiceToken we ended up with (freshly exchanged, or a raw pasted
+    // serviceToken with no passToken to verify it against) — actually check with Mina
+    // that it's accepted for the micoapi domain before telling the user login succeeded.
+    const micoCheck = await validateMicoServiceToken(cleanUid, activeServiceToken);
+    const isMicoValid = micoCheck.valid;
+
+    if (!micoCheck.valid && !micoExchangeAttempted) {
+      // We never had a passToken to properly exchange, and the raw serviceToken the user
+      // pasted was rejected outright by Mina — this is exactly the "wrong domain / expired"
+      // case, so don't silently accept it as a working login.
+      return res.status(401).json({
+        success: false,
+        error: `你提供的 ServiceToken 未通过 mico (小爱) 域校验: ${micoCheck.error || '未知原因'}。这个 token 很可能来自 xiaomiio 或网页端 Cookie，而不是 micoapi 域，小爱音箱控制需要专属的 mico serviceToken。请改用【二维码扫码登录】、【账号密码登录】，或提供真正的 passToken 让服务器自动兑换。`
+      });
+    }
+
     miotConfig.userId = cleanUid;
     miotConfig.serviceToken = activeServiceToken;
+    (miotConfig as any).isMicoValid = isMicoValid;
     if (xiaomiioServiceToken) {
       (miotConfig as any).stsTokens = {
         micoapi: activeServiceToken,
@@ -3015,11 +3056,14 @@ app.post('/api/miot/login', async (req: Request, res: Response) => {
 
     const successMessage = syncedDevices.length > 0
       ? `ServiceToken 关联成功！已成功同步 ${syncedDevices.length} 台小爱音箱设备。`
-      : `ServiceToken 关联成功，但云端未查找到绑定的音箱设备。请确认该账号下是否有绑定的小爱音箱，或使用【手动添加音箱】输入音箱 IP。`;
+      : isMicoValid
+        ? `ServiceToken 关联成功，但云端未查找到绑定的音箱设备。请确认该账号下是否有绑定的小爱音箱，或使用【手动添加音箱】输入音箱 IP。`
+        : `ServiceToken 关联成功，但未能确认 mico (小爱) 权限，小爱音箱相关功能可能无法使用。建议改用【二维码扫码登录】获取专属 mico 令牌。`;
 
     return res.json({
       success: true,
       message: successMessage,
+      isMicoValid,
       devices: xiaomiDevices.map(sanitizeDevice),
       config: sanitizeMiotConfig(miotConfig)
     });
@@ -5670,4 +5714,3 @@ startServer().catch(err => {
   console.error("Failed to start server:", err);
   process.exit(1);
 });
-
