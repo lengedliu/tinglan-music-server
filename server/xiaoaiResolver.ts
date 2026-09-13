@@ -498,7 +498,7 @@ export class XiaoAiResolverEngine {
         const headers: Record<string, string> = {
           'User-Agent': 'MiHome/6.0.0 (com.xiaomi.mihome; build:20210219; iOS 14.4.0)',
           'Content-Type': 'application/x-www-form-urlencoded',
-          'Cookie': `userId=${cleanUid}; serviceToken=${cleanMiioToken}; PassportDeviceId=${cleanUid}`,
+          'Cookie': `userId=${cleanUid}; serviceToken=${cleanMiioToken}; PassportDeviceId=${getPersistentClientDeviceId(cleanUid)}`,
           'Accept': 'application/json, text/plain, */*'
         };
 
@@ -630,7 +630,7 @@ export class XiaoAiResolverEngine {
             headers: {
               'User-Agent': 'MiHome/6.0.0 (com.xiaomi.mihome; build:20210219; iOS 14.4.0)',
               'Content-Type': 'application/x-www-form-urlencoded',
-              'Cookie': `userId=${cleanUid}; serviceToken=${cleanMiioToken}; PassportDeviceId=${cleanUid}`
+              'Cookie': `userId=${cleanUid}; serviceToken=${cleanMiioToken}; PassportDeviceId=${getPersistentClientDeviceId(cleanUid)}`
             },
             body: bodyStr,
             signal: AbortSignal.timeout(2500)

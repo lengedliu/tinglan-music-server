@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import dgram from 'dgram';
+import { getPersistentClientDeviceId } from './xiaomiPassport';
 
 export interface MiotPropertyGet {
   did: string;
@@ -304,7 +305,7 @@ export class MiotRpcEngine {
       'User-Agent': 'iOS-14.4-6.0.103-iPhone12,3--D7744744F7AF32F0544445285880DD63E47D9BE9-8816080-84A3F44E137B71AE-iPhone',
       'x-xiaomi-protocal-flag-cli': 'PROTOCAL-HTTP2',
       'Content-Type': 'application/x-www-form-urlencoded',
-      'Cookie': `userId=${userId}; serviceToken=${serviceToken}; PassportDeviceId=${userId}`
+      'Cookie': `userId=${userId}; serviceToken=${serviceToken}; PassportDeviceId=${getPersistentClientDeviceId(userId)}`
     };
 
     let postBodyStr = '';

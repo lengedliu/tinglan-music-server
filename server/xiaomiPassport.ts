@@ -436,12 +436,13 @@ export class XiaomiPassport {
 
         // 针对 Mina 接口的 401 重试机制：使用精简 核心 Cookies 重新尝试
         if (res.status === 401 && isMinaEndpoint) {
+          const bodyPeek1 = await res.clone().text().catch(() => '');
           const cleanUid = cookieKvMap.get('userId') || '';
           const clientDevId = getPersistentClientDeviceId(cleanUid);
           const retryDevId = effectiveDevId || clientDevId;
           const cleanMinimalCookie = `userId=${cleanUid}; passToken=${cookieKvMap.get('passToken') || ''}; deviceId=${retryDevId}; PassportDeviceId=${retryDevId}`;
 
-          logDebug(`exchangeStsToken retrying Mina 401 with App UserAgent & minimal clean cookies`, { currentUrl, cleanMinimalCookie });
+          logDebug(`exchangeStsToken retrying Mina 401 (first status=401, body=${bodyPeek1.slice(0, 100)}) with App UserAgent & minimal clean cookies`, { currentUrl, cleanMinimalCookie });
           res = await fetch(currentUrl, {
             headers: {
               'User-Agent': 'MISoundBox/1.4.0 (iPhone; iOS 14.4; Scale/3.00)',
@@ -450,6 +451,10 @@ export class XiaomiPassport {
             },
             redirect: 'manual'
           });
+          if (res.status === 401) {
+            const bodyPeek2 = await res.clone().text().catch(() => '');
+            logDebug(`exchangeStsToken Mina retry still got 401! Response body:`, bodyPeek2);
+          }
         }
 
         const setCookiesArr: string[] = typeof (res.headers as any).getSetCookie === 'function'
@@ -543,7 +548,7 @@ export class XiaomiPassport {
         try {
           const clientDevId = getPersistentClientDeviceId(cleanUid);
           const loginUrl = targetSid === 'micoapi'
-            ? `${host}/pass/serviceLogin?sid=micoapi&_json=true&_qrsize=280&deviceId=${encodeURIComponent(clientDevId)}&d=${encodeURIComponent(clientDevId)}`
+            ? `${host}/pass/serviceLogin?sid=micoapi&_json=true&deviceId=${encodeURIComponent(clientDevId)}&d=${encodeURIComponent(clientDevId)}`
             : `${host}/pass/serviceLogin?sid=${encodeURIComponent(targetSid)}&_json=true`;
           const baseCookies = targetSid === 'micoapi'
             ? [
