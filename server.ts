@@ -3203,9 +3203,10 @@ app.post('/api/miot/passport/qrcode/check', async (req: Request, res: Response) 
   const checkRes = await xiaomiPassport.checkQrCodeStatus(loginUrl || lpUrl, lpUrl);
   if (checkRes.success && checkRes.status === 'confirmed') {
     console.log(`[QR Check Endpoint] 📱 收到扫码确认结果 -> userId: ${checkRes.userId}, hasPassToken: ${Boolean(checkRes.passToken)}, primaryToken: ${checkRes.serviceToken ? checkRes.serviceToken.slice(0, 6) + '••••' : '(空)'}, initialSid: ${sid}`);
+    const effectiveSid = sid || 'micoapi';
     let primaryToken = checkRes.serviceToken || '';
-    let micoServiceToken = sid === 'micoapi' ? primaryToken : undefined;
-    let miotServiceToken = sid === 'micoapi' ? undefined : primaryToken;
+    let micoServiceToken = effectiveSid === 'micoapi' ? primaryToken : undefined;
+    let miotServiceToken = effectiveSid === 'micoapi' ? undefined : primaryToken;
     let ssecurity = checkRes.ssecurity || '';
 
     // With confirmed passToken, fetch both STS tokens to ensure complete double-credential setup

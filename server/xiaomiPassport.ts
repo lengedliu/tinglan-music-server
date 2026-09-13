@@ -618,14 +618,14 @@ export class XiaomiPassport {
    * QR Code Login - Step 1: Generate Login QR Code
    */
   public async generateLoginQrCode(
-    sid = 'xiaomiio',
+    sid = 'micoapi',
     region = 'cn'
   ): Promise<QrCodeResult & { qrCodeUrl?: string; qrDataUrl?: string; qr?: string }> {
     try {
       // For China Mainland, use cn.account.xiaomi.com to ensure dc=ak (China mainland datacenter),
       // which is required for Mi Home (米家 App) and domestic Xiaomi account authorization.
       const host = region === 'cn' ? 'cn.account.xiaomi.com' : 'account.xiaomi.com';
-      const cleanSid = sid === 'mijia' ? 'xiaomiio' : (sid || 'xiaomiio');
+      const cleanSid = sid === 'mijia' ? 'xiaomiio' : (sid || 'micoapi');
       const url = `https://${host}/longPolling/loginUrl?sid=${encodeURIComponent(cleanSid)}&dc=ak&_json=true&_qrsize=280&_hasLogo=false`;
       const res = await fetch(url, {
         headers: {
