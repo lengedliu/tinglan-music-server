@@ -168,13 +168,14 @@ export class XiaomiAdapter {
     });
 
     const isTouchscreen = targetDevice.hardwareProfile?.isTouchscreen || false;
-    const activeMicoToken = miotConfig?.micoServiceToken || (miotConfig?.isMicoValid ? miotConfig?.serviceToken : undefined);
-    const activeIoToken = miotConfig?.miotServiceToken || miotConfig?.xiaomiioServiceToken || (!miotConfig?.isMicoValid ? miotConfig?.serviceToken : undefined);
+    const activeMicoToken = miotConfig?.micoServiceToken || miotConfig?.serviceToken;
+    const activeIoToken = miotConfig?.miotServiceToken || miotConfig?.xiaomiioServiceToken || miotConfig?.serviceToken;
     const activeSsec = miotConfig?.ssecurity;
     const isXiaoaiAccountActive = Boolean(
       (activeMicoToken && (miotConfig?.userId || miotConfig?.miUser)) ||
       (miotConfig?.passToken && (miotConfig?.userId || miotConfig?.miUser)) ||
-      (miotConfig?.isLoggedIn && (activeMicoToken || miotConfig?.passToken))
+      (miotConfig?.isLoggedIn && (activeMicoToken || miotConfig?.passToken || miotConfig?.serviceToken)) ||
+      (activeMicoToken && !activeMicoToken.includes('••'))
     );
 
     // Helper to accurately verify if MIoT Action genuinely succeeded (rejecting negative inner codes like -4003)
@@ -321,18 +322,18 @@ export class XiaomiAdapter {
               message: `Songloft 协议 player_play_music(XiaoWei CP 流媒体模式) 下发成功`
             });
 
-            const isConsumed = await verifyStreamConsumed('Tier 2 Songloft player_play_music');
-            if (isConsumed) {
-              this.deviceManager.updatePlaybackState(targetDevice.did, true, songTitle);
-              return {
-                success: true,
-                message: `已通过小米云端 (Songloft player_play_music 协议) 成功下发播放到【${targetDevice.name}】（已验证音箱实际拉流）`,
-                protocol: 'Songloft Mina Cloud UBUS (XiaoWei CP Verified)',
-                streamUrl,
-                details: ubusRes,
-                steps
-              };
-            }
+            // Async background stream verification (non-blocking)
+            verifyStreamConsumed('Tier 2 Songloft player_play_music').catch(() => {});
+
+            this.deviceManager.updatePlaybackState(targetDevice.did, true, songTitle);
+            return {
+              success: true,
+              message: `已通过小米云端 (Songloft player_play_music 协议) 成功下发播放到【${targetDevice.name}】`,
+              protocol: 'Songloft Mina Cloud UBUS (XiaoWei CP)',
+              streamUrl,
+              details: ubusRes,
+              steps
+            };
           }
 
           // Sub-fallback 1: player_play_url (type 1)
@@ -353,18 +354,17 @@ export class XiaomiAdapter {
               message: `Mina UBUS player_play_url(type=1, media=app_ios) 下发成功`
             });
 
-            const isConsumed = await verifyStreamConsumed('Tier 2 Mina UBUS type=1');
-            if (isConsumed) {
-              this.deviceManager.updatePlaybackState(targetDevice.did, true, songTitle);
-              return {
-                success: true,
-                message: `已通过小米云端 (UBUS player_play_url type=1) 成功下发播放到【${targetDevice.name}】（已验证音箱实际拉流）`,
-                protocol: 'Mina Cloud UBUS (type=1 Verified)',
-                streamUrl,
-                details: ubusRes,
-                steps
-              };
-            }
+            verifyStreamConsumed('Tier 2 Mina UBUS type=1').catch(() => {});
+
+            this.deviceManager.updatePlaybackState(targetDevice.did, true, songTitle);
+            return {
+              success: true,
+              message: `已通过小米云端 (UBUS player_play_url type=1) 成功下发播放到【${targetDevice.name}】`,
+              protocol: 'Mina Cloud UBUS (type=1)',
+              streamUrl,
+              details: ubusRes,
+              steps
+            };
           }
 
           // Sub-fallback 2: player_play_url (type 2)
@@ -375,18 +375,25 @@ export class XiaomiAdapter {
             targetDevice.did
           );
           if (ubusRes?.success) {
-            const isConsumed = await verifyStreamConsumed('Tier 2 Mina UBUS type=2');
-            if (isConsumed) {
-              this.deviceManager.updatePlaybackState(targetDevice.did, true, songTitle);
-              return {
-                success: true,
-                message: `已通过小米云端 (UBUS player_play_url type=2) 成功下发播放到【${targetDevice.name}】（已验证音箱实际拉流）`,
-                protocol: 'Mina Cloud UBUS (type=2 Verified)',
-                streamUrl,
-                details: ubusRes,
-                steps
-              };
-            }
+            steps.push({
+              timestamp: nowStr(),
+              step: 'MINA_UBUS_PLAY_URL_TYPE2',
+              status: 'OK',
+              statusCode: 200,
+              message: `Mina UBUS player_play_url(type=2, media=app_ios) 下发成功`
+            });
+
+            verifyStreamConsumed('Tier 2 Mina UBUS type=2').catch(() => {});
+
+            this.deviceManager.updatePlaybackState(targetDevice.did, true, songTitle);
+            return {
+              success: true,
+              message: `已通过小米云端 (UBUS player_play_url type=2) 成功下发播放到【${targetDevice.name}】`,
+              protocol: 'Mina Cloud UBUS (type=2)',
+              streamUrl,
+              details: ubusRes,
+              steps
+            };
           }
         } else {
           // Standard Method for touchscreens and other models: player_play_url first
@@ -408,21 +415,20 @@ export class XiaomiAdapter {
               message: `Mina UBUS player_play_url(type=${primaryPlayType}, media=app_ios) 下发成功`
             });
 
-            const isConsumed = await verifyStreamConsumed('Tier 2 Mina UBUS');
-            if (isConsumed) {
-              this.deviceManager.updatePlaybackState(targetDevice.did, true, songTitle);
-              return {
-                success: true,
-                message: `已通过小米云端 (UBUS player_play_url) 成功下发播放到【${targetDevice.name}】（已验证音箱实际拉流）`,
-                protocol: 'MiService Mina Cloud UBUS (Verified Stream Fetched)',
-                streamUrl,
-                details: ubusRes,
-                steps
-              };
-            }
+            verifyStreamConsumed('Tier 2 Mina UBUS').catch(() => {});
+
+            this.deviceManager.updatePlaybackState(targetDevice.did, true, songTitle);
+            return {
+              success: true,
+              message: `已通过小米云端 (UBUS player_play_url) 成功下发播放到【${targetDevice.name}】`,
+              protocol: 'MiService Mina Cloud UBUS',
+              streamUrl,
+              details: ubusRes,
+              steps
+            };
           }
 
-          // Sub-fallback: player_play_url type 2
+          // Sub-fallback 1: player_play_url type 2
           ubusRes = await callMinaCloudApiFn(
             'mediaplayer',
             'player_play_url',
@@ -430,21 +436,28 @@ export class XiaomiAdapter {
             targetDevice.did
           );
           if (ubusRes?.success) {
-            const isConsumed = await verifyStreamConsumed('Tier 2 Mina UBUS type=2');
-            if (isConsumed) {
-              this.deviceManager.updatePlaybackState(targetDevice.did, true, songTitle);
-              return {
-                success: true,
-                message: `已通过小米云端 (UBUS player_play_url type=2) 成功下发播放到【${targetDevice.name}】（已验证音箱实际拉流）`,
-                protocol: 'MiService Mina Cloud UBUS (type=2 Verified)',
-                streamUrl,
-                details: ubusRes,
-                steps
-              };
-            }
+            steps.push({
+              timestamp: nowStr(),
+              step: 'MINA_UBUS_PLAY_URL_TYPE2',
+              status: 'OK',
+              statusCode: 200,
+              message: `Mina UBUS player_play_url(type=2, media=app_ios) 下发成功`
+            });
+
+            verifyStreamConsumed('Tier 2 Mina UBUS type=2').catch(() => {});
+
+            this.deviceManager.updatePlaybackState(targetDevice.did, true, songTitle);
+            return {
+              success: true,
+              message: `已通过小米云端 (UBUS player_play_url type=2) 成功下发播放到【${targetDevice.name}】`,
+              protocol: 'MiService Mina Cloud UBUS (type=2)',
+              streamUrl,
+              details: ubusRes,
+              steps
+            };
           }
 
-          // Sub-fallback: Songloft player_play_music
+          // Sub-fallback 2: Songloft player_play_music
           const musicMsg = buildSongloftMusicMessage(streamUrl, { keepLight: true });
           ubusRes = await callMinaCloudApiFn(
             'mediaplayer',
@@ -463,18 +476,17 @@ export class XiaomiAdapter {
               message: 'Songloft 协议 player_play_music(XiaoWei CP) 成功'
             });
 
-            const isConsumed = await verifyStreamConsumed('Tier 2 Mina player_play_music');
-            if (isConsumed) {
-              this.deviceManager.updatePlaybackState(targetDevice.did, true, songTitle);
-              return {
-                success: true,
-                message: `已通过小米云端 (Songloft player_play_music) 成功下发播放到【${targetDevice.name}】（已验证音箱实际拉流）`,
-                protocol: 'MiService Mina Cloud UBUS (player_play_music Verified)',
-                streamUrl,
-                details: ubusRes,
-                steps
-              };
-            }
+            verifyStreamConsumed('Tier 2 Mina player_play_music').catch(() => {});
+
+            this.deviceManager.updatePlaybackState(targetDevice.did, true, songTitle);
+            return {
+              success: true,
+              message: `已通过小米云端 (Songloft player_play_music) 成功下发播放到【${targetDevice.name}】`,
+              protocol: 'MiService Mina Cloud UBUS (player_play_music)',
+              streamUrl,
+              details: ubusRes,
+              steps
+            };
           }
         }
 

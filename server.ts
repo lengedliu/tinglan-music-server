@@ -2793,6 +2793,8 @@ async function authenticateXiaomiPassport(user: string, pass: string): Promise<{
   userId?: string;
   ssecurity?: string;
   serviceToken?: string;
+  xiaomiioServiceToken?: string;
+  xiaomiioSsecurity?: string;
   devices?: any[];
   error?: string;
   code?: number;
@@ -2837,6 +2839,8 @@ async function authenticateXiaomiPassport(user: string, pass: string): Promise<{
     userId: result.userId,
     ssecurity: result.ssecurity,
     serviceToken: result.serviceToken,
+    xiaomiioServiceToken: (result as any).stsTokens?.xiaomiio,
+    xiaomiioSsecurity: (result as any).xiaomiioSsecurity,
     devices
   };
 }
@@ -2961,6 +2965,7 @@ app.post('/api/miot/login', async (req: Request, res: Response) => {
           activeServiceToken = micoResult.value.serviceToken;
           if (micoResult.value.ssecurity) {
             (miotConfig as any).ssecurity = micoResult.value.ssecurity;
+            (miotConfig as any).micoSsecurity = micoResult.value.ssecurity;
           }
           if (micoResult.value.userId && /^\d+$/.test(micoResult.value.userId)) {
             cleanUid = micoResult.value.userId;
@@ -2972,6 +2977,14 @@ app.post('/api/miot/login', async (req: Request, res: Response) => {
         }
         if (miioResult.status === 'fulfilled' && miioResult.value.serviceToken) {
           xiaomiioServiceToken = miioResult.value.serviceToken;
+          (miotConfig as any).xiaomiioServiceToken = xiaomiioServiceToken;
+          (miotConfig as any).miotServiceToken = xiaomiioServiceToken;
+          if (miioResult.value.ssecurity) {
+            (miotConfig as any).xiaomiioSsecurity = miioResult.value.ssecurity;
+            if (!(miotConfig as any).ssecurity) {
+              (miotConfig as any).ssecurity = miioResult.value.ssecurity;
+            }
+          }
         }
 
         // Exchange was attempted with a real passToken but both mico and xiaomiio failed
@@ -3110,8 +3123,13 @@ app.post('/api/miot/login', async (req: Request, res: Response) => {
   miotConfig.miUser = username.trim();
   miotConfig.userId = authResult.userId;
   (miotConfig as any).micoServiceToken = authResult.serviceToken;
+  if (authResult.xiaomiioServiceToken) {
+    (miotConfig as any).xiaomiioServiceToken = authResult.xiaomiioServiceToken;
+    (miotConfig as any).miotServiceToken = authResult.xiaomiioServiceToken;
+  }
   (miotConfig as any).isMicoValid = true;
   if (authResult.ssecurity) (miotConfig as any).ssecurity = authResult.ssecurity;
+  if (authResult.xiaomiioSsecurity) (miotConfig as any).xiaomiioSsecurity = authResult.xiaomiioSsecurity;
   miotConfig.isLoggedIn = true;
   miotConfig.bindMode = 'account';
   saveJson(CONFIG_FILE, miotConfig);
@@ -3223,8 +3241,11 @@ app.post('/api/miot/passport/qrcode/check', async (req: Request, res: Response) 
           } else {
             console.warn(`[QR Check Endpoint] ❌ 申请 micoapi 凭证失败: ${micoTokenRes.error}`);
           }
-          if (micoTokenRes.ssecurity && !ssecurity) {
-            ssecurity = micoTokenRes.ssecurity;
+          if (micoTokenRes.ssecurity) {
+            (miotConfig as any).micoSsecurity = micoTokenRes.ssecurity;
+            if (!ssecurity) {
+              ssecurity = micoTokenRes.ssecurity;
+            }
           }
         } catch (err: any) {
           console.warn('[QR Check Endpoint] ❌ 申请 micoapi 凭证抛出异常:', err.message);
@@ -3239,8 +3260,11 @@ app.post('/api/miot/passport/qrcode/check', async (req: Request, res: Response) 
           if (ioTokenRes.serviceToken) {
             miotServiceToken = ioTokenRes.serviceToken;
             console.log(`[QR Check Endpoint] ✅ 成功获取 xiaomiio 凭证: ${miotServiceToken.slice(0, 6)}••••`);
-            if (ioTokenRes.ssecurity && !ssecurity) {
-              ssecurity = ioTokenRes.ssecurity;
+            if (ioTokenRes.ssecurity) {
+              (miotConfig as any).xiaomiioSsecurity = ioTokenRes.ssecurity;
+              if (!ssecurity) {
+                ssecurity = ioTokenRes.ssecurity;
+              }
             }
           } else {
             console.warn(`[QR Check Endpoint] ❌ 申请 xiaomiio 凭证失败: ${ioTokenRes.error}`);
@@ -3267,8 +3291,10 @@ app.post('/api/miot/passport/qrcode/check', async (req: Request, res: Response) 
     miotConfig.userId = checkRes.userId;
     (miotConfig as any).micoServiceToken = micoServiceToken;
     (miotConfig as any).miotServiceToken = miotServiceToken;
+    (miotConfig as any).xiaomiioServiceToken = miotServiceToken;
     (miotConfig as any).isMicoValid = Boolean(micoServiceToken);
-    (miotConfig as any).ssecurity = ssecurity || (miotConfig as any).ssecurity;
+    (miotConfig as any).ssecurity = ssecurity || (miotConfig as any).xiaomiioSsecurity || (miotConfig as any).ssecurity;
+    (miotConfig as any).xiaomiioSsecurity = (miotConfig as any).xiaomiioSsecurity || (miotConfig as any).ssecurity;
     (miotConfig as any).passToken = checkRes.passToken;
     miotConfig.miUser = `uid_${checkRes.userId}`;
     miotConfig.isLoggedIn = true;
@@ -3936,7 +3962,9 @@ app.post('/api/miot/devices/scan', async (req: Request, res: Response) => {
   }
 });
 
-// Real Mina Cloud UBUS API Dispatcher
+// Songloft UBUS Request Queue: ensure commands for the same deviceId are executed sequentially
+const minaUbusQueues = new Map<string, Promise<void>>();
+
 async function callMinaCloudApi(
   pathName: string,
   methodName: string,
@@ -3944,7 +3972,32 @@ async function callMinaCloudApi(
   targetDid?: string,
   retryCount: number = 0
 ): Promise<{ success: boolean; data?: any; error?: string; raw?: string; statusCode?: number }> {
-  const rawToken = (miotConfig as any).micoServiceToken || (miotConfig.isMicoValid ? miotConfig.serviceToken : '');
+  const queueKey = targetDid || 'default';
+  const prev = minaUbusQueues.get(queueKey) || Promise.resolve();
+  let resolveNext: () => void;
+  const next = new Promise<void>(r => { resolveNext = r; });
+  minaUbusQueues.set(queueKey, next);
+
+  try {
+    await prev;
+    return await doCallMinaCloudApi(pathName, methodName, messageObj, targetDid, retryCount);
+  } finally {
+    resolveNext!();
+    if (minaUbusQueues.get(queueKey) === next) {
+      minaUbusQueues.delete(queueKey);
+    }
+  }
+}
+
+// Real Mina Cloud UBUS API Dispatcher
+async function doCallMinaCloudApi(
+  pathName: string,
+  methodName: string,
+  messageObj: any,
+  targetDid?: string,
+  retryCount: number = 0
+): Promise<{ success: boolean; data?: any; error?: string; raw?: string; statusCode?: number }> {
+  const rawToken = (miotConfig as any).micoServiceToken || miotConfig.serviceToken || '';
   const rawUid = miotConfig.userId || '';
 
   // Clean ASCII only to prevent ByteString character code > 255 TypeError
@@ -3958,6 +4011,7 @@ async function callMinaCloudApi(
       if (refreshed.serviceToken) {
         (miotConfig as any).micoServiceToken = refreshed.serviceToken;
         (miotConfig as any).isMicoValid = true;
+        miotConfig.serviceToken = refreshed.serviceToken;
         if (refreshed.ssecurity) (miotConfig as any).ssecurity = refreshed.ssecurity;
         if (refreshed.userId) {
           miotConfig.userId = refreshed.userId;
@@ -3965,7 +4019,7 @@ async function callMinaCloudApi(
         }
         miotConfig.isLoggedIn = true;
         saveJson(CONFIG_FILE, miotConfig);
-        return callMinaCloudApi(pathName, methodName, messageObj, targetDid, retryCount + 1);
+        return doCallMinaCloudApi(pathName, methodName, messageObj, targetDid, retryCount + 1);
       }
     } catch (err: any) {
       console.warn('[Mina] Pre-flight STS refresh failed:', err.message);
@@ -4108,6 +4162,16 @@ async function callMinaCloudApi(
       }
 
       if (response.ok && (resJson.code === 0 || resJson.message === 'ok' || resJson.info === 'ok')) {
+        // Songloft isDeviceResultOK: Check if inner data has device error code
+        const innerData = resJson.data;
+        if (innerData && typeof innerData === 'object' && 'code' in innerData) {
+          const deviceCode = Number(innerData.code);
+          if (!Number.isNaN(deviceCode) && deviceCode !== 0) {
+            console.warn(`[Mina UBUS] 音箱设备侧拒绝执行 (deviceCode: ${deviceCode}):`, JSON.stringify(innerData));
+            lastError = `设备拒绝执行 (Inner Code: ${deviceCode}): ${innerData.message || ''}`;
+            continue;
+          }
+        }
         return { success: true, data: resJson, statusCode: 200 };
       } else {
         if (response.status === 401 || response.status === 403 || responseText.includes('HTTP Status 401') || responseText.includes('HTTP Status 403') || responseText.includes('Unauthorized') || responseText.includes('Forbidden')) {
@@ -4120,7 +4184,7 @@ async function callMinaCloudApi(
                 miotConfig.serviceToken = refreshRes.serviceToken;
                 if (refreshRes.ssecurity) (miotConfig as any).ssecurity = refreshRes.ssecurity;
                 saveJson(CONFIG_FILE, miotConfig);
-                return callMinaCloudApi(pathName, methodName, messageObj, targetDid, retryCount + 1);
+                return doCallMinaCloudApi(pathName, methodName, messageObj, targetDid, retryCount + 1);
               }
             } catch (rErr: any) {
               console.warn('[Mina] 401/403 recovery STS refresh failed:', rErr.message);

@@ -1,6 +1,158 @@
 import crypto from 'crypto';
 import dgram from 'dgram';
+import zlib from 'zlib';
 import { getPersistentClientDeviceId } from './xiaomiPassport';
+
+/**
+ * Pure JavaScript / TypeScript implementation of RC4-drop1024
+ *
+ * Xiaomi api.io.mi.com (xiaomiio) requires RC4 encryption where the first 1024 bytes
+ * of keystream are discarded (Fluhrer, Mantin, Shamir attack mitigation).
+ * Since newer Node.js / OpenSSL deprecates or disables the legacy RC4 cipher,
+ * this lightweight, self-contained implementation ensures 100% reliable execution
+ * across all Node.js environments without external dependencies.
+ */
+export function rc4Drop1024(key: Buffer, data: Buffer): Buffer {
+  // Key-Scheduling Algorithm (KSA)
+  const s = new Uint8Array(256);
+  for (let i = 0; i < 256; i++) {
+    s[i] = i;
+  }
+  let j = 0;
+  for (let i = 0; i < 256; i++) {
+    j = (j + s[i] + key[i % key.length]) & 255;
+    const temp = s[i];
+    s[i] = s[j];
+    s[j] = temp;
+  }
+
+  // Pseudo-Random Generation Algorithm (PRGA)
+  let i = 0;
+  j = 0;
+
+  // Discard first 1024 bytes of keystream
+  for (let k = 0; k < 1024; k++) {
+    i = (i + 1) & 255;
+    j = (j + s[i]) & 255;
+    const temp = s[i];
+    s[i] = s[j];
+    s[j] = temp;
+  }
+
+  // Encrypt / decrypt the payload
+  const out = Buffer.alloc(data.length);
+  for (let k = 0; k < data.length; k++) {
+    i = (i + 1) & 255;
+    j = (j + s[i]) & 255;
+    const temp = s[i];
+    s[i] = s[j];
+    s[j] = temp;
+    out[k] = data[k] ^ s[(s[i] + s[j]) & 255];
+  }
+  return out;
+}
+
+/**
+ * Generate signed nonce (snonce)
+ * snonce = base64(sha256(base64Decode(ssecurity) + base64Decode(nonce)))
+ */
+export function signNonce(ssecurity: string, nonce: string): string {
+  const ssecBuf = Buffer.from(ssecurity, 'base64');
+  const nonceBuf = Buffer.from(nonce, 'base64');
+  return crypto.createHash('sha256').update(Buffer.concat([ssecBuf, nonceBuf])).digest('base64');
+}
+
+/**
+ * Calculate Xiaomi RC4 request signature:
+ * SHA1(METHOD & URI & data=... & rc4_hash__=... & snonce) -> base64
+ * Note: URI has `/app/` replaced by `/`, matching PiotrMachowski / Xiaomi-cloud-tokens-extractor & miservice
+ */
+export function rc4Hash(method: string, uri: string, data: Record<string, string>, snonce: string): string {
+  const parts: string[] = [];
+  if (method) {
+    parts.push(method.toUpperCase());
+  }
+  if (uri) {
+    // Standard Xiaomi IO format: e.g. /miotspec/action (not /app/miotspec/action)
+    parts.push(uri.startsWith('/') ? uri : `/${uri}`);
+  }
+  for (const key of Object.keys(data)) {
+    parts.push(`${key}=${data[key]}`);
+  }
+  parts.push(snonce);
+  return crypto.createHash('sha1').update(parts.join('&')).digest('base64');
+}
+
+/**
+ * Encode and encrypt request payload for Xiaomi Cloud MIoT API (api.io.mi.com)
+ * Two-stage process:
+ * 1. Compute rc4_hash__ over plaintext data
+ * 2. Encrypt both data and rc4_hash__ using RC4-drop1024 with snonce as key
+ * 3. Compute final signature over encrypted parameters
+ */
+export function encodeMiIOT(
+  method: string,
+  uri: string,
+  data: unknown,
+  ssecurity: string
+): { _nonce: string; data: string; rc4_hash__: string; signature: string; snonce: string } {
+  const dataText = typeof data === 'string' ? data : JSON.stringify(data);
+  const nonce = crypto.randomBytes(12).toString('base64');
+  const snonce = signNonce(ssecurity, nonce);
+
+  // Phase 1: Compute rc4_hash__ over plaintext data
+  const plain: Record<string, string> = {
+    data: dataText,
+  };
+  plain.rc4_hash__ = rc4Hash(method, uri, plain, snonce);
+
+  // Phase 2: RC4-drop1024 encrypt data + rc4_hash__
+  const dataBuf = Buffer.from(plain.data, 'utf8');
+  const hashBuf = Buffer.from(plain.rc4_hash__, 'utf8');
+  const keyBuf = Buffer.from(snonce, 'base64');
+
+  const encryptedBuf = rc4Drop1024(keyBuf, Buffer.concat([dataBuf, hashBuf]));
+  const encData = encryptedBuf.subarray(0, dataBuf.length).toString('base64');
+  const encHash = encryptedBuf.subarray(dataBuf.length).toString('base64');
+
+  // Phase 3: Final signature over encrypted params
+  const signature = rc4Hash(
+    method,
+    uri,
+    {
+      data: encData,
+      rc4_hash__: encHash,
+    },
+    snonce
+  );
+
+  return {
+    _nonce: nonce,
+    data: encData,
+    rc4_hash__: encHash,
+    signature,
+    snonce,
+  };
+}
+
+/**
+ * Decrypt Xiaomi Cloud MIoT API response
+ */
+export function decodeMiIOT(ssecurity: string, nonce: string, responseBase64: string): any {
+  const snonce = signNonce(ssecurity, nonce);
+  const keyBuf = Buffer.from(snonce, 'base64');
+  const encryptedBuf = Buffer.from(responseBase64, 'base64');
+  const decryptedBuf = rc4Drop1024(keyBuf, encryptedBuf);
+
+  let text: string;
+  // Check if response is gzipped (magic bytes 0x1F, 0x8B)
+  if (decryptedBuf.length >= 2 && decryptedBuf[0] === 0x1f && decryptedBuf[1] === 0x8b) {
+    text = zlib.gunzipSync(decryptedBuf).toString('utf8');
+  } else {
+    text = decryptedBuf.toString('utf8');
+  }
+  return JSON.parse(text);
+}
 
 export interface MiotPropertyGet {
   did: string;
@@ -279,7 +431,14 @@ export class MiotRpcEngine {
   }
 
   /**
-   * Execute Cloud MIoT API Call (with official HMAC-SHA256 ssecurity signature)
+   * Execute Cloud MIoT API Call via official RC4 + SHA-1 signed encrypted protocol (api.io.mi.com)
+   *
+   * Adheres to PiotrMachowski / Xiaomi-cloud-tokens-extractor & miservice specifications:
+   * - Endpoint: https://api.io.mi.com/app/...
+   * - URI for signing: /... (e.g. /miotspec/action)
+   * - Header: MIOT-ENCRYPT-ALGORITHM: ENCRYPT-RC4
+   * - Two-stage RC4-drop1024 parameter encryption + SHA1 signature
+   * - Response RC4 decryption with automatic gzip decompression
    */
   public async executeCloudMiot(
     endpointPath: string,
@@ -292,37 +451,72 @@ export class MiotRpcEngine {
       return { code: -1, error: '未提供小米云端 userId 或 serviceToken', exeMode: 'cloud_miot' };
     }
 
-    const cleanEndpoint = endpointPath.replace(/^\//, '');
-    const url = `https://api.io.mi.com/app/${cleanEndpoint}`;
+    // Strip leading slash and optional leading "app/" for signing URI
+    let cleanEndpoint = endpointPath.replace(/^\/+/, '');
+    if (cleanEndpoint.startsWith('app/')) {
+      cleanEndpoint = cleanEndpoint.slice(4);
+    }
     const uri = `/${cleanEndpoint}`;
+    const url = `https://api.io.mi.com/app${uri}`;
 
     // Normalize data object
-    const dataObj = (params && typeof params === 'object' && ('params' in params || 'list' in params))
+    const dataObj = (params && typeof params === 'object' && ('params' in params || 'list' in params || 'data' in params))
       ? params
       : (typeof params === 'object' ? { params } : params);
 
-    const headers: Record<string, string> = {
-      'User-Agent': 'iOS-14.4-6.0.103-iPhone12,3--D7744744F7AF32F0544445285880DD63E47D9BE9-8816080-84A3F44E137B71AE-iPhone',
-      'x-xiaomi-protocal-flag-cli': 'PROTOCAL-HTTP2',
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Cookie': `userId=${userId}; serviceToken=${serviceToken}; PassportDeviceId=${getPersistentClientDeviceId(userId)}`
-    };
+    const passportDeviceId = getPersistentClientDeviceId(userId);
 
-    let postBodyStr = '';
-    if (ssecurity) {
+    // If ssecurity is not available, fallback to legacy plaintext POST (warning logged)
+    if (!ssecurity) {
+      console.warn(`[MiotRpcEngine] ⚠️ executeCloudMiot: 缺少 ssecurity，尝试明文降级访问 ${uri}...`);
       const dataStr = typeof dataObj === 'string' ? dataObj : JSON.stringify(dataObj);
-      const rand8 = crypto.randomBytes(8);
-      const timeBuf = Buffer.alloc(4);
-      timeBuf.writeUInt32BE(Math.floor(Date.now() / 1000 / 60), 0);
-      const nonce = Buffer.concat([rand8, timeBuf]).toString('base64');
-      const hashNonce = crypto.createHash('sha256').update(Buffer.from(ssecurity, 'base64')).update(Buffer.from(nonce, 'base64')).digest('base64');
-      const msg = `${uri}&${hashNonce}&${nonce}&data=${dataStr}`;
-      const sign = crypto.createHmac('sha256', Buffer.from(hashNonce, 'base64')).update(msg).digest('base64');
-      postBodyStr = new URLSearchParams({ _nonce: nonce, data: dataStr, signature: sign }).toString();
-    } else {
-      const dataStr = typeof dataObj === 'string' ? dataObj : JSON.stringify(dataObj);
-      postBodyStr = new URLSearchParams({ data: dataStr }).toString();
+      const headers: Record<string, string> = {
+        'User-Agent': 'MICO/AndroidApp/@SHIP.TO.2A2FE0D7@/2.4.40',
+        'x-xiaomi-protocal-flag-cli': 'PROTOCAL-HTTP2',
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Cookie': `userId=${userId}; serviceToken=${serviceToken}; PassportDeviceId=${passportDeviceId}; countryCode=CN; locale=zh_CN; timezone=GMT+08:00; timezone_id=Asia/Shanghai`
+      };
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: new URLSearchParams({ data: dataStr }).toString()
+        });
+        const resText = await res.text();
+        let resJson: any;
+        try { resJson = JSON.parse(resText); } catch { return { code: res.status, result: resText, exeMode: 'cloud_miot' }; }
+        return this.parseCloudMiotResult(resJson, res.status);
+      } catch (err: any) {
+        return { code: -1, error: `MIoT 明文请求失败: ${err.message}`, exeMode: 'cloud_miot' };
+      }
     }
+
+    // Standard Encrypted Xiaomi IO Call (RC4-drop1024 + SHA1)
+    const encoded = encodeMiIOT('POST', uri, dataObj, ssecurity);
+    const postBodyStr = new URLSearchParams({
+      _nonce: encoded._nonce,
+      data: encoded.data,
+      rc4_hash__: encoded.rc4_hash__,
+      signature: encoded.signature
+    }).toString();
+
+    const headers: Record<string, string> = {
+      'User-Agent': 'MICO/AndroidApp/@SHIP.TO.2A2FE0D7@/2.4.40',
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'x-xiaomi-protocal-flag-cli': 'PROTOCAL-HTTP2',
+      'miot-accept-encoding': 'GZIP',
+      'miot-encrypt-algorithm': 'ENCRYPT-RC4',
+      'Cookie': [
+        'countryCode=CN',
+        'locale=zh_CN',
+        'timezone=GMT+08:00',
+        'timezone_id=Asia/Shanghai',
+        `userId=${userId}`,
+        `PassportDeviceId=${passportDeviceId}`,
+        `serviceToken=${serviceToken}`,
+        `yetAnotherServiceToken=${serviceToken}`,
+      ].join('; ')
+    };
 
     try {
       const res = await fetch(url, {
@@ -332,58 +526,87 @@ export class MiotRpcEngine {
       });
 
       const resText = await res.text();
-      let resJson: any;
-      try {
-        resJson = JSON.parse(resText);
-      } catch {
-        return { code: res.status, result: resText, exeMode: 'cloud_miot' };
-      }
 
-      if (res.ok && (resJson.code === 0 || resJson.message === 'ok')) {
-        // Check if the inner result has an error code
-        const innerResult = resJson.result !== undefined ? resJson.result : resJson;
-
-        // Case 1: Action execution result { did, siid, aiid, code: -704042011, out: [] }
-        if (innerResult && typeof innerResult === 'object' && !Array.isArray(innerResult)) {
-          if (innerResult.code !== undefined && innerResult.code !== 0) {
-            return {
-              code: innerResult.code,
-              error: `MIoT 设备执行未确认 (Inner Code: ${innerResult.code})`,
-              result: innerResult,
-              exeMode: 'cloud_miot'
-            };
-          }
-        }
-
-        // Case 2: Property execution result array [{ did, siid, piid, code: -704042011 }]
-        if (Array.isArray(innerResult) && innerResult.length > 0) {
-          const failedItem = innerResult.find((item: any) => item && item.code !== undefined && item.code !== 0);
-          if (failedItem) {
-            return {
-              code: failedItem.code,
-              error: `MIoT 属性操作失败 (Inner Code: ${failedItem.code})`,
-              result: innerResult,
-              exeMode: 'cloud_miot'
-            };
-          }
-        }
-
+      // Check for HTTP errors
+      if (res.status === 401 || res.status === 403) {
         return {
-          code: 0,
-          result: innerResult,
+          code: res.status,
+          error: `MIoT 云端认证失败 (HTTP ${res.status})，可能 serviceToken 或 ssecurity 已失效`,
           exeMode: 'cloud_miot'
         };
       }
 
-      return {
-        code: resJson.code || res.status,
-        error: resJson.message || resJson.description || '云端返回错误',
-        result: resJson,
-        exeMode: 'cloud_miot'
-      };
+      let resJson: any = null;
+
+      // Try decrypting with RC4-drop1024
+      try {
+        resJson = decodeMiIOT(ssecurity, encoded._nonce, resText.trim());
+      } catch (decErr: any) {
+        // Fallback: Check if response was returned unencrypted
+        try {
+          resJson = JSON.parse(resText);
+        } catch {
+          return {
+            code: res.status !== 200 ? res.status : -1,
+            error: `MIoT 响应解密失败: ${decErr.message} (原始响应长度: ${resText.length})`,
+            result: resText.slice(0, 300),
+            exeMode: 'cloud_miot'
+          };
+        }
+      }
+
+      return this.parseCloudMiotResult(resJson, res.status);
     } catch (err: any) {
       return { code: -1, error: `MIoT 云端请求失败: ${err.message}`, exeMode: 'cloud_miot' };
     }
+  }
+
+  private parseCloudMiotResult(resJson: any, httpStatus: number): MiotRpcResult {
+    if (!resJson || typeof resJson !== 'object') {
+      return { code: -1, error: '云端返回了空结果', exeMode: 'cloud_miot' };
+    }
+
+    if (resJson.code === 0 || resJson.message === 'ok') {
+      const innerResult = resJson.result !== undefined ? resJson.result : resJson;
+
+      // Case 1: Action execution result { did, siid, aiid, code: -704042011, out: [] }
+      if (innerResult && typeof innerResult === 'object' && !Array.isArray(innerResult)) {
+        if (innerResult.code !== undefined && Number(innerResult.code) !== 0) {
+          return {
+            code: Number(innerResult.code),
+            error: `MIoT 设备执行未确认 (Inner Code: ${innerResult.code})`,
+            result: innerResult,
+            exeMode: 'cloud_miot'
+          };
+        }
+      }
+
+      // Case 2: Property execution result array [{ did, siid, piid, code: -704042011 }]
+      if (Array.isArray(innerResult) && innerResult.length > 0) {
+        const failedItem = innerResult.find((item: any) => item && item.code !== undefined && Number(item.code) !== 0);
+        if (failedItem) {
+          return {
+            code: Number(failedItem.code),
+            error: `MIoT 属性操作失败 (Inner Code: ${failedItem.code})`,
+            result: innerResult,
+            exeMode: 'cloud_miot'
+          };
+        }
+      }
+
+      return {
+        code: 0,
+        result: innerResult,
+        exeMode: 'cloud_miot'
+      };
+    }
+
+    return {
+      code: resJson.code || httpStatus,
+      error: resJson.message || resJson.description || '云端返回错误',
+      result: resJson,
+      exeMode: 'cloud_miot'
+    };
   }
 
   /**

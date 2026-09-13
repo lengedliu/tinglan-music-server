@@ -1,7 +1,7 @@
 import dgram from 'dgram';
 import os from 'os';
 import crypto from 'crypto';
-import { miotRpcEngine } from './miotRpc';
+import { miotRpcEngine, encodeMiIOT, decodeMiIOT } from './miotRpc';
 import { getPersistentClientDeviceId, generateMinaRequestId, buildMinaHeaders } from './xiaomiPassport';
 
 export interface DeviceCapabilities {
@@ -502,20 +502,22 @@ export class XiaoAiResolverEngine {
           'Accept': 'application/json, text/plain, */*'
         };
 
+        let lastNonce = '';
         if (cleanSsecurity) {
-          const rand8 = crypto.randomBytes(8);
-          const timeBuf = Buffer.alloc(4);
-          timeBuf.writeUInt32BE(Math.floor(Date.now() / 1000 / 60), 0);
-          const nonce = Buffer.concat([rand8, timeBuf]).toString('base64');
-          const hashNonce = crypto.createHash('sha256').update(Buffer.from(cleanSsecurity, 'base64')).update(Buffer.from(nonce, 'base64')).digest('base64');
-          const dataStr = JSON.stringify(epItem.payload);
           const uri = new URL(epItem.url).pathname.replace(/^\/app/, '');
-          const msg = `${uri}&${hashNonce}&${nonce}&data=${dataStr}`;
-          const sign = crypto.createHmac('sha256', Buffer.from(hashNonce, 'base64')).update(msg).digest('base64');
-
-          headers['User-Agent'] = 'iOS-14.4-6.0.103-iPhone12,3--D7744744F7AF32F0544445285880DD63E47D9BE9-8816080-84A3F44E137B71AE-iPhone';
+          const enc = encodeMiIOT('POST', uri, epItem.payload, cleanSsecurity);
+          lastNonce = enc._nonce;
+          headers['User-Agent'] = 'MICO/AndroidApp/@SHIP.TO.2A2FE0D7@/2.4.40';
           headers['x-xiaomi-protocal-flag-cli'] = 'PROTOCAL-HTTP2';
-          bodyStr = new URLSearchParams({ _nonce: nonce, data: dataStr, signature: sign }).toString();
+          headers['miot-encrypt-algorithm'] = 'ENCRYPT-RC4';
+          headers['miot-accept-encoding'] = 'GZIP';
+          headers['Cookie'] = `userId=${cleanUid}; serviceToken=${cleanMiioToken}; PassportDeviceId=${getPersistentClientDeviceId(cleanUid)}; countryCode=CN; locale=zh_CN; timezone=GMT+08:00; timezone_id=Asia/Shanghai`;
+          bodyStr = new URLSearchParams({
+            _nonce: enc._nonce,
+            data: enc.data,
+            rc4_hash__: enc.rc4_hash__,
+            signature: enc.signature
+          }).toString();
         }
 
         const res = await fetch(epItem.url, {
@@ -528,9 +530,16 @@ export class XiaoAiResolverEngine {
         const durationMs = Date.now() - startT;
 
         let miHomeData: any = null;
-        try {
-          miHomeData = JSON.parse(text);
-        } catch {}
+        if (cleanSsecurity && lastNonce) {
+          try {
+            miHomeData = decodeMiIOT(cleanSsecurity, lastNonce, text.trim());
+          } catch {}
+        }
+        if (!miHomeData) {
+          try {
+            miHomeData = JSON.parse(text);
+          } catch {}
+        }
 
         const list = extractDevicesFromMinaResponse(miHomeData || text);
         const extracted: any[] = [];
