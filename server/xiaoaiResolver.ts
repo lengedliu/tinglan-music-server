@@ -326,7 +326,7 @@ export class XiaoAiResolverEngine {
     if (!userId || (!serviceToken && !options?.micoServiceToken && !options?.miotServiceToken && !options?.xiaomiioServiceToken)) return [];
 
     const cleanUid = String(userId).replace(/^["']|["']$/g, '').replace(/^uid_/, '').replace(/;$/, '').trim();
-    const cleanMicoToken = String(options?.micoServiceToken || '').replace(/^["']|["']$/g, '').replace(/;$/, '').trim();
+    const cleanMicoToken = String(options?.micoServiceToken || serviceToken || '').replace(/^["']|["']$/g, '').replace(/;$/, '').trim();
     const cleanMiioToken = String(options?.miotServiceToken || options?.xiaomiioServiceToken || serviceToken).replace(/^["']|["']$/g, '').replace(/;$/, '').trim();
     const cleanSsecurity = options?.ssecurity ? String(options.ssecurity).trim() : '';
 
@@ -884,12 +884,13 @@ export class XiaoAiResolverEngine {
   }> {
     const { userId = '', serviceToken = '', micoServiceToken, miotServiceToken, xiaomiioServiceToken, ssecurity, subnetPrefix, existingDevices = [], activeStreamIps = [] } = options;
 
-    const activeMiotToken = miotServiceToken || xiaomiioServiceToken;
+    const activeMicoToken = micoServiceToken || serviceToken;
+    const activeMiotToken = miotServiceToken || xiaomiioServiceToken || serviceToken;
 
     // Run LAN Discovery and Cloud Discovery in parallel
     const [lanList, cloudList] = await Promise.all([
       this.discoverLanDevices(subnetPrefix, 2000),
-      this.discoverCloudDevices(userId, serviceToken, { miotServiceToken: activeMiotToken, micoServiceToken, ssecurity })
+      this.discoverCloudDevices(userId, activeMicoToken, { miotServiceToken: activeMiotToken, micoServiceToken: activeMicoToken, ssecurity })
     ]);
 
     const lanMap = new Map<string, LanDiscoveredItem>();
