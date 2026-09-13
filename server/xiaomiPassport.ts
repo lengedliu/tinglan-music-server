@@ -10,7 +10,7 @@ let cachedClientDeviceId = '';
  * Matches Songloft / official Mi SoundBox iOS App client identity behavior.
  */
 export function getPersistentClientDeviceId(userId?: string): string {
-  if (cachedClientDeviceId && cachedClientDeviceId.length > 0) {
+  if (cachedClientDeviceId && cachedClientDeviceId.length === 16) {
     return cachedClientDeviceId;
   }
   try {
@@ -18,13 +18,13 @@ export function getPersistentClientDeviceId(userId?: string): string {
     const clientIdentityFile = path.join(dataDir, 'mina_client_id.json');
     if (fs.existsSync(clientIdentityFile)) {
       const parsed = JSON.parse(fs.readFileSync(clientIdentityFile, 'utf-8'));
-      if (parsed && typeof parsed.clientDeviceId === 'string' && parsed.clientDeviceId.startsWith('app_ios_')) {
-        cachedClientDeviceId = parsed.clientDeviceId;
+      if (parsed && typeof parsed.clientDeviceId === 'string' && /^[0-9A-Fa-f]{16}$/.test(parsed.clientDeviceId)) {
+        cachedClientDeviceId = parsed.clientDeviceId.toUpperCase();
         return cachedClientDeviceId;
       }
     }
-    // Generate a stable 16-hex client id matching standard iOS XiaoAi App
-    const newId = `app_ios_${crypto.randomBytes(8).toString('hex')}`;
+    // Generate a standard 16-hex client id (e.g. "45A72B8C1D9E3F0A") matching Songloft / miservice
+    const newId = crypto.randomBytes(8).toString('hex').toUpperCase();
     if (!fs.existsSync(dataDir)) {
       fs.mkdirSync(dataDir, { recursive: true });
     }
@@ -32,8 +32,8 @@ export function getPersistentClientDeviceId(userId?: string): string {
     cachedClientDeviceId = newId;
     return cachedClientDeviceId;
   } catch {
-    if (!cachedClientDeviceId) {
-      cachedClientDeviceId = `app_ios_${crypto.randomBytes(8).toString('hex')}`;
+    if (!cachedClientDeviceId || cachedClientDeviceId.length !== 16) {
+      cachedClientDeviceId = crypto.randomBytes(8).toString('hex').toUpperCase();
     }
     return cachedClientDeviceId;
   }
