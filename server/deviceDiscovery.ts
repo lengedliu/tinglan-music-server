@@ -1,5 +1,6 @@
 import dgram from 'dgram';
 import os from 'os';
+import { buildMinaHeaders, generateMinaRequestId } from './xiaomiPassport';
 
 export interface DiscoveredDevice {
   did: string;
@@ -160,23 +161,20 @@ export class DeviceDiscoveryEngine {
   public async scanMinaCloud(userId: string, serviceToken: string): Promise<DiscoveredDevice[]> {
     if (!userId || !serviceToken) return [];
 
-    const reqId = Date.now();
     const endpoints = [
-      `https://api2.mina.mi.com/admin/v2/device_list?master=0&requestId=app_ios_${reqId}`,
-      `https://api2.mina.mi.com/admin/v2/device_list?master=1&requestId=app_ios_${reqId}`,
-      `https://user.app.mina.mi.com/v2/device_list?master=0`,
-      `https://api.mina.mi.com/admin/v2/device_list?master=0`
+      `https://api2.mina.mi.com/admin/v2/device_list?master=0&requestId=${generateMinaRequestId()}`,
+      `https://api2.mina.mi.com/admin/v2/device_list?master=1&requestId=${generateMinaRequestId()}`,
+      `https://user.app.mina.mi.com/v2/device_list?master=0&requestId=${generateMinaRequestId()}`,
+      `https://api.mina.mi.com/admin/v2/device_list?master=0&requestId=${generateMinaRequestId()}`
     ];
 
     const results: DiscoveredDevice[] = [];
+    const headers = buildMinaHeaders(userId, serviceToken);
 
     for (const ep of endpoints) {
       try {
         const res = await fetch(ep, {
-          headers: {
-            'User-Agent': 'MISoundBox/1.4.0 (iPhone; iOS 14.4; Scale/3.00)',
-            'Cookie': `userId=${userId}; serviceToken=${serviceToken}`
-          }
+          headers
         });
 
         if (!res.ok) continue;

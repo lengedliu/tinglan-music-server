@@ -1654,55 +1654,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
             )}
           </div>
 
-          {/* Subnet Discovery & SSDP Probe Banner */}
-          <div className="p-4 sm:p-5 rounded-2xl bg-zinc-900/40 border border-white/5 space-y-3">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-xl bg-purple-500/10 text-purple-400 border border-purple-500/20">
-                  <Network className="w-4 h-4" />
-                </div>
-                <div>
-                  <h4 className="text-xs sm:text-sm font-bold text-white flex items-center gap-2">
-                    局域网主动探测与网段深度扫描 (Subnet UDP / SSDP Discovery)
-                  </h4>
-                  <p className="text-[11px] text-zinc-400">
-                    向指定网段 (UDP 54321) 及 UPnP 广播频道下发 Hello 握手帧，直接探测局域网内的米家音箱
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <div className="flex items-center gap-1 bg-zinc-950/80 border border-white/10 rounded-xl px-2.5 py-1 text-xs text-zinc-300 font-mono">
-                  <span>网段:</span>
-                  <input
-                    type="text"
-                    value={subnetPrefix}
-                    onChange={(e) => setSubnetPrefix(e.target.value)}
-                    placeholder="192.168.31"
-                    className="w-24 bg-transparent text-white focus:outline-none font-mono"
-                  />
-                  <span>.1~254</span>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={handleSubnetScan}
-                  disabled={isScanningSubnet}
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold shadow-md transition active:scale-95 disabled:opacity-50"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isScanningSubnet ? 'animate-spin' : ''}`} />
-                  <span>{isScanningSubnet ? '正在探测网段...' : '开始网段扫描'}</span>
-                </button>
-              </div>
-            </div>
-
-            {subnetScanResult && (
-              <div className="p-2.5 rounded-xl bg-purple-500/10 border border-purple-500/20 text-[11px] text-purple-200 flex items-center gap-2 animate-fadeIn">
-                <Info className="w-3.5 h-3.5 text-purple-400 flex-shrink-0" />
-                <span>{subnetScanResult}</span>
-              </div>
-            )}
-          </div>
+          {/* Subnet Discovery & SSDP Probe Banner (Hidden as requested) */}
 
           {/* Empty State when no devices */}
           {devices.length === 0 && (

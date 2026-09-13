@@ -1,6 +1,65 @@
 import crypto from 'crypto';
 import QRCode from 'qrcode';
 import fs from 'fs';
+import path from 'path';
+
+let cachedClientDeviceId = '';
+
+/**
+ * Get or initialize a persistent client device identifier for Xiaomi Mina / Passport sessions.
+ * Matches Songloft / official Mi SoundBox iOS App client identity behavior.
+ */
+export function getPersistentClientDeviceId(userId?: string): string {
+  if (cachedClientDeviceId && cachedClientDeviceId.length > 0) {
+    return cachedClientDeviceId;
+  }
+  try {
+    const dataDir = path.join(process.cwd(), 'data');
+    const clientIdentityFile = path.join(dataDir, 'mina_client_id.json');
+    if (fs.existsSync(clientIdentityFile)) {
+      const parsed = JSON.parse(fs.readFileSync(clientIdentityFile, 'utf-8'));
+      if (parsed && typeof parsed.clientDeviceId === 'string' && parsed.clientDeviceId.startsWith('app_ios_')) {
+        cachedClientDeviceId = parsed.clientDeviceId;
+        return cachedClientDeviceId;
+      }
+    }
+    // Generate a stable 16-hex client id matching standard iOS XiaoAi App
+    const newId = `app_ios_${crypto.randomBytes(8).toString('hex')}`;
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
+    }
+    fs.writeFileSync(clientIdentityFile, JSON.stringify({ clientDeviceId: newId, createdAt: new Date().toISOString() }, null, 2), 'utf-8');
+    cachedClientDeviceId = newId;
+    return cachedClientDeviceId;
+  } catch {
+    if (!cachedClientDeviceId) {
+      cachedClientDeviceId = `app_ios_${crypto.randomBytes(8).toString('hex')}`;
+    }
+    return cachedClientDeviceId;
+  }
+}
+
+let minaSeqCounter = 0;
+/**
+ * Generate sequential and timestamp-ordered Request ID matching official iOS client protocol
+ */
+export function generateMinaRequestId(prefix: string = 'app_ios'): string {
+  minaSeqCounter = (minaSeqCounter + 1) % 1000000;
+  return `${prefix}_${Date.now()}_${minaSeqCounter}`;
+}
+
+/**
+ * Build unified Mina HTTP headers with persistent client identity and cookies
+ */
+export function buildMinaHeaders(userId: string, serviceToken: string, targetSpeakerDeviceId?: string): Record<string, string> {
+  const clientDevId = getPersistentClientDeviceId(userId);
+  const cookieDeviceId = targetSpeakerDeviceId || clientDevId;
+  return {
+    'User-Agent': 'MISoundBox/1.4.0 (iPhone; iOS 14.4; Scale/3.00)',
+    'Accept': 'application/json, text/plain, */*',
+    'Cookie': `userId=${userId}; serviceToken=${serviceToken}; deviceId=${cookieDeviceId}; channel=MI_APP_STORE; PassportDeviceId=${clientDevId}`
+  };
+}
 
 function logDebug(message: string, data?: any) {
   const timestamp = new Date().toISOString();

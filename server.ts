@@ -13,7 +13,7 @@ import pg from 'pg';
 import mysql from 'mysql2/promise';
 import { parseFile, parseBuffer } from 'music-metadata';
 import { createServer as createViteServer } from 'vite';
-import { xiaomiPassport } from './server/xiaomiPassport.js';
+import { xiaomiPassport, getPersistentClientDeviceId, generateMinaRequestId, buildMinaHeaders } from './server/xiaomiPassport.js';
 import { minaWsClient } from './server/minaWebSocket.js';
 import { miotRpcEngine, XIAOAI_MIOT_SPEC } from './server/miotRpc.js';
 import { deviceDiscoveryEngine } from './server/deviceDiscovery.js';
@@ -3943,12 +3943,8 @@ async function callMinaCloudApi(
   // Songloft 动态设备映射：若 deviceId 仍未知或仅为数字 MIoT DID，向 Mina 查询官方 device_list 自动补全
   if (activeMicoToken && cleanUid && (!matchedDev || !(matchedDev as any).deviceID || isSyntheticId(deviceId))) {
     try {
-      const clientDeviceId = `app_ios_${crypto.randomBytes(8).toString('hex')}`;
-      const minaDevListRes = await fetch('https://api2.mina.mi.com/admin/v2/device_list?master=1', {
-        headers: {
-          'User-Agent': 'MISoundBox/1.4.0 (iPhone; iOS 14.4; Scale/3.00)',
-          'Cookie': `userId=${cleanUid}; serviceToken=${activeMicoToken}; deviceId=${clientDeviceId}; channel=MI_APP_STORE; PassportDeviceId=${clientDeviceId}`
-        },
+      const minaDevListRes = await fetch(`https://api2.mina.mi.com/admin/v2/device_list?master=1&requestId=${generateMinaRequestId()}`, {
+        headers: buildMinaHeaders(cleanUid, activeMicoToken),
         signal: AbortSignal.timeout(3000)
       });
       if (minaDevListRes.ok) {
@@ -4002,7 +3998,7 @@ async function callMinaCloudApi(
   }
 
   const messageStr = typeof messageObj === 'string' ? messageObj : JSON.stringify(messageObj);
-  const requestId = `app_ios_${Math.random().toString(36).substring(2, 12)}_${Date.now()}`;
+  const requestId = generateMinaRequestId();
 
   const postBody = new URLSearchParams({
     deviceId,
@@ -4026,9 +4022,8 @@ async function callMinaCloudApi(
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
-          'User-Agent': 'MISoundBox/1.4.0 (iPhone; iOS 14.4; Scale/3.00)',
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Cookie': `userId=${cleanUid}; serviceToken=${activeMicoToken}; deviceId=${deviceId}; channel=MI_APP_STORE; PassportDeviceId=${cleanUid}`
+          ...buildMinaHeaders(cleanUid, activeMicoToken, deviceId),
+          'Content-Type': 'application/x-www-form-urlencoded'
         },
         body: postBody.toString(),
         signal: AbortSignal.timeout(3500)

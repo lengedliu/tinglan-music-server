@@ -2,6 +2,7 @@ import dgram from 'dgram';
 import os from 'os';
 import crypto from 'crypto';
 import { miotRpcEngine } from './miotRpc';
+import { getPersistentClientDeviceId, generateMinaRequestId, buildMinaHeaders } from './xiaomiPassport';
 
 export interface DeviceCapabilities {
   hasPlayControl: boolean;     // 支持 play-control 服务 / play-url 动作
@@ -333,16 +334,16 @@ export class XiaoAiResolverEngine {
     }
 
     const cloudMap = new Map<string, CloudDiscoveredItem>();
-    const reqId = Date.now();
+    const clientDeviceId = getPersistentClientDeviceId(cleanUid);
 
     // 2.1 Mina (XiaoAi SoundBox) Cloud Endpoints (GET)
     const minaEndpoints = [
-      `https://api2.mina.mi.com/admin/v2/device_list?master=0&requestId=app_ios_${reqId}`,
-      `https://api2.mina.mi.com/admin/v2/device_list?master=1&requestId=app_ios_${reqId}`,
-      `https://user.app.mina.mi.com/v2/device_list?master=0`,
-      `https://user.app.mina.mi.com/v2/device_list?master=1`,
-      `https://api.mina.mi.com/admin/v2/device_list?master=0&requestId=app_ios_${reqId}`,
-      `https://api.mina.mi.com/admin/v2/device_list?master=1&requestId=app_ios_${reqId}`,
+      `https://api2.mina.mi.com/admin/v2/device_list?master=0&requestId=${generateMinaRequestId()}`,
+      `https://api2.mina.mi.com/admin/v2/device_list?master=1&requestId=${generateMinaRequestId()}`,
+      `https://user.app.mina.mi.com/v2/device_list?master=0&requestId=${generateMinaRequestId()}`,
+      `https://user.app.mina.mi.com/v2/device_list?master=1&requestId=${generateMinaRequestId()}`,
+      `https://api.mina.mi.com/admin/v2/device_list?master=0&requestId=${generateMinaRequestId()}`,
+      `https://api.mina.mi.com/admin/v2/device_list?master=1&requestId=${generateMinaRequestId()}`,
       `https://api2.mina.mi.com/open/device/list`,
       `https://api2.mina.mi.com/admin/v2/device_list`,
       `https://api.mina.mi.com/admin/v2/device_list`,
@@ -355,16 +356,11 @@ export class XiaoAiResolverEngine {
         return;
       }
       const startT = Date.now();
-      const clientDeviceId = `app_ios_${crypto.randomBytes(8).toString('hex')}`;
       console.log(`[Mina Discovery] 📡 发起小爱接口请求: ${ep}`);
       console.log(`[Mina Discovery] 🔑 userId=${cleanUid}, token=${cleanMicoToken.slice(0, 4)}••••, clientDeviceId=${clientDeviceId}`);
 
       try {
-        const headers: Record<string, string> = {
-          'User-Agent': 'MISoundBox/1.4.0 (iPhone; iOS 14.4; Scale/3.00)',
-          'Cookie': `userId=${cleanUid}; serviceToken=${cleanMicoToken}; deviceId=${clientDeviceId}; channel=MI_APP_STORE; PassportDeviceId=${clientDeviceId}`,
-          'Accept': 'application/json, text/plain, */*'
-        };
+        const headers = buildMinaHeaders(cleanUid, cleanMicoToken);
 
         const res = await fetch(ep, { headers, signal: AbortSignal.timeout(4000) });
         const text = await res.text();
