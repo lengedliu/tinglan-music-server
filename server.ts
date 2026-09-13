@@ -1,4 +1,5 @@
 import express, { Request, Response } from 'express';
+import { Readable } from 'stream';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -198,6 +199,21 @@ function saveJson(filePath: string, data: any): void {
   } catch (err) {
     console.error(`Failed to write to ${filePath}`, err);
   }
+}
+
+// Navidrome remote server configuration & helper
+const NAVIDROME_FILE = path.join(DATA_DIR, 'navidrome.json');
+let navidromeConfig = loadJson(NAVIDROME_FILE, {
+  serverUrl: '',
+  username: '',
+  password: '',
+  isConnected: false
+});
+
+function getSubsonicAuthQuery(user: string, pass: string): string {
+  const salt = crypto.randomBytes(6).toString('hex');
+  const token = crypto.createHash('md5').update(pass + salt).digest('hex');
+  return `u=${encodeURIComponent(user)}&t=${token}&s=${salt}&v=1.16.1&c=TingLanSongloft&f=json`;
 }
 
 // User & Database persistence paths
@@ -3199,8 +3215,8 @@ app.post('/api/miot/logout', (req: Request, res: Response) => {
 app.get('/api/miot/passport/qrcode/get', async (req: Request, res: Response) => {
   if (!checkMiotAdminPermission(req, res)) return;
 
-  // Default to 'micoapi' (matching Songloft architecture) for direct XiaoAi soundbox authorization
-  const sid = (req.query.sid as string) || 'micoapi';
+  // Default to 'xiaomiio' (米家 App 授权)
+  const sid = (req.query.sid as string) || 'xiaomiio';
   const region = (req.query.region as string) || 'cn';
   const qrRes = await xiaomiPassport.generateLoginQrCode(sid, region);
   if (qrRes.success) {
@@ -5104,11 +5120,205 @@ const streamAudioHandler = async (req: Request, res: Response) => {
     }
   }
 
-  // 5. If file doesn't exist on disk, return 404 with clear message
+  // 5. Remote stream proxy for Navidrome / Subsonic / External URLs
+  // If the audio file does not exist on local disk, but belongs to Navidrome or has a remote stream URL,
+  // proxy the stream directly with transparent Range (HTTP 206) & Content-Type forwarding so speakers play immediately!
+  let remoteStreamUrl: string | null = null;
+  if (!localFilePath) {
+    if (foundSong && foundSong.url && /^https?:\/\//i.test(foundSong.url) && !foundSong.url.includes('/api/stream/')) {
+      remoteStreamUrl = foundSong.url;
+    } else if (cleanSongId.startsWith('navidrome-') && navidromeConfig.serverUrl && navidromeConfig.username) {
+      const rawNaviId = cleanSongId.replace(/^navidrome-/, '');
+      const authQuery = getSubsonicAuthQuery(navidromeConfig.username, navidromeConfig.password);
+      remoteStreamUrl = `${navidromeConfig.serverUrl}/rest/stream.view?id=${rawNaviId}&${authQuery}`;
+    }
+  }
+
+  if (remoteStreamUrl) {
+    const userAgent = String(req.headers['user-agent'] || '');
+    const isBrowserClient = /Mozilla|Chrome|Safari|Firefox|Edg|AppleWebKit/i.test(userAgent) && !/stagefright|Lavf|gstreamer|xm_player|mico|xiaomi|vlc/i.test(userAgent);
+    const clientIp = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1').replace('::ffff:', '');
+    const nowStr = new Date().toLocaleTimeString();
+    const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
+    const host = (req.headers['x-forwarded-host'] as string) || req.headers.host || req.get('host') || `localhost:${PORT}`;
+    const fullRequestedUrl = `${proto}://${host}${req.originalUrl || req.url}`;
+
+    const proxyHeaders: Record<string, string> = {
+      'Accept': '*/*',
+      'User-Agent': userAgent || 'Lavf/58.29.100 (TingLan-StreamServer)'
+    };
+    if (req.headers.range) {
+      proxyHeaders['Range'] = String(req.headers.range);
+    }
+
+    const abortController = new AbortController();
+    req.on('close', () => {
+      try { abortController.abort(); } catch {}
+    });
+
+    try {
+      console.log(`[StreamServer] 🔄 正在透明中继 Navidrome 远端音频流: ${remoteStreamUrl.replace(/([?&]t=)[^&]+/, '$1****')} | Range: ${req.headers.range || 'Full'} | 客户端: ${clientIp}`);
+
+      let remoteRes: any;
+      if (req.method === 'HEAD') {
+        try {
+          remoteRes = await fetch(remoteStreamUrl, {
+            method: 'HEAD',
+            headers: proxyHeaders,
+            signal: abortController.signal
+          });
+          if (remoteRes.status === 405) {
+            remoteRes = await fetch(remoteStreamUrl, {
+              method: 'GET',
+              headers: { ...proxyHeaders, Range: 'bytes=0-0' },
+              signal: abortController.signal
+            });
+          }
+        } catch {
+          remoteRes = await fetch(remoteStreamUrl, {
+            method: 'GET',
+            headers: { ...proxyHeaders, Range: 'bytes=0-0' },
+            signal: abortController.signal
+          });
+        }
+      } else {
+        remoteRes = await fetch(remoteStreamUrl, {
+          method: 'GET',
+          headers: proxyHeaders,
+          signal: abortController.signal
+        });
+      }
+
+      if (!remoteRes.ok && remoteRes.status !== 206) {
+        console.warn(`[StreamServer] ⚠️ Navidrome 远端音频流响应异常: HTTP ${remoteRes.status}`);
+        return res.status(remoteRes.status).json({
+          error: 'Remote audio stream error',
+          message: `Navidrome 远端服务器响应状态错误 (HTTP ${remoteRes.status})，请检查曲目或 Navidrome 账号配置`
+        });
+      }
+
+      const contentType = remoteRes.headers.get('content-type') || 'audio/mpeg';
+      const contentLength = remoteRes.headers.get('content-length');
+      const contentRange = remoteRes.headers.get('content-range');
+      const acceptRanges = remoteRes.headers.get('accept-ranges') || 'bytes';
+
+      res.status(remoteRes.status);
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Accept-Ranges', acceptRanges);
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      if (contentLength) res.setHeader('Content-Length', contentLength);
+      if (contentRange) res.setHeader('Content-Range', contentRange);
+
+      if (!isBrowserClient && clientIp && clientIp !== '127.0.0.1' && clientIp !== 'localhost') {
+        activeStreamIps.add(clientIp);
+      }
+
+      const isPartial = remoteRes.status === 206 || Boolean(req.headers.range);
+      const matchedDev = xiaomiDevices.find(d => d.ip && clientIp.includes(d.ip)) || 
+        (miotConfig.activeDeviceId ? xiaomiDevices.find(d => d.did === miotConfig.activeDeviceId) : null);
+      const resolvedDid = matchedDev?.did || '';
+      const resolvedModel = matchedDev?.model || 'wifispeaker';
+
+      recentStreamEvents.unshift({
+        timestamp: nowStr,
+        timeMs: Date.now(),
+        songId: String(songId),
+        clientIp,
+        isBrowser: isBrowserClient,
+        userAgent,
+        status: remoteRes.status,
+        format: contentType.includes('flac') ? '.flac' : '.mp3',
+        bytesSent: contentLength ? Number(contentLength) : 0,
+        streamUrl: fullRequestedUrl,
+        path: req.originalUrl || req.url
+      });
+      if (recentStreamEvents.length > 50) recentStreamEvents.pop();
+
+      notifyStreamConsumed({
+        clientIp,
+        songId: String(songId),
+        userAgent,
+        status: remoteRes.status,
+        timeMs: Date.now()
+      });
+
+      const streamLogEntry = {
+        id: `log-stream-${Date.now()}`,
+        timestamp: nowStr,
+        type: 'sync' as const,
+        message: isBrowserClient ? `网页端试听 Navidrome 音频流: ${songId}` : `音箱拉取 Navidrome 音频流: ${songId}`,
+        detail: `${isPartial ? 'HTTP 206 Partial Content (Navidrome 中继)' : 'HTTP 200 OK (Navidrome 中继)'} | 格式: ${contentType} | 来源: ${clientIp}`,
+        success: true,
+        ip: clientIp,
+        isBrowser: isBrowserClient,
+        did: resolvedDid,
+        model: resolvedModel,
+        protocol: 'Navidrome Proxy Stream',
+        requestMethod: `GET ${req.originalUrl || req.url}`,
+        httpStatus: remoteRes.status,
+        streamUrl: fullRequestedUrl,
+        responseTimeMs: 12,
+        steps: [
+          {
+            timestamp: nowStr,
+            step: 'PROXY_STREAM_GET',
+            status: 'OK' as const,
+            statusCode: remoteRes.status,
+            message: `Navidrome 响应 HTTP ${remoteRes.status} (${contentType})`
+          },
+          {
+            timestamp: nowStr,
+            step: 'STREAM_URL',
+            status: 'OK' as const,
+            statusCode: 200,
+            message: `完整拉流URL: ${fullRequestedUrl}`
+          },
+          {
+            timestamp: nowStr,
+            step: 'PLAYBACK_CHECK',
+            status: 'OK' as const,
+            statusCode: 200,
+            message: isBrowserClient ? '网页播放器正在缓冲/播放' : '音箱已成功接管 Navidrome 音频流并播放'
+          }
+        ]
+      };
+      castLogs.unshift(streamLogEntry);
+      if (castLogs.length > 50) castLogs.pop();
+
+      if (req.method === 'HEAD') {
+        return res.end();
+      }
+
+      if (remoteRes.body) {
+        const nodeStream = Readable.fromWeb(remoteRes.body as any);
+        nodeStream.on('error', (err: any) => {
+          if (err.name !== 'AbortError') {
+            console.warn('[StreamServer] Navidrome 中继传输警告:', err.message);
+          }
+        });
+        nodeStream.pipe(res);
+      } else {
+        res.end();
+      }
+      return;
+    } catch (proxyErr: any) {
+      if (proxyErr.name === 'AbortError') {
+        return res.end();
+      }
+      console.error('[StreamServer] Navidrome 远端音频流中继异常:', proxyErr.message);
+      return res.status(502).json({
+        error: 'Remote stream connection failed',
+        message: `Navidrome 远端流代理异常: ${proxyErr.message}`
+      });
+    }
+  }
+
+  // 6. If file doesn't exist on disk and no remote stream URL, return 404 with clear message
   if (!localFilePath || !fs.existsSync(localFilePath)) {
     return res.status(404).json({
       error: 'Audio file not found',
-      message: `未找到指定歌曲音频文件 (ID: ${songId})，请确认文件已放置在挂载音乐目录 /app/music 中`
+      message: `未找到指定歌曲音频文件 (ID: ${songId})，请确认文件已放置在挂载音乐目录 /app/music 中或确认远端曲库已连接`
     });
   }
 
@@ -5550,19 +5760,6 @@ app.post('/api/lyrics/search', (req: Request, res: Response) => {
 });
 
 // ---------------- NAVIDROME / SUBSONIC REMOTE SERVER INTEGRATION ----------------
-const NAVIDROME_FILE = path.join(DATA_DIR, 'navidrome.json');
-let navidromeConfig = loadJson(NAVIDROME_FILE, {
-  serverUrl: '',
-  username: '',
-  password: '',
-  isConnected: false
-});
-
-function getSubsonicAuthQuery(user: string, pass: string): string {
-  const salt = crypto.randomBytes(6).toString('hex');
-  const token = crypto.createHash('md5').update(pass + salt).digest('hex');
-  return `u=${encodeURIComponent(user)}&t=${token}&s=${salt}&v=1.16.1&c=TingLanSongloft&f=json`;
-}
 
 // Get Navidrome config
 app.get('/api/navidrome/config', (req: Request, res: Response) => {

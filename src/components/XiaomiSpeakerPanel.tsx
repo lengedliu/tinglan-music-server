@@ -361,8 +361,8 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
     }
   };
 
-  // QR Code Channel selection: 'micoapi' (小爱音箱专属授权 - 与 Songloft 架构一致，米家App与小爱App均可扫码)
-  const [qrChannel, setQrChannel] = useState<'xiaomiio' | 'micoapi'>('micoapi');
+  // QR Code Channel selection: 'xiaomiio' (米家 App 授权 - 默认推荐通道)
+  const [qrChannel, setQrChannel] = useState<'xiaomiio' | 'micoapi'>('xiaomiio');
 
   // Fetch QR Code for Login with Channel Support (sid=micoapi vs xiaomiio)
   const handleGenerateQrCode = async (channel?: 'xiaomiio' | 'micoapi') => {
