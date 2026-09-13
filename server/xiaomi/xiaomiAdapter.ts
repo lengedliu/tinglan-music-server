@@ -168,13 +168,13 @@ export class XiaomiAdapter {
     });
 
     const isTouchscreen = targetDevice.hardwareProfile?.isTouchscreen || false;
-    const activeMicoToken = miotConfig?.micoServiceToken || miotConfig?.serviceToken;
-    const activeIoToken = miotConfig?.xiaomiioServiceToken || activeMicoToken;
+    const activeMicoToken = miotConfig?.micoServiceToken || (miotConfig?.isMicoValid ? miotConfig?.serviceToken : undefined);
+    const activeIoToken = miotConfig?.miotServiceToken || miotConfig?.xiaomiioServiceToken || (!miotConfig?.isMicoValid ? miotConfig?.serviceToken : undefined);
     const activeSsec = miotConfig?.ssecurity;
     const isXiaoaiAccountActive = Boolean(
       (activeMicoToken && (miotConfig?.userId || miotConfig?.miUser)) ||
       (miotConfig?.passToken && (miotConfig?.userId || miotConfig?.miUser)) ||
-      (miotConfig?.isLoggedIn && (activeMicoToken || miotConfig?.passToken || miotConfig?.serviceToken))
+      (miotConfig?.isLoggedIn && (activeMicoToken || miotConfig?.passToken))
     );
 
     // Helper to accurately verify if MIoT Action genuinely succeeded (rejecting negative inner codes like -4003)
@@ -748,11 +748,11 @@ export class XiaomiAdapter {
     sendMiioCommandFn: (ip: string, token: string, method: string, params: any, timeoutMs?: number) => Promise<any>,
     miotConfig: any
   ): Promise<{ success: boolean; message: string; details?: any }> {
-    const activeMicoToken = miotConfig?.micoServiceToken || miotConfig?.serviceToken;
+    const activeMicoToken = miotConfig?.micoServiceToken || (miotConfig?.isMicoValid ? miotConfig?.serviceToken : undefined);
     const isXiaoaiAccountActive = Boolean(
       (activeMicoToken && (miotConfig?.userId || miotConfig?.miUser)) ||
       (miotConfig?.passToken && (miotConfig?.userId || miotConfig?.miUser)) ||
-      (miotConfig?.isLoggedIn && (activeMicoToken || miotConfig?.passToken || miotConfig?.serviceToken))
+      (miotConfig?.isLoggedIn && (activeMicoToken || miotConfig?.passToken))
     );
 
     // 1. Mina Cloud UBUS
@@ -841,11 +841,11 @@ export class XiaomiAdapter {
     miotConfig: any
   ): Promise<{ success: boolean; message: string; details?: any }> {
     const clampedVol = Math.max(0, Math.min(100, Math.round(volume)));
-    const activeMicoToken = miotConfig?.micoServiceToken || miotConfig?.serviceToken;
+    const activeMicoToken = miotConfig?.micoServiceToken || (miotConfig?.isMicoValid ? miotConfig?.serviceToken : undefined);
     const isXiaoaiAccountActive = Boolean(
       (activeMicoToken && (miotConfig?.userId || miotConfig?.miUser)) ||
       (miotConfig?.passToken && (miotConfig?.userId || miotConfig?.miUser)) ||
-      (miotConfig?.isLoggedIn && (activeMicoToken || miotConfig?.passToken || miotConfig?.serviceToken))
+      (miotConfig?.isLoggedIn && (activeMicoToken || miotConfig?.passToken))
     );
 
     if (isXiaoaiAccountActive) {

@@ -63,6 +63,7 @@ export interface IgnoredDevice {
 export interface LanDiscoveredItem {
   did: string;
   ip: string;
+  mac?: string;
   online: boolean;
   latency?: number;
 }
@@ -320,13 +321,13 @@ export class XiaoAiResolverEngine {
   public async discoverCloudDevices(
     userId: string,
     serviceToken: string,
-    options?: { xiaomiioServiceToken?: string; micoServiceToken?: string; ssecurity?: string }
+    options?: { miotServiceToken?: string; micoServiceToken?: string; xiaomiioServiceToken?: string; ssecurity?: string }
   ): Promise<CloudDiscoveredItem[]> {
-    if (!userId || (!serviceToken && !options?.micoServiceToken && !options?.xiaomiioServiceToken)) return [];
+    if (!userId || (!serviceToken && !options?.micoServiceToken && !options?.miotServiceToken && !options?.xiaomiioServiceToken)) return [];
 
     const cleanUid = String(userId).replace(/^["']|["']$/g, '').replace(/^uid_/, '').replace(/;$/, '').trim();
-    const cleanMicoToken = String(options?.micoServiceToken || serviceToken).replace(/^["']|["']$/g, '').replace(/;$/, '').trim();
-    const cleanMiioToken = String(options?.xiaomiioServiceToken || serviceToken).replace(/^["']|["']$/g, '').replace(/;$/, '').trim();
+    const cleanMicoToken = String(options?.micoServiceToken || '').replace(/^["']|["']$/g, '').replace(/;$/, '').trim();
+    const cleanMiioToken = String(options?.miotServiceToken || options?.xiaomiioServiceToken || serviceToken).replace(/^["']|["']$/g, '').replace(/;$/, '').trim();
     const cleanSsecurity = options?.ssecurity ? String(options.ssecurity).trim() : '';
 
     if (!cleanUid || cleanUid === 'undefined' || cleanUid === 'null') {
@@ -864,6 +865,7 @@ export class XiaoAiResolverEngine {
     userId?: string;
     serviceToken?: string;
     micoServiceToken?: string;
+    miotServiceToken?: string;
     xiaomiioServiceToken?: string;
     ssecurity?: string;
     subnetPrefix?: string;
@@ -880,12 +882,14 @@ export class XiaoAiResolverEngine {
       nonSpeakerIgnored: number;
     };
   }> {
-    const { userId = '', serviceToken = '', micoServiceToken, xiaomiioServiceToken, ssecurity, subnetPrefix, existingDevices = [], activeStreamIps = [] } = options;
+    const { userId = '', serviceToken = '', micoServiceToken, miotServiceToken, xiaomiioServiceToken, ssecurity, subnetPrefix, existingDevices = [], activeStreamIps = [] } = options;
+
+    const activeMiotToken = miotServiceToken || xiaomiioServiceToken;
 
     // Run LAN Discovery and Cloud Discovery in parallel
     const [lanList, cloudList] = await Promise.all([
       this.discoverLanDevices(subnetPrefix, 2000),
-      this.discoverCloudDevices(userId, serviceToken, { xiaomiioServiceToken, micoServiceToken, ssecurity })
+      this.discoverCloudDevices(userId, serviceToken, { miotServiceToken: activeMiotToken, micoServiceToken, ssecurity })
     ]);
 
     const lanMap = new Map<string, LanDiscoveredItem>();

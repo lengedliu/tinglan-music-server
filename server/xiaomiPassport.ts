@@ -48,6 +48,15 @@ export function generateMinaRequestId(prefix: string = 'app_ios'): string {
   return `${prefix}_${Date.now()}_${minaSeqCounter}`;
 }
 
+export interface XiaomiAuth {
+  userId: string;
+  micoServiceToken?: string;   // 仅供 Mina/小爱云 (api2.mina.mi.com, ws) 使用
+  miotServiceToken?: string;   // 仅供 MIoT-spec / 米家云 (api.io.mi.com) 使用
+  ssecurity?: string;
+  passToken?: string;
+  cUserId?: string;
+}
+
 /**
  * Build unified Mina HTTP headers with persistent client identity and cookies
  */

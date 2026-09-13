@@ -21,6 +21,7 @@ import { xiaoaiResolverEngine, extractDevicesFromMinaResponse } from './server/x
 import { ttsEngine, POPULAR_TTS_VOICES } from './server/ttsEngine.js';
 import { dlnaEngine } from './server/dlnaEngine.js';
 import { GoogleGenAI } from '@google/genai';
+import { MiotConfig } from './src/types.js';
 import {
   MusicEngine,
   PlaylistEngine,
@@ -1431,7 +1432,7 @@ const DEFAULT_PLAYLISTS = [
 
 const DEFAULT_DEVICES: any[] = [];
 
-const DEFAULT_CONFIG = {
+const DEFAULT_CONFIG: MiotConfig = {
   miUser: process.env.MI_USER || '',
   isLoggedIn: !!process.env.MI_USER,
   serverHost: process.env.SERVER_HOST || '',
@@ -1442,6 +1443,9 @@ const DEFAULT_CONFIG = {
   volumeSync: true,
   userId: '',
   serviceToken: '',
+  micoServiceToken: '',
+  miotServiceToken: '',
+  isMicoValid: false,
   bindMode: 'account',
   castMode: 'auto' // auto | cdn_direct | xiaoai_directive | lan_stream
 };
@@ -1576,9 +1580,9 @@ if ((miotConfig as any).passToken) {
     let ssec = (micoRes.status === 'fulfilled' && micoRes.value.ssecurity) || (ioRes.status === 'fulfilled' && ioRes.value.ssecurity) || (miotConfig as any).ssecurity;
 
     if (micoToken || ioToken) {
-      miotConfig.serviceToken = micoToken || ioToken;
-      (miotConfig as any).micoServiceToken = micoToken || miotConfig.serviceToken;
-      (miotConfig as any).xiaomiioServiceToken = ioToken || miotConfig.serviceToken;
+      if (micoToken) (miotConfig as any).micoServiceToken = micoToken;
+      if (ioToken) (miotConfig as any).miotServiceToken = ioToken;
+      (miotConfig as any).isMicoValid = Boolean(micoToken);
       if (ssec) (miotConfig as any).ssecurity = ssec;
       if (recoveredUid && recoveredUid !== '0') {
         miotConfig.userId = recoveredUid;
@@ -1592,8 +1596,8 @@ if ((miotConfig as any).passToken) {
       try {
         const resolveResult = await xiaoaiResolverEngine.resolveDevices({
           userId: miotConfig.userId,
-          serviceToken: micoToken || miotConfig.serviceToken,
-          xiaomiioServiceToken: ioToken || miotConfig.serviceToken,
+          micoServiceToken: micoToken || undefined,
+          miotServiceToken: ioToken || undefined,
           ssecurity: ssec,
           existingDevices: xiaomiDevices,
           activeStreamIps: Array.from(activeStreamIps)
@@ -1612,9 +1616,11 @@ if ((miotConfig as any).passToken) {
       }
 
       // Connect Mina WS
-      try {
-        minaWsClient.connect(miotConfig.userId, micoToken || miotConfig.serviceToken, miotConfig.activeDeviceId || '');
-      } catch {}
+      if (micoToken) {
+        try {
+          minaWsClient.connect(miotConfig.userId, micoToken, miotConfig.activeDeviceId || '');
+        } catch {}
+      }
     }
   }).catch((err) => console.warn('[Auth] passToken startup recovery skipped:', err.message));
 }
@@ -2768,8 +2774,8 @@ async function queryXiaomiMinaDevices(userId: string, serviceToken: string): Pro
   try {
     const res = await xiaoaiResolverEngine.resolveDevices({
       userId,
-      serviceToken: (miotConfig as any).micoServiceToken || serviceToken,
-      xiaomiioServiceToken: (miotConfig as any).xiaomiioServiceToken || serviceToken,
+      micoServiceToken: (miotConfig as any).micoServiceToken || (miotConfig.isMicoValid ? serviceToken : undefined),
+      miotServiceToken: (miotConfig as any).miotServiceToken || (miotConfig as any).xiaomiioServiceToken,
       ssecurity: (miotConfig as any).ssecurity,
       existingDevices: xiaomiDevices,
       activeStreamIps: Array.from(activeStreamIps)
@@ -3002,14 +3008,17 @@ app.post('/api/miot/login', async (req: Request, res: Response) => {
     }
 
     miotConfig.userId = cleanUid;
-    miotConfig.serviceToken = activeServiceToken;
-    (miotConfig as any).isMicoValid = isMicoValid;
-    if (xiaomiioServiceToken) {
-      (miotConfig as any).stsTokens = {
-        micoapi: activeServiceToken,
-        xiaomiio: xiaomiioServiceToken
-      };
+    if (isMicoValid) {
+      (miotConfig as any).micoServiceToken = activeServiceToken;
+    } else {
+      (miotConfig as any).micoServiceToken = undefined;
     }
+    if (xiaomiioServiceToken) {
+      (miotConfig as any).miotServiceToken = xiaomiioServiceToken;
+    } else if (!isMicoValid) {
+      (miotConfig as any).miotServiceToken = activeServiceToken;
+    }
+    (miotConfig as any).isMicoValid = isMicoValid;
     if (cleanPassToken) (miotConfig as any).passToken = cleanPassToken;
     miotConfig.miUser = username || `uid_${cleanUid}`;
     miotConfig.isLoggedIn = true;
@@ -3022,8 +3031,8 @@ app.post('/api/miot/login', async (req: Request, res: Response) => {
     try {
       const resolveResult = await xiaoaiResolverEngine.resolveDevices({
         userId: cleanUid,
-        serviceToken: activeServiceToken,
-        xiaomiioServiceToken: xiaomiioServiceToken || activeServiceToken,
+        micoServiceToken: isMicoValid ? activeServiceToken : undefined,
+        miotServiceToken: xiaomiioServiceToken || (!isMicoValid ? activeServiceToken : undefined),
         existingDevices: xiaomiDevices,
         activeStreamIps: Array.from(activeStreamIps)
       });
@@ -3097,10 +3106,12 @@ app.post('/api/miot/login', async (req: Request, res: Response) => {
     });
   }
 
-  // Real authentication passed with verified userId and serviceToken!
+  // Real authentication passed with verified userId and micoapi serviceToken!
   miotConfig.miUser = username.trim();
   miotConfig.userId = authResult.userId;
-  miotConfig.serviceToken = authResult.serviceToken;
+  (miotConfig as any).micoServiceToken = authResult.serviceToken;
+  (miotConfig as any).isMicoValid = true;
+  if (authResult.ssecurity) (miotConfig as any).ssecurity = authResult.ssecurity;
   miotConfig.isLoggedIn = true;
   miotConfig.bindMode = 'account';
   saveJson(CONFIG_FILE, miotConfig);
@@ -3192,8 +3203,8 @@ app.post('/api/miot/passport/qrcode/check', async (req: Request, res: Response) 
   const checkRes = await xiaomiPassport.checkQrCodeStatus(loginUrl || lpUrl, lpUrl);
   if (checkRes.success && checkRes.status === 'confirmed') {
     let primaryToken = checkRes.serviceToken || '';
-    let micoServiceToken = sid === 'micoapi' ? primaryToken : '';
-    let xiaomiioServiceToken = sid === 'micoapi' ? '' : primaryToken;
+    let micoServiceToken = sid === 'micoapi' ? primaryToken : undefined;
+    let miotServiceToken = sid === 'micoapi' ? undefined : primaryToken;
     let ssecurity = checkRes.ssecurity || '';
 
     // With confirmed passToken, fetch both STS tokens to ensure complete double-credential setup
@@ -3214,11 +3225,11 @@ app.post('/api/miot/passport/qrcode/check', async (req: Request, res: Response) 
       }
 
       // 2. Fetch xiaomiio token (for Mi Home smart devices and speaker sync)
-      if (!xiaomiioServiceToken) {
+      if (!miotServiceToken) {
         try {
           const ioTokenRes = await xiaomiPassport.fetchAdditionalStsToken(checkRes.userId, checkRes.passToken, 'xiaomiio');
           if (ioTokenRes.serviceToken) {
-            xiaomiioServiceToken = ioTokenRes.serviceToken;
+            miotServiceToken = ioTokenRes.serviceToken;
             if (ioTokenRes.ssecurity && !ssecurity) {
               ssecurity = ioTokenRes.ssecurity;
             }
@@ -3229,9 +3240,7 @@ app.post('/api/miot/passport/qrcode/check', async (req: Request, res: Response) 
       }
     }
 
-    const effectiveToken = micoServiceToken || xiaomiioServiceToken || primaryToken;
-
-    if (!checkRes.userId || !effectiveToken) {
+    if (!checkRes.userId || (!micoServiceToken && !miotServiceToken && !primaryToken)) {
       return res.json({
         success: false,
         status: 'error',
@@ -3240,9 +3249,9 @@ app.post('/api/miot/passport/qrcode/check', async (req: Request, res: Response) 
     }
 
     miotConfig.userId = checkRes.userId;
-    miotConfig.serviceToken = effectiveToken;
-    (miotConfig as any).xiaomiioServiceToken = xiaomiioServiceToken || effectiveToken;
-    (miotConfig as any).micoServiceToken = micoServiceToken || undefined;
+    (miotConfig as any).micoServiceToken = micoServiceToken;
+    (miotConfig as any).miotServiceToken = miotServiceToken;
+    (miotConfig as any).isMicoValid = Boolean(micoServiceToken);
     (miotConfig as any).ssecurity = ssecurity || (miotConfig as any).ssecurity;
     (miotConfig as any).passToken = checkRes.passToken;
     miotConfig.miUser = `uid_${checkRes.userId}`;
@@ -3250,18 +3259,20 @@ app.post('/api/miot/passport/qrcode/check', async (req: Request, res: Response) 
     miotConfig.bindMode = 'account';
     saveJson(CONFIG_FILE, miotConfig);
 
-    // Auto connect Mina WS
-    try {
-      minaWsClient.connect(checkRes.userId, micoServiceToken || effectiveToken, miotConfig.activeDeviceId || '');
-    } catch {}
+    // Auto connect Mina WS if micoServiceToken is available
+    if (micoServiceToken) {
+      try {
+        minaWsClient.connect(checkRes.userId, micoServiceToken, miotConfig.activeDeviceId || '');
+      } catch {}
+    }
 
     // Auto sync devices using the full Dual-Track Pipeline (with 8s timeout guard)
     let devices: any[] = [];
     try {
       const resolvePromise = xiaoaiResolverEngine.resolveDevices({
         userId: checkRes.userId,
-        serviceToken: micoServiceToken || effectiveToken,
-        xiaomiioServiceToken: xiaomiioServiceToken || effectiveToken,
+        micoServiceToken,
+        miotServiceToken,
         ssecurity: ssecurity || (miotConfig as any).ssecurity,
         existingDevices: xiaomiDevices,
         activeStreamIps: Array.from(activeStreamIps)
@@ -3811,9 +3822,8 @@ app.post('/api/miot/devices/resolve', async (req: Request, res: Response) => {
   try {
     const result = await xiaoaiResolverEngine.resolveDevices({
       userId: miotConfig.userId,
-      serviceToken: (miotConfig as any).micoServiceToken || miotConfig.serviceToken,
-      micoServiceToken: (miotConfig as any).micoServiceToken || miotConfig.serviceToken,
-      xiaomiioServiceToken: (miotConfig as any).xiaomiioServiceToken || miotConfig.serviceToken,
+      micoServiceToken: (miotConfig as any).micoServiceToken || (miotConfig.isMicoValid ? miotConfig.serviceToken : undefined),
+      miotServiceToken: (miotConfig as any).miotServiceToken || (miotConfig as any).xiaomiioServiceToken || (!miotConfig.isMicoValid ? miotConfig.serviceToken : undefined),
       ssecurity: (miotConfig as any).ssecurity,
       subnetPrefix,
       existingDevices: xiaomiDevices,
@@ -3860,9 +3870,8 @@ app.post('/api/miot/devices/scan', async (req: Request, res: Response) => {
   try {
     const result = await xiaoaiResolverEngine.resolveDevices({
       userId: miotConfig.userId,
-      serviceToken: (miotConfig as any).micoServiceToken || miotConfig.serviceToken,
-      micoServiceToken: (miotConfig as any).micoServiceToken || miotConfig.serviceToken,
-      xiaomiioServiceToken: (miotConfig as any).xiaomiioServiceToken || miotConfig.serviceToken,
+      micoServiceToken: (miotConfig as any).micoServiceToken || (miotConfig.isMicoValid ? miotConfig.serviceToken : undefined),
+      miotServiceToken: (miotConfig as any).miotServiceToken || (miotConfig as any).xiaomiioServiceToken || (!miotConfig.isMicoValid ? miotConfig.serviceToken : undefined),
       ssecurity: (miotConfig as any).ssecurity,
       subnetPrefix,
       existingDevices: xiaomiDevices,
@@ -3919,7 +3928,7 @@ async function callMinaCloudApi(
   targetDid?: string,
   retryCount: number = 0
 ): Promise<{ success: boolean; data?: any; error?: string; raw?: string; statusCode?: number }> {
-  const rawToken = (miotConfig as any).micoServiceToken || miotConfig.serviceToken || '';
+  const rawToken = (miotConfig as any).micoServiceToken || (miotConfig.isMicoValid ? miotConfig.serviceToken : '');
   const rawUid = miotConfig.userId || '';
 
   // Clean ASCII only to prevent ByteString character code > 255 TypeError
@@ -3932,7 +3941,7 @@ async function callMinaCloudApi(
       const refreshed = await xiaomiPassport.fetchAdditionalStsToken(cleanUid || '0', (miotConfig as any).passToken, 'micoapi');
       if (refreshed.serviceToken) {
         (miotConfig as any).micoServiceToken = refreshed.serviceToken;
-        miotConfig.serviceToken = refreshed.serviceToken;
+        (miotConfig as any).isMicoValid = true;
         if (refreshed.ssecurity) (miotConfig as any).ssecurity = refreshed.ssecurity;
         if (refreshed.userId) {
           miotConfig.userId = refreshed.userId;
@@ -4441,7 +4450,7 @@ app.post('/api/miot/test-sound', async (req: Request, res: Response) => {
   let localResult: any = null;
   const logs: string[] = [];
 
-  const activeMicoToken = (miotConfig as any).micoServiceToken || miotConfig.serviceToken;
+  const activeMicoToken = (miotConfig as any).micoServiceToken || (miotConfig.isMicoValid ? miotConfig.serviceToken : undefined);
   if (miotConfig.isLoggedIn && activeMicoToken && miotConfig.userId) {
     try {
       logs.push(`正在通过小米云端 UBUS (mediaplayer/player_play_url) 投播测试流...`);
@@ -4531,8 +4540,8 @@ app.post('/api/miot/control', async (req: Request, res: Response) => {
   let cloudResult: any = null;
   let localMiioResult: any = null;
 
-  const activeMicoToken = (miotConfig as any).micoServiceToken || miotConfig.serviceToken;
-  const activeIoToken = (miotConfig as any).xiaomiioServiceToken || activeMicoToken;
+  const activeMicoToken = (miotConfig as any).micoServiceToken || (miotConfig.isMicoValid ? miotConfig.serviceToken : undefined);
+  const activeIoToken = (miotConfig as any).miotServiceToken || (miotConfig as any).xiaomiioServiceToken || (!miotConfig.isMicoValid ? miotConfig.serviceToken : undefined);
   const cloudAuth = (miotConfig.userId && activeIoToken) ? {
     userId: String(miotConfig.userId),
     serviceToken: activeIoToken,
@@ -4807,8 +4816,8 @@ app.post('/api/miot/tts', async (req: Request, res: Response) => {
     try {
       const resolveRes = await xiaoaiResolverEngine.resolveDevices({
         userId: miotConfig.userId,
-        serviceToken: (miotConfig as any).micoServiceToken || miotConfig.serviceToken,
-        xiaomiioServiceToken: (miotConfig as any).xiaomiioServiceToken || miotConfig.serviceToken,
+        micoServiceToken: (miotConfig as any).micoServiceToken || (miotConfig.isMicoValid ? miotConfig.serviceToken : undefined),
+        miotServiceToken: (miotConfig as any).miotServiceToken || (miotConfig as any).xiaomiioServiceToken || (!miotConfig.isMicoValid ? miotConfig.serviceToken : undefined),
         ssecurity: (miotConfig as any).ssecurity,
         existingDevices: xiaomiDevices,
         activeStreamIps: Array.from(activeStreamIps)
@@ -5213,7 +5222,7 @@ app.head('/music/:filename', (req: Request, res: Response) => {
 // 3-Tier Architecture Status API
 app.get(['/api/system/3tier-architecture', '/api/system/xiaomusic-architecture'], (req: Request, res: Response) => {
   const transcodeStats = audioTranscoder.getCacheStats();
-  const activeMicoToken = (miotConfig as any).micoServiceToken || miotConfig.serviceToken;
+  const activeMicoToken = (miotConfig as any).micoServiceToken || (miotConfig.isMicoValid ? miotConfig.serviceToken : undefined);
   res.json({
     success: true,
     architecture: {

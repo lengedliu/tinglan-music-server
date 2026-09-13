@@ -131,8 +131,8 @@ export class TtsEngine {
       return { success: false, channel: '', error: '播报内容不能为空', triedChannels };
     }
 
-    const activeMicoToken = miotConfig.micoServiceToken || miotConfig.serviceToken;
-    const activeIoToken = miotConfig.xiaomiioServiceToken || activeMicoToken;
+    const activeMicoToken = miotConfig.micoServiceToken || (miotConfig.isMicoValid ? miotConfig.serviceToken : undefined);
+    const activeIoToken = miotConfig.miotServiceToken || miotConfig.xiaomiioServiceToken || (!miotConfig.isMicoValid ? miotConfig.serviceToken : undefined);
     const cleanUid = String(miotConfig.userId || '').replace(/^uid_/, '').trim();
     const cloudAuth = (cleanUid && activeIoToken) ? {
       userId: cleanUid,

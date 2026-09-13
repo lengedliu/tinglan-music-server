@@ -95,8 +95,13 @@ export interface MiotConfig {
   ttsPrefix: string;
   volumeSync: boolean;
   userId?: string;
-  serviceToken?: string;
+  serviceToken?: string; // Legacy fallback
+  micoServiceToken?: string; // Mina / XiaoAi Cloud Token
+  miotServiceToken?: string; // MIoT Spec / MiHome Cloud Token
   hasServiceToken?: boolean;
+  hasMicoServiceToken?: boolean;
+  hasMiotServiceToken?: boolean;
+  isMicoValid?: boolean;
   bindMode?: 'account' | 'token' | 'cookie';
   castMode?: 'auto' | 'cdn_direct' | 'xiaoai_directive' | 'lan_stream';
 }
