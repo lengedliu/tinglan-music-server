@@ -1245,6 +1245,7 @@ export default function App() {
               onOpenSecurityModal={() => setActiveTab('settings')}
               onDismissCommandState={handleDismissCommandState}
               onSwitchToBrowserAudio={handleSwitchToBrowserAudio}
+              playlists={playlists}
             />
           )}
 

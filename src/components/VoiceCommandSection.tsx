@@ -1,0 +1,777 @@
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  Mic,
+  Play,
+  Pause,
+  RefreshCw,
+  Plus,
+  Trash2,
+  Edit3,
+  Check,
+  X,
+  Volume2,
+  Music,
+  Terminal,
+  Activity,
+  AlertCircle,
+  Sparkles,
+  HelpCircle,
+  Radio,
+  Sliders,
+  CheckCircle2,
+  Search,
+  MessageSquare,
+  ShieldCheck,
+  Send,
+  Zap,
+  ListMusic
+} from 'lucide-react';
+import { XiaomiDevice, VoiceListenerConfig, VoiceListenerStatus, VoiceDialogueLog, VoiceCommandRule, Playlist } from '../types';
+import { apiFetch } from '../utils/api';
+
+interface VoiceCommandSectionProps {
+  devices: XiaomiDevice[];
+  activeDevice: XiaomiDevice | undefined;
+  onSelectDevice: (did: string) => void;
+  playlists?: Playlist[];
+}
+
+export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
+  devices,
+  activeDevice,
+  onSelectDevice,
+  playlists = []
+}) => {
+  const [status, setStatus] = useState<VoiceListenerStatus | null>(null);
+  const [config, setConfig] = useState<VoiceListenerConfig | null>(null);
+  const [logs, setLogs] = useState<VoiceDialogueLog[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [testQueryText, setTestQueryText] = useState('');
+  const [isTestingQuery, setIsTestingQuery] = useState(false);
+  const [testResult, setTestResult] = useState<{ matched: boolean; summary: string } | null>(null);
+
+  // Edit / Add Rule Modal state
+  const [editingRule, setEditingRule] = useState<VoiceCommandRule | null>(null);
+  const [isRuleModalOpen, setIsRuleModalOpen] = useState(false);
+  const [rulePhrasesText, setRulePhrasesText] = useState('');
+
+  // Guide accordion state
+  const [showTrainingGuide, setShowTrainingGuide] = useState(false);
+
+  // Polling for voice listener logs & status
+  const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const fetchVoiceStatus = async () => {
+    try {
+      const res = await apiFetch('/api/miot/voice/status');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setStatus(data.status);
+          setConfig(data.config);
+          setLogs(data.logs || []);
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to fetch voice status:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchVoiceStatus();
+    // Refresh status & logs every 3 seconds
+    pollTimerRef.current = setInterval(() => {
+      fetchVoiceStatus();
+    }, 3000);
+
+    return () => {
+      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+    };
+  }, []);
+
+  const handleToggleListener = async () => {
+    if (!status && !config) return;
+    const willEnable = !status?.isRunning;
+    setIsUpdating(true);
+    try {
+      const res = await apiFetch('/api/miot/voice/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: willEnable })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setStatus(data.status);
+          setConfig(data.config);
+        }
+      }
+    } catch (err: any) {
+      console.error('Toggle voice listener error:', err);
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handleUpdateConfig = async (partial: Partial<VoiceListenerConfig>) => {
+    setIsUpdating(true);
+    try {
+      const res = await apiFetch('/api/miot/voice/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(partial)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setStatus(data.status);
+          setConfig(data.config);
+        }
+      }
+    } catch (err: any) {
+      console.error('Update voice config error:', err);
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handleToggleRule = (ruleId: string) => {
+    if (!config) return;
+    const newRules = config.rules.map(r => r.id === ruleId ? { ...r, enabled: !r.enabled } : r);
+    handleUpdateConfig({ rules: newRules });
+  };
+
+  const handleDeleteRule = (ruleId: string) => {
+    if (!config) return;
+    const newRules = config.rules.filter(r => r.id !== ruleId);
+    handleUpdateConfig({ rules: newRules });
+  };
+
+  const handleOpenEditRule = (rule?: VoiceCommandRule) => {
+    if (rule) {
+      setEditingRule({ ...rule });
+      setRulePhrasesText(rule.triggerPhrases.join('，'));
+    } else {
+      setEditingRule({
+        id: `rule_${Date.now()}`,
+        name: '新建语音口令',
+        triggerPhrases: ['放点轻音乐'],
+        actionType: 'play_playlist',
+        targetPlaylistId: playlists[0]?.id || 'default',
+        ttsFeedback: '好的，正在播放',
+        enabled: true
+      });
+      setRulePhrasesText('放点轻音乐，播放轻音乐');
+    }
+    setIsRuleModalOpen(true);
+  };
+
+  const handleSaveRule = () => {
+    if (!editingRule || !config) return;
+    const phrases = rulePhrasesText
+      .split(/[,，\n|]/)
+      .map(s => s.trim())
+      .filter(Boolean);
+
+    const updatedRule: VoiceCommandRule = {
+      ...editingRule,
+      triggerPhrases: phrases.length > 0 ? phrases : ['点歌']
+    };
+
+    const exists = config.rules.some(r => r.id === updatedRule.id);
+    const newRules = exists
+      ? config.rules.map(r => r.id === updatedRule.id ? updatedRule : r)
+      : [...config.rules, updatedRule];
+
+    handleUpdateConfig({ rules: newRules });
+    setIsRuleModalOpen(false);
+    setEditingRule(null);
+  };
+
+  const handleClearLogs = async () => {
+    try {
+      await apiFetch('/api/miot/voice/logs/clear', { method: 'POST' });
+      setLogs([]);
+    } catch (err) {
+      console.warn('Failed to clear logs:', err);
+    }
+  };
+
+  const handleTestQuery = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!testQueryText.trim()) return;
+
+    setIsTestingQuery(true);
+    setTestResult(null);
+    try {
+      const res = await apiFetch('/api/miot/voice/test-query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: testQueryText.trim(),
+          did: config?.targetDeviceId || activeDevice?.did
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) {
+          setTestResult(data.result);
+          if (data.logs) {
+            setLogs(data.logs);
+          }
+        }
+      }
+    } catch (err: any) {
+      setTestResult({ matched: false, summary: `请求异常: ${err.message}` });
+    } finally {
+      setIsTestingQuery(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* ---------------- 1. Top Master Control Panel ---------------- */}
+      <div className="p-6 rounded-3xl bg-zinc-900/60 border border-white/10 backdrop-blur-md relative overflow-hidden shadow-xl">
+        <div className="absolute -right-16 -top-16 w-64 h-64 rounded-full bg-gradient-to-br from-[#FF6700]/10 to-amber-500/5 blur-3xl pointer-events-none" />
+
+        <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6 relative z-10">
+          <div className="space-y-2">
+            <div className="flex items-center gap-3">
+              <div className={`p-3 rounded-2xl border transition-all ${
+                status?.isRunning 
+                  ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.2)]' 
+                  : 'bg-zinc-800/80 border-white/5 text-zinc-400'
+              }`}>
+                <Mic className="w-6 h-6" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2.5">
+                  <h3 className="text-lg font-bold text-white tracking-wide">
+                    小爱同学语音口令与点歌引擎
+                  </h3>
+                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold border ${
+                    status?.isRunning
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 animate-pulse'
+                      : 'bg-zinc-800 text-zinc-400 border-white/10'
+                  }`}>
+                    {status?.isRunning ? '● 正在自适应捕获中' : '○ 已停止监听'}
+                  </span>
+                </div>
+                <p className="text-xs text-zinc-400 mt-1">
+                  基于 Songloft 架构规范：支持对小爱音箱直接说“来首[歌名]”、“播放私房歌”或“换一首”，自动解析并无缝投播
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Quick Toggle Controls */}
+          <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto">
+            {/* Target Device Selector */}
+            <div className="flex items-center gap-2 bg-zinc-950/80 border border-white/10 rounded-2xl px-3 py-2 text-xs">
+              <Radio className="w-4 h-4 text-[#FF6700]" />
+              <span className="text-zinc-400 whitespace-nowrap">监听音箱:</span>
+              <select
+                value={config?.targetDeviceId || ''}
+                onChange={(e) => handleUpdateConfig({ targetDeviceId: e.targetDeviceId || undefined })}
+                className="bg-transparent text-white font-medium focus:outline-none cursor-pointer max-w-[140px] truncate"
+              >
+                <option value="" className="bg-zinc-900 text-zinc-400">全部 / 默认音箱</option>
+                {devices.map(d => (
+                  <option key={d.did} value={d.did} className="bg-zinc-900 text-white">
+                    {d.name || d.model}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* TTS Feedback Toggle */}
+            <button
+              type="button"
+              onClick={() => handleUpdateConfig({ ttsFeedbackEnabled: !config?.ttsFeedbackEnabled })}
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-2xl text-xs font-semibold border transition active:scale-95 ${
+                config?.ttsFeedbackEnabled
+                  ? 'bg-amber-500/15 border-amber-500/30 text-amber-300'
+                  : 'bg-zinc-950/60 border-white/10 text-zinc-400'
+              }`}
+              title="命中指令后是否让小爱音箱朗读确认语音（如：好的，为您播放xxx）"
+            >
+              <Volume2 className="w-4 h-4" />
+              <span>语音应答 (TTS)</span>
+              <span className="text-[10px] opacity-75">{config?.ttsFeedbackEnabled ? '开' : '关'}</span>
+            </button>
+
+            {/* Master Start / Stop Button */}
+            <button
+              type="button"
+              onClick={handleToggleListener}
+              disabled={isUpdating || isLoading}
+              className={`flex items-center gap-2 px-6 py-2.5 rounded-2xl text-sm font-bold shadow-lg transition active:scale-95 cursor-pointer ${
+                status?.isRunning
+                  ? 'bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 shadow-rose-500/10'
+                  : 'bg-gradient-to-r from-[#FF6700] to-amber-600 hover:from-[#e55c00] hover:to-amber-500 text-white shadow-[#FF6700]/20'
+              }`}
+            >
+              {isUpdating ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : status?.isRunning ? (
+                <Pause className="w-4 h-4" />
+              ) : (
+                <Play className="w-4 h-4 fill-current" />
+              )}
+              <span>{status?.isRunning ? '停止语音监听' : '启动语音监听'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Status Metrics Bar */}
+        <div className="mt-5 pt-4 border-t border-white/10 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+          <div className="p-3 rounded-2xl bg-zinc-950/50 border border-white/5 flex items-center justify-between">
+            <span className="text-zinc-400">已启用规则</span>
+            <strong className="text-white font-mono text-sm">{config?.rules.filter(r => r.enabled).length || 0} / {config?.rules.length || 0}</strong>
+          </div>
+          <div className="p-3 rounded-2xl bg-zinc-950/50 border border-white/5 flex items-center justify-between">
+            <span className="text-zinc-400">自适应轮询间隔</span>
+            <strong className="text-emerald-400 font-mono text-sm">{(config?.pollIntervalMs || 2500) / 1000}s</strong>
+          </div>
+          <div className="p-3 rounded-2xl bg-zinc-950/50 border border-white/5 flex items-center justify-between">
+            <span className="text-zinc-400">捕获对话日志</span>
+            <strong className="text-purple-400 font-mono text-sm">{logs.length} 条</strong>
+          </div>
+          <div className="p-3 rounded-2xl bg-zinc-950/50 border border-white/5 flex items-center justify-between">
+            <span className="text-zinc-400">捕获通道</span>
+            <strong className="text-amber-400 font-mono text-xs">Mina 对话流 (无需训练)</strong>
+          </div>
+        </div>
+      </div>
+
+      {/* ---------------- 2. Instant Voice Query Simulator & Debugger ---------------- */}
+      <div className="p-5 rounded-3xl bg-zinc-900/40 border border-white/10 backdrop-blur-md space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Zap className="w-5 h-5 text-amber-400" />
+            <h4 className="text-sm font-bold text-white">
+              语音口令调试与模拟测试
+            </h4>
+            <span className="text-[11px] text-zinc-400">（无需开嗓，直接输入文字模拟小爱音箱捕获的对话）</span>
+          </div>
+        </div>
+
+        <form onSubmit={handleTestQuery} className="flex flex-col sm:flex-row items-center gap-3">
+          <div className="relative flex-1 w-full">
+            <Search className="w-4 h-4 text-zinc-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              value={testQueryText}
+              onChange={(e) => setTestQueryText(e.target.value)}
+              placeholder="例如：点歌 稻香、播放私房歌、换一首、随机播放全部..."
+              className="w-full bg-zinc-950/80 border border-white/10 rounded-2xl pl-10 pr-4 py-2.5 text-xs sm:text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-[#FF6700]/60 transition"
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={isTestingQuery || !testQueryText.trim()}
+            className="w-full sm:w-auto px-5 py-2.5 rounded-2xl bg-[#FF6700] hover:bg-[#e55c00] text-white text-xs font-bold transition flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer shrink-0"
+          >
+            {isTestingQuery ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+            <span>测试指令匹配与执行</span>
+          </button>
+        </form>
+
+        {/* Test Result Feedback */}
+        {testResult && (
+          <div className={`p-4 rounded-2xl border text-xs flex items-start gap-3 animate-fadeIn ${
+            testResult.matched
+              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+              : 'bg-zinc-800/80 border-white/10 text-zinc-300'
+          }`}>
+            {testResult.matched ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+            ) : (
+              <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            )}
+            <div className="space-y-0.5">
+              <strong className="block font-bold">
+                {testResult.matched ? '✓ 指令成功匹配并执行' : '✕ 未匹配到私有音乐口令'}
+              </strong>
+              <p className="text-[11px] opacity-90">{testResult.summary}</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ---------------- 3. Voice Rules Configuration Section ---------------- */}
+      <div className="space-y-4">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div>
+            <h4 className="text-base font-bold text-white flex items-center gap-2">
+              <Sliders className="w-5 h-5 text-[#FF6700]" />
+              语音口令触发规则清单 ({config?.rules.length || 0})
+            </h4>
+            <p className="text-xs text-zinc-400 mt-0.5">
+              自定义触发前缀、动作类型（搜歌点播/歌单投播/播控），支持模糊算法精准匹配
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShowTrainingGuide(!showTrainingGuide)}
+              className="px-3.5 py-1.5 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 text-xs font-medium border border-white/5 flex items-center gap-1.5 transition cursor-pointer"
+            >
+              <HelpCircle className="w-3.5 h-3.5 text-blue-400" />
+              <span>{showTrainingGuide ? '收起小爱训练指引' : '查看小爱训练计划配置'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => handleOpenEditRule()}
+              className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-[#FF6700] to-amber-600 hover:from-[#e55c00] text-white text-xs font-bold flex items-center gap-1.5 transition active:scale-95 shadow-md cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>添加口令规则</span>
+            </button>
+          </div>
+        </div>
+
+        {/* XiaoAi Training App Optional Guide Accordion */}
+        {showTrainingGuide && (
+          <div className="p-5 rounded-3xl bg-blue-500/10 border border-blue-500/20 text-xs text-blue-200 space-y-3 animate-fadeIn">
+            <div className="flex items-center gap-2 font-bold text-sm text-white">
+              <Sparkles className="w-4 h-4 text-blue-400" />
+              <span>进阶技巧：在「小爱音箱 App」或「米家小爱训练计划」中打造更顺畅的体验</span>
+            </div>
+            <p className="leading-relaxed text-[11px] text-zinc-300">
+              默认情况下，本系统通过 Mina 对话通道<strong>无需任何训练</strong>即可实时捕获对音箱说出的指令。但由于官方小爱对于“播放xxx”会默认去 QQ音乐/小米音乐搜索并提示“正在播放”，如果您希望彻底拦截官方语音，可在小爱音箱 App 中配置训练计划：
+            </p>
+            <ol className="list-decimal list-inside space-y-1 text-[11px] text-zinc-300 font-mono bg-zinc-950/60 p-3 rounded-2xl border border-white/5">
+              <li>打开【小爱音箱 App】➔【技能中心】➔【小爱训练计划】➔ 点击【创建训练】</li>
+              <li>设置触发词（例如：“播放私房歌”、“点播本地音乐”）</li>
+              <li>设置执行动作：选择【设备控制】或【文字回答】，填写“好的，正在为您唤醒私有音乐库”</li>
+              <li>保存后，当您呼叫该口令时，小爱将不再报错，本系统将秒级截获并接管音频串流！</li>
+            </ol>
+          </div>
+        )}
+
+        {/* Rules Cards Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {config?.rules.map((rule) => {
+            const isSongSearch = rule.actionType === 'play_song_search';
+            const isPlaylist = rule.actionType === 'play_playlist';
+            const isRandom = rule.actionType === 'play_random_all';
+            const isControl = rule.actionType === 'control_command';
+
+            return (
+              <div
+                key={rule.id}
+                className={`p-5 rounded-3xl border transition-all ${
+                  rule.enabled
+                    ? 'bg-zinc-900/50 border-white/10 hover:border-white/20'
+                    : 'bg-zinc-950/40 border-white/5 opacity-60'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className={`p-1.5 rounded-xl text-xs ${
+                        isSongSearch ? 'bg-purple-500/20 text-purple-300' :
+                        isPlaylist ? 'bg-blue-500/20 text-blue-300' :
+                        isRandom ? 'bg-amber-500/20 text-amber-300' :
+                        'bg-emerald-500/20 text-emerald-300'
+                      }`}>
+                        {isSongSearch ? <Search className="w-3.5 h-3.5" /> :
+                         isPlaylist ? <ListMusic className="w-3.5 h-3.5" /> :
+                         isRandom ? <Sparkles className="w-3.5 h-3.5" /> :
+                         <Sliders className="w-3.5 h-3.5" />}
+                      </span>
+                      <h5 className="font-bold text-sm text-white">{rule.name}</h5>
+                    </div>
+
+                    <div className="text-[11px] text-zinc-400 flex items-center gap-1.5">
+                      <span>动作类型:</span>
+                      <span className="font-semibold text-zinc-200">
+                        {isSongSearch ? '模糊搜歌并起播' :
+                         isPlaylist ? `投播歌单 (${rule.targetPlaylistId === 'default' ? '默认' : rule.targetPlaylistId})` :
+                         isRandom ? '曲库全随机起播' :
+                         `播控指令 (${rule.controlAction})`}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Actions & Switch */}
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleToggleRule(rule.id)}
+                      className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition ${
+                        rule.enabled
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                          : 'bg-zinc-800 text-zinc-400 border-white/5'
+                      }`}
+                    >
+                      {rule.enabled ? '已启用' : '已停用'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenEditRule(rule)}
+                      className="p-1.5 rounded-xl hover:bg-white/10 text-zinc-400 hover:text-white transition"
+                      title="编辑规则"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteRule(rule.id)}
+                      className="p-1.5 rounded-xl hover:bg-rose-500/20 text-zinc-500 hover:text-rose-400 transition"
+                      title="删除规则"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Trigger Phrases Chips */}
+                <div className="mt-4 pt-3 border-t border-white/5 space-y-2">
+                  <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-wider block">
+                    触发词库 ({rule.triggerPhrases.length} 个):
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {rule.triggerPhrases.map((phrase, idx) => (
+                      <span
+                        key={idx}
+                        className="px-2.5 py-1 rounded-xl bg-zinc-950/80 border border-white/10 text-xs font-mono text-[#FF6700]"
+                      >
+                        “{phrase}”
+                      </span>
+                    ))}
+                  </div>
+                  {rule.ttsFeedback && (
+                    <div className="text-[11px] text-zinc-400 flex items-center gap-1.5 pt-1">
+                      <Volume2 className="w-3 h-3 text-amber-400 shrink-0" />
+                      <span className="truncate">应答: {rule.ttsFeedback}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ---------------- 4. Real-time Dialogue Logs Stream ---------------- */}
+      <div className="p-6 rounded-3xl bg-zinc-900/40 border border-white/10 backdrop-blur-md space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <Terminal className="w-5 h-5 text-purple-400" />
+            <h4 className="text-base font-bold text-white">
+              小爱音箱语音对话捕获日志 ({logs.length})
+            </h4>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={fetchVoiceStatus}
+              className="p-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition text-xs flex items-center gap-1.5"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>刷新</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleClearLogs}
+              className="p-2 rounded-xl bg-zinc-800/80 hover:bg-rose-500/20 text-zinc-400 hover:text-rose-300 transition text-xs flex items-center gap-1.5"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>清空</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="max-h-[380px] overflow-y-auto space-y-2.5 pr-1">
+          {logs.length === 0 ? (
+            <div className="text-center py-12 text-zinc-500 text-xs space-y-2">
+              <Mic className="w-8 h-8 text-zinc-600 mx-auto" />
+              <p>暂无捕获到的语音对话记录</p>
+              <p className="text-[11px] text-zinc-600">
+                请确认语音监听已开启，并对小爱音箱说出：“小爱同学，来首稻香”或使用上方测试器调试。
+              </p>
+            </div>
+          ) : (
+            logs.map((log) => (
+              <div
+                key={log.id}
+                className="p-3.5 rounded-2xl bg-zinc-950/70 border border-white/5 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 hover:border-white/10 transition"
+              >
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-white font-mono text-sm">
+                      “{log.queryText}”
+                    </span>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                      log.status === 'matched'
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                        : log.status === 'error'
+                        ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                        : 'bg-zinc-800 text-zinc-400'
+                    }`}>
+                      {log.status === 'matched' ? '已命中口令' : log.status === 'error' ? '执行失败' : '未命中规则'}
+                    </span>
+                  </div>
+
+                  <div className="text-zinc-400 text-[11px] flex flex-wrap items-center gap-x-3">
+                    <span>{log.actionSummary || '无动作'}</span>
+                    {log.matchedRuleName && (
+                      <span className="text-purple-300 font-medium">规则: {log.matchedRuleName}</span>
+                    )}
+                    {log.deviceName && (
+                      <span className="text-zinc-500">设备: {log.deviceName}</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="text-right text-[10px] font-mono text-zinc-500 shrink-0">
+                  {new Date(log.timestamp).toLocaleTimeString()}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* ---------------- 5. Edit / Add Rule Modal ---------------- */}
+      {isRuleModalOpen && editingRule && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
+          <div className="w-full max-w-lg bg-zinc-900 border border-white/10 rounded-3xl p-6 shadow-2xl space-y-5">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <Sliders className="w-5 h-5 text-[#FF6700]" />
+                {editingRule.id.startsWith('rule_') ? '配置语音口令规则' : '编辑语音口令规则'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setIsRuleModalOpen(false)}
+                className="p-1.5 rounded-xl hover:bg-white/10 text-zinc-400 hover:text-white transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              {/* Rule Name */}
+              <div className="space-y-1.5">
+                <label className="text-zinc-400 font-medium block">规则名称</label>
+                <input
+                  type="text"
+                  value={editingRule.name}
+                  onChange={(e) => setEditingRule({ ...editingRule, name: e.target.value })}
+                  placeholder="例如：智能搜歌点歌、播放私房歌单..."
+                  className="w-full bg-zinc-950 border border-white/10 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-[#FF6700]"
+                />
+              </div>
+
+              {/* Action Type */}
+              <div className="space-y-1.5">
+                <label className="text-zinc-400 font-medium block">执行动作类型</label>
+                <select
+                  value={editingRule.actionType}
+                  onChange={(e: any) => setEditingRule({ ...editingRule, actionType: e.target.value })}
+                  className="w-full bg-zinc-950 border border-white/10 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-[#FF6700] cursor-pointer"
+                >
+                  <option value="play_song_search">智能搜歌点歌 (自动提取关键词匹配本地歌曲)</option>
+                  <option value="play_random_all">随机播放全部音乐 (曲库全随机起播)</option>
+                  <option value="play_playlist">投播指定歌单 (投播整个歌单到音箱)</option>
+                  <option value="control_command">执行播控动作 (下一首/上一首/暂停等)</option>
+                </select>
+              </div>
+
+              {/* Target Playlist (if play_playlist) */}
+              {editingRule.actionType === 'play_playlist' && (
+                <div className="space-y-1.5">
+                  <label className="text-zinc-400 font-medium block">目标投播歌单</label>
+                  <select
+                    value={editingRule.targetPlaylistId || 'default'}
+                    onChange={(e) => setEditingRule({ ...editingRule, targetPlaylistId: e.target.value })}
+                    className="w-full bg-zinc-950 border border-white/10 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-[#FF6700] cursor-pointer"
+                  >
+                    <option value="default">默认主歌单</option>
+                    {playlists.map(pl => (
+                      <option key={pl.id} value={pl.id}>{pl.name} ({pl.songIds.length} 首)</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Control Action (if control_command) */}
+              {editingRule.actionType === 'control_command' && (
+                <div className="space-y-1.5">
+                  <label className="text-zinc-400 font-medium block">控制动作</label>
+                  <select
+                    value={editingRule.controlAction || 'next'}
+                    onChange={(e: any) => setEditingRule({ ...editingRule, controlAction: e.target.value })}
+                    className="w-full bg-zinc-950 border border-white/10 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-[#FF6700] cursor-pointer"
+                  >
+                    <option value="next">下一首 (Next)</option>
+                    <option value="prev">上一首 (Prev)</option>
+                    <option value="pause">暂停/停止播放 (Pause)</option>
+                  </select>
+                </div>
+              )}
+
+              {/* Trigger Phrases Textarea */}
+              <div className="space-y-1.5">
+                <label className="text-zinc-400 font-medium block">
+                  触发口令词库（多个词用逗号或换行分隔）
+                </label>
+                <textarea
+                  rows={3}
+                  value={rulePhrasesText}
+                  onChange={(e) => setRulePhrasesText(e.target.value)}
+                  placeholder="例如：点歌, 来一首, 想听, 播放"
+                  className="w-full bg-zinc-950 border border-white/10 rounded-xl p-3 text-white focus:outline-none focus:border-[#FF6700] font-mono text-xs"
+                />
+              </div>
+
+              {/* TTS Feedback template */}
+              <div className="space-y-1.5">
+                <label className="text-zinc-400 font-medium block">
+                  命中后音箱语音应答（留空则不朗读）
+                </label>
+                <input
+                  type="text"
+                  value={editingRule.ttsFeedback || ''}
+                  onChange={(e) => setEditingRule({ ...editingRule, ttsFeedback: e.target.value })}
+                  placeholder="好的，为您播放 {title}"
+                  className="w-full bg-zinc-950 border border-white/10 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-[#FF6700]"
+                />
+                <span className="text-[11px] text-zinc-500 block">
+                  支持占位符：<code className="text-[#FF6700] font-mono">&#123;title&#125;</code> (歌名), <code className="text-[#FF6700] font-mono">&#123;playlist&#125;</code> (歌单名)
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsRuleModalOpen(false)}
+                className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium transition"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveRule}
+                className="px-6 py-2 rounded-xl bg-[#FF6700] hover:bg-[#e55c00] text-white font-bold transition shadow-md"
+              >
+                保存规则
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};

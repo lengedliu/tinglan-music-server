@@ -253,4 +253,46 @@ export interface DeviceCommandState {
   stageHistory?: CastingStageStep[];
 }
 
+export interface VoiceCommandRule {
+  id: string;
+  name: string;
+  triggerPhrases: string[];
+  actionType: 'play_playlist' | 'play_random_all' | 'play_song_search' | 'control_command';
+  targetPlaylistId?: string;
+  controlAction?: 'next' | 'prev' | 'pause' | 'stop' | 'volume_up' | 'volume_down';
+  ttsFeedback?: string;
+  enabled: boolean;
+}
+
+export interface VoiceDialogueLog {
+  id: string;
+  timestamp: number;
+  queryText: string;
+  matchedRuleId?: string;
+  matchedRuleName?: string;
+  actionSummary?: string;
+  status: 'matched' | 'ignored' | 'error';
+  deviceId?: string;
+  deviceName?: string;
+}
+
+export interface VoiceListenerConfig {
+  enabled: boolean;
+  pollIntervalMs: number;
+  targetDeviceId?: string;
+  ttsFeedbackEnabled: boolean;
+  rules: VoiceCommandRule[];
+}
+
+export interface VoiceListenerStatus {
+  isRunning: boolean;
+  enabled: boolean;
+  pollIntervalMs: number;
+  targetDeviceId: string | null;
+  rulesCount: number;
+  logsCount: number;
+  lastProcessedTime: number;
+}
+
+
 

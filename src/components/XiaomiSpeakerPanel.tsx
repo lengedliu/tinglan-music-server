@@ -56,8 +56,9 @@ import {
   AlertTriangle,
   Loader2
 } from 'lucide-react';
-import { XiaomiDevice, MiotConfig, CastLog, Song, DeviceCommandState } from '../types';
+import { XiaomiDevice, MiotConfig, CastLog, Song, DeviceCommandState, Playlist } from '../types';
 import { apiFetch, getAuthToken } from '../utils/api';
+import { VoiceCommandSection } from './VoiceCommandSection';
 import QRCode from 'qrcode';
 
 interface XiaomiSpeakerPanelProps {
@@ -85,6 +86,7 @@ interface XiaomiSpeakerPanelProps {
   onOpenSecurityModal?: () => void;
   onDismissCommandState?: () => void;
   onSwitchToBrowserAudio?: () => void;
+  playlists?: Playlist[];
 }
 
 export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
@@ -112,8 +114,9 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
   onOpenSecurityModal,
   onDismissCommandState,
   onSwitchToBrowserAudio,
+  playlists = [],
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'devices' | 'control' | 'tts' | 'rpc' | 'settings' | 'logs'>('devices');
+  const [activeSubTab, setActiveSubTab] = useState<'devices' | 'control' | 'tts' | 'voice' | 'rpc' | 'settings' | 'logs'>('devices');
   const [ttsInput, setTtsInput] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isUnbinding, setIsUnbinding] = useState(false);
@@ -1421,6 +1424,19 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
           </button>
 
           <button
+            id="subtab-voice"
+            onClick={() => setActiveSubTab('voice')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition whitespace-nowrap ${
+              activeSubTab === 'voice'
+                ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40 font-semibold shadow-[0_0_12px_rgba(255,103,0,0.2)]'
+                : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-white/5'
+            }`}
+          >
+            <Mic2 className="w-4 h-4 text-rose-400" />
+            <span>语音口令与点歌</span>
+          </button>
+
+          <button
             id="subtab-rpc"
             onClick={() => setActiveSubTab('rpc')}
             className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition whitespace-nowrap ${
@@ -1456,7 +1472,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
             }`}
           >
             <Terminal className="w-4 h-4 text-zinc-400" />
-            <span>MIoT 指令流水 ({castLogs.length})</span>
+            <span>MIoT 指令日志 ({castLogs.length})</span>
           </button>
         </div>
       </div>
@@ -3590,7 +3606,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                     setLogTypeFilter('sync');
                   }}
                   className="text-xs px-3 py-1 rounded-full bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 border border-white/10 transition flex items-center gap-1.5 cursor-pointer shadow-sm"
-                  title="跳转至 MIoT 指令流水查看账号授权与同步历史"
+                  title="跳转至 MIoT 指令日志查看账号授权与同步历史"
                 >
                   <Terminal className="w-3.5 h-3.5 text-emerald-400" />
                   <span>查看绑定日志</span>
@@ -4493,6 +4509,16 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
             )}
           </div>
         </div>
+      )}
+
+      {/* ---------------- Sub-tab: Voice Command Engine ---------------- */}
+      {activeSubTab === 'voice' && (
+        <VoiceCommandSection
+          devices={devices}
+          activeDevice={activeDevice}
+          onSelectDevice={onSelectDevice}
+          playlists={playlists}
+        />
       )}
 
       {/* Filtered Non-Speaker Devices Modal */}

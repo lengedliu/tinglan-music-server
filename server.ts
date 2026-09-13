@@ -21,6 +21,7 @@ import { deviceDiscoveryEngine } from './server/deviceDiscovery.js';
 import { xiaoaiResolverEngine, extractDevicesFromMinaResponse } from './server/xiaoaiResolver.js';
 import { ttsEngine, POPULAR_TTS_VOICES } from './server/ttsEngine.js';
 import { dlnaEngine } from './server/dlnaEngine.js';
+import { voiceCommandService } from './server/voiceCommandService.js';
 import { GoogleGenAI } from '@google/genai';
 import { MiotConfig } from './src/types.js';
 import {
@@ -5279,6 +5280,99 @@ app.get('/api/miot/logs', (req: Request, res: Response) => {
   res.json(castLogs);
 });
 
+// ---------------- VOICE COMMAND LISTENER (Songloft Pattern) ----------------
+
+// Get Voice Listener Status & Config
+app.get('/api/miot/voice/status', (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    status: voiceCommandService.getStatus(),
+    config: voiceCommandService.getConfig(),
+    logs: voiceCommandService.getDialogueLogs()
+  });
+});
+
+// Update Voice Listener Config (toggle on/off, rules, pollInterval, targetDevice, ttsFeedback)
+app.post('/api/miot/voice/config', (req: Request, res: Response) => {
+  if (!checkMiotControlPermission(req, res)) return;
+
+  const { enabled, pollIntervalMs, targetDeviceId, ttsFeedbackEnabled, rules } = req.body || {};
+  voiceCommandService.updateConfig({
+    ...(typeof enabled === 'boolean' ? { enabled } : {}),
+    ...(typeof pollIntervalMs === 'number' ? { pollIntervalMs } : {}),
+    ...(typeof targetDeviceId === 'string' ? { targetDeviceId } : {}),
+    ...(typeof ttsFeedbackEnabled === 'boolean' ? { ttsFeedbackEnabled } : {}),
+    ...(Array.isArray(rules) ? { rules } : {})
+  });
+
+  res.json({
+    success: true,
+    status: voiceCommandService.getStatus(),
+    config: voiceCommandService.getConfig()
+  });
+});
+
+// Start/Stop Voice Listener directly
+app.post('/api/miot/voice/toggle', (req: Request, res: Response) => {
+  if (!checkMiotControlPermission(req, res)) return;
+
+  const { enabled } = req.body || {};
+  if (enabled) {
+    voiceCommandService.start();
+  } else {
+    voiceCommandService.stop();
+  }
+
+  res.json({
+    success: true,
+    status: voiceCommandService.getStatus(),
+    config: voiceCommandService.getConfig()
+  });
+});
+
+// Get Voice Dialogue Logs
+app.get('/api/miot/voice/logs', (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    logs: voiceCommandService.getDialogueLogs()
+  });
+});
+
+// Clear Voice Dialogue Logs
+app.post('/api/miot/voice/logs/clear', (req: Request, res: Response) => {
+  if (!checkMiotControlPermission(req, res)) return;
+  voiceCommandService.clearLogs();
+  res.json({ success: true, message: '已清空语音指令捕获日志' });
+});
+
+// Test/Simulate Voice Query Execution (for debugging & instant testing)
+app.post('/api/miot/voice/test-query', async (req: Request, res: Response) => {
+  if (!checkMiotControlPermission(req, res)) return;
+
+  const { query, did } = req.body || {};
+  if (!query || !String(query).trim()) {
+    return res.status(400).json({ success: false, error: '请输入待测试的语音指令文本' });
+  }
+
+  const targetDev = xiaomiDevices.find(d => d.did === did) || xiaomiDevices[0];
+  const deviceId = targetDev?.did || miotConfig.activeDeviceId || 'test-speaker';
+  const deviceName = targetDev?.name || '测试音箱';
+
+  try {
+    const result = await voiceCommandService.processVoiceQuery(query, deviceId, deviceName);
+    res.json({
+      success: true,
+      result,
+      logs: voiceCommandService.getDialogueLogs().slice(0, 10)
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      error: err.message
+    });
+  }
+});
+
 // ---------------- AUDIO STREAMING (HTTP 206 Partial Content Range & DLNA/Mina Support) ----------------
 const streamAudioHandler = async (req: Request, res: Response) => {
   const { songId } = req.params;
@@ -6229,6 +6323,59 @@ app.post('/api/ai/music-insight', async (req: Request, res: Response) => {
 
 // Start server with Vite middleware in development or static in production
 async function startServer() {
+  // Bind callbacks for Songloft-style Voice Command Service
+  voiceCommandService.bindCallbacks({
+    getSongs: () => storedSongs,
+    getPlaylists: () => storedPlaylists,
+    playSong: async (song, playlistName, deviceId) => {
+      const targetDev = xiaomiDevices.find(d => d.did === deviceId) || xiaomiDevices.find(d => d.did === miotConfig.activeDeviceId) || xiaomiDevices[0];
+      if (!targetDev) return false;
+      const res = await dispatchCastSongDirectly(song, targetDev.did);
+      return res.success;
+    },
+    playPlaylist: async (playlistId, deviceId) => {
+      const targetDev = xiaomiDevices.find(d => d.did === deviceId) || xiaomiDevices.find(d => d.did === miotConfig.activeDeviceId) || xiaomiDevices[0];
+      if (!targetDev) return false;
+      const playlist = storedPlaylists.find(p => p.id === playlistId) || storedPlaylists[0];
+      if (!playlist) return false;
+      const plSongs = storedSongs.filter(s => playlist.songIds.includes(s.id));
+      if (plSongs.length === 0) return false;
+      const res = await queueEngine.playQueue(plSongs, 0, targetDev.did, targetDev.name);
+      return res.success;
+    },
+    controlPlayback: async (action, deviceId) => {
+      const targetDev = xiaomiDevices.find(d => d.did === deviceId) || xiaomiDevices.find(d => d.did === miotConfig.activeDeviceId) || xiaomiDevices[0];
+      if (!targetDev) return false;
+      if (action === 'next') {
+        const res = await queueEngine.next();
+        return res.success;
+      } else if (action === 'prev') {
+        const res = await queueEngine.prev();
+        return res.success;
+      } else if (action === 'pause' || action === 'stop') {
+        queueEngine.pause();
+        return true;
+      }
+      return false;
+    },
+    sendTts: async (deviceId, text) => {
+      const targetDev = xiaomiDevices.find(d => d.did === deviceId) || xiaomiDevices[0];
+      if (!targetDev) return { success: false };
+      return ttsEngine.dispatchToSpeaker({
+        targetDevice: targetDev,
+        text,
+        miotConfig,
+        sendMiioCommandFn: (ip, token, method, params, timeoutMs) => sendMiioCommand(ip, token, method, params, timeoutMs),
+        callMinaCloudApiFn: (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry)
+      });
+    },
+    getAuthInfo: () => ({
+      userId: miotConfig.userId,
+      serviceToken: (miotConfig as any).micoServiceToken || miotConfig.serviceToken,
+      devices: xiaomiDevices
+    })
+  });
+
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: {
