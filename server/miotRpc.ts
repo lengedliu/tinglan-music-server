@@ -688,27 +688,129 @@ export class MiotRpcEngine {
     return { code: -1, error: '设备未配置局域网 Token 且未登录云端账号' };
   }
 
+  private instancesRegistryCache: Map<string, string> | null = null;
+  private isFetchingInstancesRegistry = false;
+
   /**
-   * Query & cache official MIoT Spec Schema for a model
+   * Lazy load the global MIoT Spec instances registry map (model -> type URN)
    */
-  public async getMiotSpecInstance(modelUrn: string): Promise<any> {
-    if (this.specCache.has(modelUrn)) {
-      return this.specCache.get(modelUrn);
+  private async loadInstancesRegistry(): Promise<Map<string, string>> {
+    if (this.instancesRegistryCache && this.instancesRegistryCache.size > 0) {
+      return this.instancesRegistryCache;
     }
 
+    if (this.isFetchingInstancesRegistry) {
+      // Wait briefly if another request is fetching
+      await new Promise(r => setTimeout(r, 800));
+      if (this.instancesRegistryCache) return this.instancesRegistryCache;
+    }
+
+    this.isFetchingInstancesRegistry = true;
+    const map = new Map<string, string>();
+
     try {
-      const url = `https://miot-spec.org/miot-spec-v2/instance?type=${encodeURIComponent(modelUrn)}`;
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2500);
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      const res = await fetch('https://miot-spec.org/miot-spec-v2/instances?status=all', { signal: controller.signal });
+      clearTimeout(timeoutId);
+      if (res.ok) {
+        const data = await res.json();
+        const list = Array.isArray(data) ? data : (data.result || data.instances || []);
+        for (const item of list) {
+          if (item && item.model && item.type) {
+            const m = String(item.model).toLowerCase().trim();
+            // Store highest version / released first
+            if (!map.has(m) || item.status === 'released') {
+              map.set(m, item.type);
+            }
+          }
+        }
+        this.instancesRegistryCache = map;
+      }
+    } catch (err: any) {
+      console.warn('[MIoT] Failed to load instances registry from miot-spec.org:', err.message);
+    } finally {
+      this.isFetchingInstancesRegistry = false;
+    }
+
+    return map;
+  }
+
+  /**
+   * Query & cache official MIoT Spec Schema for a model or URN
+   */
+  public async getMiotSpecInstance(modelOrUrn: string): Promise<any> {
+    if (!modelOrUrn) return null;
+    const rawQuery = String(modelOrUrn).trim();
+    const clean = rawQuery.toLowerCase();
+
+    // Check direct cache
+    if (this.specCache.has(rawQuery)) return this.specCache.get(rawQuery);
+    if (this.specCache.has(clean)) return this.specCache.get(clean);
+
+    // 1. Direct URN fetch
+    if (clean.startsWith('urn:miot-spec-v2:')) {
+      const spec = await this.fetchSingleSpecUrn(rawQuery);
+      if (spec) {
+        this.specCache.set(rawQuery, spec);
+        return spec;
+      }
+      return null;
+    }
+
+    // 2. High-speed candidate heuristics for XiaoAi Speaker models
+    // e.g. xiaomi.wifispeaker.oh2p -> xiaomi-oh2p
+    const simplified = clean.replace('.wifispeaker.', '-').replace(/\./g, '-');
+    const candidates = [
+      `urn:miot-spec-v2:device:speaker:0000A015:${simplified}:1`,
+      `urn:miot-spec-v2:device:speaker:0000A015:${simplified}:2`,
+      `urn:miot-spec-v2:device:speaker:0000A015:${clean.replace(/\./g, '-')}:1`,
+      `urn:miot-spec-v2:device:speaker:0000A015:${clean}:1`
+    ];
+
+    for (const cand of candidates) {
+      if (this.specCache.has(cand)) {
+        const cached = this.specCache.get(cand);
+        this.specCache.set(rawQuery, cached);
+        return cached;
+      }
+      const spec = await this.fetchSingleSpecUrn(cand);
+      if (spec) {
+        this.specCache.set(cand, spec);
+        this.specCache.set(rawQuery, spec);
+        return spec;
+      }
+    }
+
+    // 3. Global instances registry lookup (covers all 47,000+ MIoT device models)
+    try {
+      const registry = await this.loadInstancesRegistry();
+      if (registry.has(clean)) {
+        const urn = registry.get(clean)!;
+        const spec = await this.fetchSingleSpecUrn(urn);
+        if (spec) {
+          this.specCache.set(rawQuery, spec);
+          this.specCache.set(urn, spec);
+          return spec;
+        }
+      }
+    } catch {}
+
+    return null;
+  }
+
+  private async fetchSingleSpecUrn(urn: string): Promise<any> {
+    try {
+      const url = `https://miot-spec.org/miot-spec-v2/instance?type=${encodeURIComponent(urn)}`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4000);
       const res = await fetch(url, { signal: controller.signal });
       clearTimeout(timeoutId);
       if (res.ok) {
         const spec = await res.json();
-        this.specCache.set(modelUrn, spec);
         return spec;
       }
     } catch {}
-
     return null;
   }
 
