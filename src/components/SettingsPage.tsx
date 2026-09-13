@@ -35,11 +35,16 @@ import {
   Calendar,
   Clock,
   Power,
-  X
+  X,
+  Palette,
+  Sparkles,
+  Sun,
+  Moon
 } from 'lucide-react';
 import { SecurityStatus, User, DbEngine, DbStatusInfo } from '../types';
 import { apiFetch } from '../utils/api';
 import { getUserAvatar } from '../utils/avatar';
+import { useTheme, THEMES, ThemeId } from '../context/ThemeContext';
 
 interface SettingsPageProps {
   currentUser: User | null;
@@ -54,7 +59,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   onShowToast,
   onSecurityUpdated
 }) => {
-  const [subTab, setSubTab] = useState<'all' | 'users' | 'security' | 'database' | 'system'>('all');
+  const { theme, setTheme, themeConfig } = useTheme();
+  const [subTab, setSubTab] = useState<'all' | 'theme' | 'users' | 'security' | 'database' | 'system'>('all');
 
   // --- Security State ---
   const [secLoading, setSecLoading] = useState(false);
@@ -729,6 +735,21 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         </button>
 
         <button
+          onClick={() => setSubTab('theme')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap cursor-pointer ${
+            subTab === 'theme'
+              ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40'
+              : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
+          }`}
+        >
+          <Palette className="w-3.5 h-3.5 text-amber-400" />
+          <span>UI 主题外观</span>
+          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300 font-mono">
+            {THEMES.length}
+          </span>
+        </button>
+
+        <button
           onClick={() => setSubTab('users')}
           className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap cursor-pointer ${
             subTab === 'users'
@@ -779,6 +800,91 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           <span>网络与环境信息</span>
         </button>
       </div>
+
+      {/* ================= SECTION: UI THEMES & APPEARANCE ================= */}
+      {(subTab === 'all' || subTab === 'theme') && (
+        <div className="space-y-6 pt-2">
+          <div className="p-6 rounded-3xl bg-zinc-900/60 border border-white/10 space-y-6 relative overflow-hidden">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-400">
+                  <Palette className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
+                    界面 Theme 主题切换
+                    <span className="text-xs px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-mono border border-amber-500/30">
+                      当前选定: {themeConfig.name}
+                    </span>
+                  </h2>
+                  <p className="text-xs text-zinc-400 mt-0.5">
+                    实时切换整站色彩视觉效果，即刻保存至本地偏好设置。
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {THEMES.map((item) => {
+                const isActive = theme === item.id;
+
+                return (
+                  <div
+                    key={item.id}
+                    onClick={() => {
+                      setTheme(item.id);
+                      onShowToast('主题切换成功', `已应用 UI 主题「${item.name}」`, 'success');
+                    }}
+                    className={`group p-4 rounded-2xl border transition-all cursor-pointer relative overflow-hidden flex flex-col justify-between space-y-4 ${
+                      isActive
+                        ? 'bg-zinc-800/90 border-amber-500/80 shadow-[0_0_20px_rgba(255,103,0,0.2)] ring-1 ring-amber-500/50'
+                        : 'bg-zinc-950/70 hover:bg-zinc-800/60 border-white/10 hover:border-white/20'
+                    }`}
+                  >
+                    <div className="space-y-2 relative z-10">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div 
+                            className="w-4 h-4 rounded-full shadow-sm border border-white/20"
+                            style={{ backgroundColor: item.primaryColor }}
+                          />
+                          <span className="font-bold text-sm text-white flex items-center gap-1.5">
+                            {item.name}
+                            {item.isLight && (
+                              <Sun className="w-3.5 h-3.5 text-amber-400" title="日间亮色模式" />
+                            )}
+                          </span>
+                        </div>
+
+                        {isActive && (
+                          <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 text-[10px] font-bold">
+                            <Check className="w-3 h-3" />
+                            使用中
+                          </span>
+                        )}
+                      </div>
+
+                      <p className="text-xs text-zinc-400 leading-relaxed min-h-[32px]">
+                        {item.subtitle}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-3 border-t border-white/5 text-[10px] text-zinc-500 relative z-10">
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.primaryColor }} title="主高亮" />
+                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.secondaryColor }} title="辅助色" />
+                      </div>
+                      <span className="font-mono text-zinc-400">
+                        {item.primaryColor}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ================= SECTION: USER MANAGEMENT (NEW & COMPREHENSIVE) ================= */}
       {(subTab === 'all' || subTab === 'users') && (

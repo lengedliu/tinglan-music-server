@@ -12,12 +12,16 @@ import { SubsonicServerView } from './components/SubsonicServerView';
 import { NavidromeModal } from './components/NavidromeModal';
 import { AuthModal } from './components/AuthModal';
 import { SettingsPage } from './components/SettingsPage';
+import { ThemeSelectorModal } from './components/ThemeSelectorModal';
+import { useTheme } from './context/ThemeContext';
 import { Song, Playlist, XiaomiDevice, MiotConfig, CastLog, User, SecurityStatus, DeviceCommandState } from './types';
 import { INITIAL_SONGS, INITIAL_PLAYLISTS, INITIAL_XIAOMI_DEVICES } from './data/mockSongs';
 import { apiFetch, setStoredAuthToken, getAuthToken } from './utils/api';
 import { CheckCircle2, AlertCircle, Radio, X } from 'lucide-react';
 
 export default function App() {
+  const { themeConfig, isThemeModalOpen, setIsThemeModalOpen } = useTheme();
+
   // User Auth & Database States
   const [user, setUser] = useState<User | null>(null);
   const [authToken, setAuthToken] = useState<string | null>(() => {
@@ -1123,11 +1127,17 @@ export default function App() {
   const isMandatoryAuth = Boolean(securityStatus?.authRequired && !user && !authToken);
 
   return (
-    <div className="min-h-screen bg-[#050505] text-zinc-100 flex flex-col font-sans selection:bg-[#FF6700] selection:text-white relative overflow-x-hidden">
+    <div className={`min-h-screen ${themeConfig.bgClass} ${themeConfig.isLight ? 'text-zinc-900' : 'text-zinc-100'} flex flex-col font-sans relative overflow-x-hidden transition-colors duration-300`}>
       
       {/* Immersive UI Background Ambient Glows */}
-      <div className="fixed top-[-10%] right-[10%] w-[500px] h-[500px] bg-[#FF6700]/5 rounded-full blur-[120px] pointer-events-none z-0" />
-      <div className="fixed bottom-[-10%] left-[10%] w-[400px] h-[400px] bg-blue-600/5 rounded-full blur-[100px] pointer-events-none z-0" />
+      <div 
+        className="fixed top-[-10%] right-[10%] w-[500px] h-[500px] rounded-full blur-[120px] pointer-events-none z-0 transition-all duration-500" 
+        style={{ backgroundColor: `rgba(${themeConfig.primaryRgb}, 0.08)` }}
+      />
+      <div 
+        className="fixed bottom-[-10%] left-[10%] w-[400px] h-[400px] rounded-full blur-[100px] pointer-events-none z-0 transition-all duration-500" 
+        style={{ backgroundColor: `rgba(${themeConfig.primaryRgb}, 0.05)` }}
+      />
 
       {/* Main Page Layout Wrapper - Gets blurred & interaction locked when mandatory authentication is required */}
       <div className={`flex-1 flex flex-col min-h-screen transition-all duration-300 ${isMandatoryAuth ? 'pointer-events-none select-none filter blur-md opacity-30 grayscale-[40%]' : ''}`}>
@@ -1391,6 +1401,12 @@ export default function App() {
         onLoginSuccess={handleLoginSuccess}
         isSecurityRequired={isMandatoryAuth}
         allowRegistration={securityStatus?.allowRegistration !== false}
+      />
+
+      {/* Quick Theme Selector Modal */}
+      <ThemeSelectorModal
+        isOpen={isThemeModalOpen}
+        onClose={() => setIsThemeModalOpen(false)}
       />
 
     </div>

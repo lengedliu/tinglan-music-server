@@ -6,10 +6,14 @@ import {
   ChevronRight,
   Settings,
   Server,
-  Cast
+  Cast,
+  Palette,
+  Sun,
+  Moon
 } from 'lucide-react';
 import { XiaomiDevice, MiotConfig, User } from '../types';
 import { UserHeader } from './UserHeader';
+import { useTheme } from '../context/ThemeContext';
 
 interface NavbarProps {
   activeTab: 'library' | 'lyrics' | 'xiaomi' | 'subsonic' | 'settings';
@@ -36,6 +40,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenAuthModal,
   onLogout
 }) => {
+  const { themeConfig, setIsThemeModalOpen, toggleDarkLight } = useTheme();
+
   return (
     <header className="sticky top-0 z-40 bg-zinc-950/80 backdrop-blur-md border-b border-white/5 text-zinc-100">
       {/* Top Row: Brand on left, status indicators & user controls on right */}
@@ -43,7 +49,10 @@ export const Navbar: React.FC<NavbarProps> = ({
         
         {/* Brand */}
         <div className="flex items-center gap-3 flex-shrink-0">
-          <div className="w-8 h-8 bg-[#FF6700] rounded-lg flex items-center justify-center shadow-[0_0_15px_rgba(255,103,0,0.4)] text-white flex-shrink-0">
+          <div 
+            className="w-8 h-8 rounded-lg flex items-center justify-center text-white flex-shrink-0 shadow-md"
+            style={{ backgroundColor: themeConfig.primaryColor }}
+          >
             <Radio className="w-4.5 h-4.5" />
           </div>
           <div className="flex items-center gap-2">
@@ -51,7 +60,14 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span className="font-extrabold tracking-wider">TINGLAN</span>
               <span className="text-xs font-normal text-zinc-400 font-serif">听澜</span>
             </span>
-            <span className="text-[10px] uppercase tracking-[0.15em] bg-[#FF6700]/10 text-[#FF6700] px-2 py-0.5 rounded text-zinc-300 border border-[#FF6700]/30 font-semibold hidden sm:inline-block">
+            <span 
+              className="text-[10px] uppercase tracking-[0.15em] px-2 py-0.5 rounded border font-semibold hidden sm:inline-block"
+              style={{
+                backgroundColor: `rgba(${themeConfig.primaryRgb}, 0.1)`,
+                color: themeConfig.primaryColor,
+                borderColor: `rgba(${themeConfig.primaryRgb}, 0.3)`
+              }}
+            >
               Home Music Hub
             </span>
           </div>
@@ -69,14 +85,55 @@ export const Navbar: React.FC<NavbarProps> = ({
             </span>
           </div>
 
+          {/* Theme Quick Switcher Button */}
+          <div className="flex items-center gap-1.5 bg-zinc-900/90 p-1 rounded-full border border-white/10 backdrop-blur-sm">
+            <button
+              id="btn-toggle-light-dark"
+              onClick={toggleDarkLight}
+              title={themeConfig.isLight ? '切换为极客暗夜模式 (Dark Mode)' : '切换为清爽日间亮色 (Light Mode)'}
+              className="p-1.5 rounded-full hover:bg-white/10 text-amber-400 transition cursor-pointer"
+            >
+              {themeConfig.isLight ? (
+                <Sun className="w-3.5 h-3.5 text-amber-400" />
+              ) : (
+                <Moon className="w-3.5 h-3.5 text-zinc-400 hover:text-white" />
+              )}
+            </button>
+
+            <button
+              id="btn-theme-switcher"
+              onClick={() => setIsThemeModalOpen(true)}
+              title={`选择更多 UI 主题 (当前: ${themeConfig.name})`}
+              className="flex items-center gap-1.5 px-2 py-1 rounded-full hover:bg-white/10 transition text-xs cursor-pointer"
+            >
+              <Palette className="w-3.5 h-3.5 text-amber-400" />
+              <div 
+                className="w-2.5 h-2.5 rounded-full border border-white/20"
+                style={{ backgroundColor: themeConfig.primaryColor }}
+              />
+              <span className="hidden lg:inline text-[11px] text-zinc-300 font-medium">
+                {themeConfig.name}
+              </span>
+            </button>
+          </div>
+
           {/* Active Speaker Capsule Button */}
           <button
             id="btn-active-speaker-status"
             onClick={() => setActiveTab('xiaomi')}
             title="点击管理播放协议与音频设备路由"
-            className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-zinc-900/90 hover:bg-zinc-800/90 border border-white/10 hover:border-[#FF6700]/40 transition text-left backdrop-blur-sm shadow-sm"
+            className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-zinc-900/90 hover:bg-zinc-800/90 border border-white/10 transition text-left backdrop-blur-sm shadow-sm cursor-pointer"
+            style={{
+              borderColor: `rgba(${themeConfig.primaryRgb}, 0.2)`
+            }}
           >
-            <span className={`w-2 h-2 rounded-full ${activeDevice?.isOnline ? 'bg-[#FF6700] shadow-[0_0_8px_rgba(255,103,0,0.7)]' : 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.6)]'}`} />
+            <span 
+              className="w-2 h-2 rounded-full"
+              style={{ 
+                backgroundColor: activeDevice?.isOnline ? themeConfig.primaryColor : '#34d399',
+                boxShadow: `0 0 8px rgba(${themeConfig.primaryRgb}, 0.7)` 
+              }} 
+            />
             <div className="hidden sm:block text-xs">
               <span className="text-zinc-100 font-semibold block truncate max-w-[120px] leading-tight">
                 {activeDevice?.name || '小爱智能音箱Pro'}
@@ -99,6 +156,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
       </div>
 
+
       {/* Bottom Row (中枢导航): 音乐曲库, 智能音箱, Subsonic API, 歌词播放, 设置 */}
       <div className="border-t border-white/5 bg-zinc-950/50 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-12 flex items-center justify-between">
@@ -108,7 +166,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               onClick={() => setActiveTab('library')}
               className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-sm font-medium transition-all whitespace-nowrap ${
                 activeTab === 'library'
-                  ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40 shadow-[0_0_12px_rgba(255,103,0,0.15)] font-semibold'
+                  ? themeConfig.activeTabStyle
                   : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-transparent'
               }`}
             >
@@ -121,16 +179,22 @@ export const Navbar: React.FC<NavbarProps> = ({
               onClick={() => setActiveTab('xiaomi')}
               className={`relative flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-sm font-medium transition-all whitespace-nowrap ${
                 activeTab === 'xiaomi'
-                  ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40 shadow-[0_0_14px_rgba(255,103,0,0.2)] font-semibold'
+                  ? themeConfig.activeTabStyle
                   : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-transparent'
               }`}
             >
-              <Cast className="w-4 h-4 text-[#FF6700]" />
+              <Cast className="w-4 h-4" style={{ color: activeTab === 'xiaomi' ? themeConfig.primaryColor : undefined }} />
               <span>智能音箱</span>
               {isCasting && (
                 <span className="flex h-2 w-2 relative">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#FF6700] opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-[#FF6700] shadow-[0_0_8px_rgba(255,103,0,0.8)]"></span>
+                  <span 
+                    className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"
+                    style={{ backgroundColor: themeConfig.primaryColor }}
+                  />
+                  <span 
+                    className="relative inline-flex rounded-full h-2 w-2"
+                    style={{ backgroundColor: themeConfig.primaryColor, boxShadow: `0 0 8px rgba(${themeConfig.primaryRgb}, 0.8)` }}
+                  />
                 </span>
               )}
             </button>
@@ -140,7 +204,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               onClick={() => setActiveTab('subsonic')}
               className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-sm font-medium transition-all whitespace-nowrap ${
                 activeTab === 'subsonic'
-                  ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40 shadow-[0_0_12px_rgba(255,103,0,0.15)] font-semibold'
+                  ? themeConfig.activeTabStyle
                   : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-transparent'
               }`}
             >
@@ -153,7 +217,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               onClick={() => setActiveTab('lyrics')}
               className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-sm font-medium transition-all whitespace-nowrap ${
                 activeTab === 'lyrics'
-                  ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40 shadow-[0_0_12px_rgba(255,103,0,0.15)] font-semibold'
+                  ? themeConfig.activeTabStyle
                   : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-transparent'
               }`}
             >
@@ -161,18 +225,18 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span>歌词唱机</span>
             </button>
 
-            {/* 设置 (整合成完整页面，涵盖安全防护与数据库管理) */}
+            {/* 设置 */}
             <button
               id="nav-tab-settings"
               onClick={() => setActiveTab('settings')}
               className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-sm font-medium transition-all whitespace-nowrap ${
                 activeTab === 'settings'
-                  ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40 shadow-[0_0_12px_rgba(255,103,0,0.15)] font-semibold'
+                  ? themeConfig.activeTabStyle
                   : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-transparent'
               }`}
-              title="系统设置、安全保护与数据库管理"
+              title="系统设置、界面主题与安全防护"
             >
-              <Settings className={`w-4 h-4 ${activeTab === 'settings' ? 'text-[#FF6700]' : 'text-zinc-400'}`} />
+              <Settings className="w-4 h-4" style={{ color: activeTab === 'settings' ? themeConfig.primaryColor : undefined }} />
               <span>设置</span>
               {securityAuthEnabled && (
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]" title="已开启登录防护" />

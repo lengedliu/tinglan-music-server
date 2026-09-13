@@ -1,11 +1,34 @@
 @import "tailwindcss";
 
+:root {
+  --theme-primary: #FF6700;
+  --theme-primary-rgb: 255, 103, 0;
+  --theme-secondary: #f97316;
+}
+
 ::selection {
-  background-color: #FF6700;
+  background-color: var(--theme-primary, #FF6700);
   color: #ffffff;
 }
 
-/* Custom smooth dark scrollbar for immersive dark mode */
+/* Dynamic theme helper classes */
+.theme-primary-bg {
+  background-color: var(--theme-primary);
+}
+
+.theme-primary-text {
+  color: var(--theme-primary);
+}
+
+.theme-primary-border {
+  border-color: var(--theme-primary);
+}
+
+.theme-primary-glow {
+  box-shadow: 0 0 16px rgba(var(--theme-primary-rgb), 0.35);
+}
+
+/* Custom smooth scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -16,10 +39,111 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
+  background: rgba(150, 150, 150, 0.3);
   border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 103, 0, 0.6);
+  background: rgba(var(--theme-primary-rgb, 255, 103, 0), 0.7);
 }
+
+/* Light Theme overrides for bright, crisp light mode matching "Nimbus Vault Sync" style */
+html.theme-light {
+  color-scheme: light;
+}
+
+html.theme-light body {
+  background-color: #f1f5f9;
+  color: #0f172a;
+}
+
+/* Background overrides for main containers, cards & modals */
+html.theme-light .bg-zinc-950,
+html.theme-light .bg-slate-950,
+html.theme-light .bg-black {
+  background-color: #f1f5f9 !important;
+}
+
+html.theme-light .bg-zinc-900,
+html.theme-light .bg-slate-900 {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #e2e8f0 !important;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.04), 0 1px 2px -1px rgba(0, 0, 0, 0.04) !important;
+}
+
+html.theme-light .bg-zinc-900\/60,
+html.theme-light .bg-zinc-900\/80,
+html.theme-light .bg-zinc-900\/90,
+html.theme-light .bg-zinc-950\/50,
+html.theme-light .bg-zinc-950\/60,
+html.theme-light .bg-zinc-950\/80,
+html.theme-light .bg-zinc-950\/90 {
+  background-color: rgba(255, 255, 255, 0.95) !important;
+  color: #0f172a !important;
+  border-color: #e2e8f0 !important;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.04) !important;
+}
+
+html.theme-light .bg-zinc-800,
+html.theme-light .bg-zinc-800\/50,
+html.theme-light .bg-zinc-800\/80,
+html.theme-light .bg-zinc-800\/90 {
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+  border-color: #e2e8f0 !important;
+}
+
+/* Border overrides */
+html.theme-light .border-white\/5,
+html.theme-light .border-white\/10,
+html.theme-light .border-white\/20,
+html.theme-light .border-white\/30 {
+  border-color: #e2e8f0 !important;
+}
+
+/* Typography contrast overrides */
+html.theme-light .text-zinc-500 {
+  color: #64748b !important;
+}
+
+html.theme-light .text-zinc-400 {
+  color: #64748b !important;
+}
+
+html.theme-light .text-zinc-300 {
+  color: #334155 !important;
+}
+
+html.theme-light .text-zinc-200,
+html.theme-light .text-zinc-100,
+html.theme-light .text-white {
+  color: #0f172a !important;
+}
+
+/* Header & Sidebar overrides */
+html.theme-light header {
+  background-color: rgba(255, 255, 255, 0.95) !important;
+  border-bottom-color: #e2e8f0 !important;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03) !important;
+}
+
+/* Form controls & inputs */
+html.theme-light input,
+html.theme-light select,
+html.theme-light textarea {
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+
+html.theme-light input::placeholder {
+  color: #94a3b8 !important;
+}
+
+/* Modals & Dialogs backdrop */
+html.theme-light .bg-black\/80 {
+  background-color: rgba(15, 23, 42, 0.4) !important;
+}
+
+
