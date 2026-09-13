@@ -353,7 +353,7 @@ export class XiaomiPassport {
     locationUrl: string,
     cookies: string,
     ssecurity?: string
-  ): Promise<{ serviceToken?: string; cookies?: string; rawLocation?: string }> {
+  ): Promise<{ serviceToken?: string; passToken?: string; cookies?: string; rawLocation?: string; ssecurity?: string }> {
     logDebug(`exchangeStsToken START`, { locationUrl, cookies });
     try {
       let currentUrl = locationUrl.startsWith('http://') ? locationUrl.replace('http://', 'https://') : locationUrl;
@@ -392,15 +392,32 @@ export class XiaomiPassport {
           currentUrl = currentUrl.replace('http://', 'https://');
         }
 
-        const cleanCookieHeader = Array.from(cookieKvMap.entries()).map(([k, v]) => `${k}=${v}`).join('; ');
-
-        // Songloft 优化：针对 api2.mina.mi.com 小爱官方接口，使用官方小爱音箱 App UA
+        // Songloft 优化：针对 mina.mi.com 小爱官方接口，强制使用官方 App 客户端伪装，洗净 Cookie 干扰项
         const isMinaEndpoint = currentUrl.includes('mina.mi.com');
-        const stsUserAgent = isMinaEndpoint
+        if (isMinaEndpoint) {
+          const cleanUid = cookieKvMap.get('userId') || '';
+          const clientDevId = getPersistentClientDeviceId(cleanUid);
+
+          // 1. 替换 URL 中 Web 端的 d=wb_xxx 为 app_ios_xxx 格式
+          currentUrl = currentUrl.replace(/([?&]d=)wb_[^&]+/g, `$1${clientDevId}`);
+
+          // 2. 清理 Web 登录遗留的 Cookie 干扰项
+          cookieKvMap.delete('pass_ua');
+          cookieKvMap.delete('theme');
+          cookieKvMap.delete('passInfo');
+          cookieKvMap.delete('sdkVersion');
+
+          // 3. 强行补充 App 设备特征 Cookie
+          cookieKvMap.set('deviceId', clientDevId);
+          cookieKvMap.set('PassportDeviceId', clientDevId);
+        }
+
+        const cleanCookieHeader = Array.from(cookieKvMap.entries()).map(([k, v]) => `${k}=${v}`).join('; ');
+        let stsUserAgent = isMinaEndpoint
           ? 'MISoundBox/1.4.0 (iPhone; iOS 14.4; Scale/3.00)'
           : this.userAgent;
 
-        const res = await fetch(currentUrl, {
+        let res = await fetch(currentUrl, {
           headers: {
             'User-Agent': stsUserAgent,
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
@@ -408,6 +425,23 @@ export class XiaomiPassport {
           },
           redirect: 'manual'
         });
+
+        // 针对 Mina 接口的 401 重试机制：使用精简 核心 Cookies 重新尝试
+        if (res.status === 401 && isMinaEndpoint) {
+          const cleanUid = cookieKvMap.get('userId') || '';
+          const clientDevId = getPersistentClientDeviceId(cleanUid);
+          const cleanMinimalCookie = `userId=${cleanUid}; passToken=${cookieKvMap.get('passToken') || ''}; deviceId=${clientDevId}; PassportDeviceId=${clientDevId}`;
+
+          logDebug(`exchangeStsToken retrying Mina 401 with App UserAgent & minimal clean cookies`, { currentUrl, cleanMinimalCookie });
+          res = await fetch(currentUrl, {
+            headers: {
+              'User-Agent': 'MISoundBox/1.4.0 (iPhone; iOS 14.4; Scale/3.00)',
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+              'Cookie': cleanMinimalCookie
+            },
+            redirect: 'manual'
+          });
+        }
 
         const setCookiesArr: string[] = typeof (res.headers as any).getSetCookie === 'function'
           ? (res.headers as any).getSetCookie()
@@ -499,13 +533,23 @@ export class XiaomiPassport {
       for (const host of hosts) {
         try {
           const loginUrl = `${host}/pass/serviceLogin?sid=${encodeURIComponent(targetSid)}&_json=true`;
-          const baseCookies = [
-            `userId=${cleanUid}`,
-            cUserId ? `cUserId=${cUserId}` : '',
-            `passToken=${cleanPassToken}`,
-            'uLocale=zh_CN',
-            'sdkVersion=3.9'
-          ].filter(Boolean).join('; ');
+          const clientDevId = getPersistentClientDeviceId(cleanUid);
+          const baseCookies = targetSid === 'micoapi'
+            ? [
+                `userId=${cleanUid}`,
+                cUserId ? `cUserId=${cUserId}` : '',
+                `passToken=${cleanPassToken}`,
+                `deviceId=${clientDevId}`,
+                `PassportDeviceId=${clientDevId}`,
+                'uLocale=zh_CN'
+              ].filter(Boolean).join('; ')
+            : [
+                `userId=${cleanUid}`,
+                cUserId ? `cUserId=${cUserId}` : '',
+                `passToken=${cleanPassToken}`,
+                'uLocale=zh_CN',
+                'sdkVersion=3.9'
+              ].filter(Boolean).join('; ');
 
           const fetchUa = targetSid === 'micoapi'
             ? 'MISoundBox/1.4.0 (iPhone; iOS 14.4; Scale/3.00)'
@@ -544,18 +588,18 @@ export class XiaomiPassport {
                 ssecurity: json.ssecurity || (sts as any).ssecurity,
                 userId: returnedUserId
               };
+            } else {
+              lastErr = `STS 重定向换取 serviceToken 失败 (${targetSid} 网关未下发凭证)`;
             }
-          }
-
-          if (json.code === 0 && json.serviceToken) {
+          } else if (json.code === 0 && json.serviceToken) {
             return {
               serviceToken: json.serviceToken,
               ssecurity: json.ssecurity,
               userId: returnedUserId
             };
+          } else {
+            lastErr = json.desc || json.message || `认证流程未完成 (code: ${json.code})`;
           }
-
-          lastErr = json.desc || json.message || `认证流程未完成 (code: ${json.code})`;
         } catch (hErr: any) {
           lastErr = hErr.message;
         }
