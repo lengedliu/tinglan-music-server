@@ -48,6 +48,7 @@ export default function App() {
 
   // Music state
   const [songs, setSongs] = useState<Song[]>(INITIAL_SONGS);
+  const [playQueue, setPlayQueue] = useState<Song[]>(INITIAL_SONGS);
   const [playlists, setPlaylists] = useState<Playlist[]>(INITIAL_PLAYLISTS);
   const [currentSong, setCurrentSong] = useState<Song | null>(INITIAL_SONGS[0]);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -269,10 +270,19 @@ export default function App() {
     }
   };
 
-  const handlePlaySong = (song: Song) => {
+  const handlePlaySong = (song: Song, targetQueue?: Song[]) => {
     setCurrentSong(song);
     setCurrentTime(0);
     setDuration(song.duration);
+
+    if (targetQueue && targetQueue.length > 0) {
+      setPlayQueue(targetQueue);
+    } else {
+      setPlayQueue(prev => {
+        if (prev.some(s => s.id === song.id)) return prev;
+        return [...prev, song];
+      });
+    }
 
     const playSrc = (song.url && !song.url.includes('pixabay')) ? song.url : `/api/stream/${song.id}`;
     if (audioRef.current) {
@@ -289,23 +299,74 @@ export default function App() {
     }
   };
 
+  const handlePlayAll = (targetSongs: Song[], startIndex: number = 0, autoCastToSpeaker?: boolean) => {
+    if (!targetSongs || targetSongs.length === 0) {
+      showToast('播放列表为空', '请先添加或筛选歌曲', 'info');
+      return;
+    }
+
+    setPlayQueue(targetSongs);
+    const startSong = targetSongs[startIndex] || targetSongs[0];
+
+    if (autoCastToSpeaker || isCasting || miotConfig.autoCast) {
+      setIsCasting(true);
+      const queueMode = isShuffle ? 'shuffle' : repeatMode === 'one' ? 'one' : 'all';
+
+      apiFetch('/api/queue/play-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          songs: targetSongs,
+          startIndex,
+          did: activeDevice?.did,
+          mode: queueMode
+        })
+      }).then(res => res.json()).then(data => {
+        if (data && data.success) {
+          showToast('已启动全歌单连续投播', `已向【${activeDevice?.name || '小爱音箱'}】下发全歌单 (${targetSongs.length} 首) 智能连播`, 'success');
+        }
+      }).catch(err => {
+        console.warn('Play-all queue request error:', err);
+      });
+
+      handlePlaySong(startSong, targetSongs);
+    } else {
+      handlePlaySong(startSong, targetSongs);
+      showToast('开始播放列表全部', `已将 ${targetSongs.length} 首歌曲载入播放队列`, 'success');
+    }
+  };
+
+  const handleCastAllToXiaomi = (targetSongs: Song[]) => {
+    if (!activeDevice) {
+      showToast('请先选择目标音箱', '可在上方“智能音箱”选项卡中扫描或选择小米音箱', 'error');
+      return;
+    }
+    handlePlayAll(targetSongs, 0, true);
+  };
+
   const handleNextSong = () => {
-    if (songs.length === 0) return;
-    const currentIndex = songs.findIndex(s => s.id === currentSong?.id);
+    const queue = playQueue.length > 0 ? playQueue : songs;
+    if (queue.length === 0) return;
+    const currentIndex = queue.findIndex(s => s.id === currentSong?.id);
     let nextIndex = 0;
 
     if (isShuffle) {
-      nextIndex = Math.floor(Math.random() * songs.length);
+      nextIndex = Math.floor(Math.random() * queue.length);
     } else {
-      nextIndex = (currentIndex + 1) % songs.length;
+      nextIndex = (currentIndex + 1) % queue.length;
     }
 
-    handlePlaySong(songs[nextIndex]);
+    if (isCasting && activeDevice) {
+      apiFetch('/api/queue/next', { method: 'POST' }).catch(() => {});
+    }
+
+    handlePlaySong(queue[nextIndex], queue);
   };
 
   const handlePrevSong = () => {
-    if (songs.length === 0) return;
-    const currentIndex = songs.findIndex(s => s.id === currentSong?.id);
+    const queue = playQueue.length > 0 ? playQueue : songs;
+    if (queue.length === 0) return;
+    const currentIndex = queue.findIndex(s => s.id === currentSong?.id);
     let prevIndex = 0;
 
     if (currentTime > 3) {
@@ -316,12 +377,16 @@ export default function App() {
     }
 
     if (isShuffle) {
-      prevIndex = Math.floor(Math.random() * songs.length);
+      prevIndex = Math.floor(Math.random() * queue.length);
     } else {
-      prevIndex = (currentIndex - 1 + songs.length) % songs.length;
+      prevIndex = (currentIndex - 1 + queue.length) % queue.length;
     }
 
-    handlePlaySong(songs[prevIndex]);
+    if (isCasting && activeDevice) {
+      apiFetch('/api/queue/prev', { method: 'POST' }).catch(() => {});
+    }
+
+    handlePlaySong(queue[prevIndex], queue);
   };
 
   const handleSeek = (time: number) => {
@@ -1116,10 +1181,12 @@ export default function App() {
               currentSong={currentSong}
               isPlaying={isPlaying}
               onPlaySong={handlePlaySong}
+              onPlayAll={handlePlayAll}
               onCastSongToXiaomi={(song) => {
                 handlePlaySong(song);
                 castSongToDevice(song, activeDevice);
               }}
+              onCastAllToXiaomi={handleCastAllToXiaomi}
               onToggleFavorite={handleToggleFavorite}
               activeDevice={activeDevice}
               isCasting={isCasting}
@@ -1225,6 +1292,7 @@ export default function App() {
           onOpenEQ={() => setIsEQModalOpen(true)}
           onOpenQueue={() => setIsQueueDrawerOpen(true)}
           onOpenSubsonic={() => setIsSubsonicModalOpen(true)}
+          queueCount={playQueue.length}
         />
 
         {/* Upload Song Modal */}
@@ -1246,18 +1314,28 @@ export default function App() {
         <PlayQueueDrawer
           isOpen={isQueueDrawerOpen}
           onClose={() => setIsQueueDrawerOpen(false)}
-          playlist={songs}
+          playlist={playQueue}
           currentSong={currentSong}
+          isPlaying={isPlaying}
+          isCasting={isCasting}
+          activeDevice={activeDevice}
           onSelectSong={handlePlaySong}
-          onRemoveFromQueue={(songId) => setSongs(prev => prev.filter(s => s.id !== songId))}
+          onRemoveFromQueue={(songId) => setPlayQueue(prev => prev.filter(s => s.id !== songId))}
           onClearQueue={() => {
-            setSongs([]);
+            setPlayQueue([]);
             setCurrentSong(null);
             setIsPlaying(false);
+            if (isCasting && activeDevice) {
+              apiFetch('/api/queue/clear', { method: 'POST' }).catch(() => {});
+            }
             setIsQueueDrawerOpen(false);
           }}
           isShuffle={isShuffle}
           onToggleShuffle={() => setIsShuffle(prev => !prev)}
+          repeatMode={repeatMode}
+          onCycleRepeat={handleCycleRepeat}
+          onNext={handleNextSong}
+          onPrev={handlePrevSong}
         />
 
         {/* Subsonic & OpenSubsonic Gateway Dashboard Modal */}

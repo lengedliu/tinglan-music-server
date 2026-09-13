@@ -37,7 +37,9 @@ interface MusicLibraryProps {
   currentSong: Song | null;
   isPlaying: boolean;
   onPlaySong: (song: Song) => void;
+  onPlayAll?: (songs: Song[], startIndex?: number) => void;
   onCastSongToXiaomi: (song: Song) => void;
+  onCastAllToXiaomi?: (songs: Song[]) => void;
   onToggleFavorite: (songId: string) => void;
   activeDevice: XiaomiDevice | undefined;
   isCasting: boolean;
@@ -56,7 +58,9 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
   currentSong,
   isPlaying,
   onPlaySong,
+  onPlayAll,
   onCastSongToXiaomi,
+  onCastAllToXiaomi,
   onToggleFavorite,
   activeDevice,
   isCasting,
@@ -455,14 +459,38 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                 </div>
               </div>
 
-              <div className="flex items-center gap-2.5">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <button
+                  id="btn-play-all-playlist"
+                  onClick={() => onPlayAll ? onPlayAll(filteredSongs, 0) : (filteredSongs[0] && onPlaySong(filteredSongs[0]))}
+                  disabled={filteredSongs.length === 0}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-[#FF6700] to-orange-500 hover:from-[#e55c00] hover:to-orange-600 text-white text-xs font-bold shadow-[0_2px_12px_rgba(255,103,0,0.4)] transition active:scale-95 disabled:opacity-50"
+                  title="播放当前歌单全部歌曲"
+                >
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                  <span>播放全部</span>
+                </button>
+
+                {onCastAllToXiaomi && activeDevice && (
+                  <button
+                    id="btn-cast-all-playlist"
+                    onClick={() => onCastAllToXiaomi(filteredSongs)}
+                    disabled={filteredSongs.length === 0}
+                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#FF6700]/15 hover:bg-[#FF6700]/25 border border-[#FF6700]/30 text-[#FF6700] text-xs font-semibold transition active:scale-95 disabled:opacity-50"
+                    title={`投播全部歌曲到【${activeDevice.name}】`}
+                  >
+                    <Cast className="w-3.5 h-3.5" />
+                    <span>投播歌单至音箱</span>
+                  </button>
+                )}
+
                 <button
                   id="btn-batch-add-songs"
                   onClick={() => setShowBatchAddModal(true)}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#FF6700] hover:bg-[#e55c00] text-white text-xs font-semibold shadow-[0_2px_10px_rgba(255,103,0,0.3)] transition active:scale-95"
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold border border-white/10 transition active:scale-95"
                 >
-                  <ListPlus className="w-4 h-4" />
-                  <span>添加歌曲到本歌单</span>
+                  <ListPlus className="w-4 h-4 text-[#FF6700]" />
+                  <span>添加歌曲</span>
                 </button>
 
                 {onDeletePlaylist && (
@@ -474,7 +502,7 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                         setSelectedPlaylistId('all');
                       }
                     }}
-                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 text-xs font-medium transition"
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 text-xs font-medium transition"
                     title="删除当前歌单"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -486,6 +514,40 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
           );
         })()}
       </div>
+
+      {/* Global Quick Action Toolbar for current view */}
+      {filteredSongs.length > 0 && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-5 py-3 rounded-2xl bg-zinc-900/60 border border-white/5 backdrop-blur-md">
+          <div className="flex items-center gap-3 flex-wrap">
+            <button
+              id="btn-play-all-current-view"
+              onClick={() => onPlayAll ? onPlayAll(filteredSongs, 0) : (filteredSongs[0] && onPlaySong(filteredSongs[0]))}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#FF6700] hover:bg-[#e55c00] text-white text-xs font-bold shadow-[0_2px_12px_rgba(255,103,0,0.35)] transition active:scale-95"
+              title="按当前列表顺序播放所有歌曲"
+            >
+              <Play className="w-3.5 h-3.5 fill-current" />
+              <span>播放全部 ({filteredSongs.length} 首)</span>
+            </button>
+
+            {onCastAllToXiaomi && activeDevice && (
+              <button
+                id="btn-cast-all-current-view"
+                onClick={() => onCastAllToXiaomi(filteredSongs)}
+                className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-[#FF6700] border border-[#FF6700]/30 text-xs font-semibold transition active:scale-95"
+                title={`一键将当前 ${filteredSongs.length} 首歌曲投播到【${activeDevice.name}】进行连续播放`}
+              >
+                <Radio className="w-3.5 h-3.5 animate-pulse" />
+                <span>投播全列表至【{activeDevice.name}】</span>
+              </button>
+            )}
+          </div>
+
+          <div className="text-xs text-zinc-400 flex items-center gap-2">
+            <span>列表共 <strong className="text-white font-mono">{filteredSongs.length}</strong> 首</span>
+            {searchQuery && <span className="text-amber-400 font-mono">(匹配关键词 "{searchQuery}")</span>}
+          </div>
+        </div>
+      )}
 
       {/* Songs Table with Immersive UI Styling */}
       <div className="bg-zinc-900/40 backdrop-blur-md border border-white/5 rounded-3xl overflow-hidden shadow-2xl">

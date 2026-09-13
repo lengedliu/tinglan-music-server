@@ -1,5 +1,6 @@
 export * from './core/musicEngine.js';
 export * from './core/playlistEngine.js';
+export * from './core/queueEngine.js';
 export * from './streaming/ffmpegTranscoder.js';
 export * from './streaming/streamServer.js';
 export * from './xiaomi/deviceManager.js';

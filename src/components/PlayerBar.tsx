@@ -43,6 +43,7 @@ interface PlayerBarProps {
   onOpenEQ?: () => void;
   onOpenQueue?: () => void;
   onOpenSubsonic?: () => void;
+  queueCount?: number;
 }
 
 export const PlayerBar: React.FC<PlayerBarProps> = ({
@@ -68,7 +69,8 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({
   onCycleRepeat,
   onOpenEQ,
   onOpenQueue,
-  onOpenSubsonic
+  onOpenSubsonic,
+  queueCount
 }) => {
   const [isMuted, setIsMuted] = useState(false);
   const [prevVolume, setPrevVolume] = useState(volume);
@@ -282,10 +284,15 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({
             <button
               id="btn-open-queue-drawer"
               onClick={onOpenQueue}
-              title="查看当前播放队列"
-              className="p-2 text-zinc-400 hover:text-[#FF6700] hover:bg-white/5 rounded-full transition"
+              title={`查看当前播放队列 (${queueCount || 0} 首)`}
+              className="p-2 text-zinc-400 hover:text-[#FF6700] hover:bg-white/5 rounded-full transition relative"
             >
               <ListMusic className="w-4.5 h-4.5" />
+              {queueCount !== undefined && queueCount > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-[#FF6700] text-black font-bold text-[9px] flex items-center justify-center shadow-[0_0_8px_rgba(255,103,0,0.8)]">
+                  {queueCount > 99 ? '99+' : queueCount}
+                </span>
+              )}
             </button>
           )}
 

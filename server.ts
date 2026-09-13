@@ -26,6 +26,9 @@ import { MiotConfig } from './src/types.js';
 import {
   MusicEngine,
   PlaylistEngine,
+  QueueEngine,
+  QueueLoopMode,
+  queueEngine,
   FfmpegTranscoder,
   StreamServer,
   DeviceManager,
@@ -1529,6 +1532,9 @@ function notifyStreamConsumed(event: { clientIp: string; songId: string; userAge
   for (const cb of streamConsumerCallbacks) {
     try { cb(event); } catch {}
   }
+  try {
+    queueEngine.notifyStreamConsumed(event.songId);
+  } catch {}
 }
 
 /**
@@ -4485,6 +4491,258 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
     stages,
     device: sanitizeDevice(targetDevice),
     streamUrl: resolvedStreamUrl
+  });
+});
+
+/**
+ * Direct casting dispatcher for QueueEngine automated playlist playback
+ */
+async function dispatchCastSongDirectly(song: any, targetDid: string): Promise<{ success: boolean; message?: string; error?: string }> {
+  if (xiaomiDevices.length === 0 && (miotConfig as any).passToken) {
+    try {
+      const resolveRes = await xiaoaiResolverEngine.resolveDevices({
+        userId: miotConfig.userId,
+        serviceToken: (miotConfig as any).micoServiceToken || miotConfig.serviceToken,
+        xiaomiioServiceToken: (miotConfig as any).xiaomiioServiceToken || miotConfig.serviceToken,
+        ssecurity: (miotConfig as any).ssecurity,
+        existingDevices: xiaomiDevices,
+        activeStreamIps: Array.from(activeStreamIps)
+      });
+      if (resolveRes.xiaoAiDevices && resolveRes.xiaoAiDevices.length > 0) {
+        xiaomiDevices = resolveRes.xiaoAiDevices;
+        if (!miotConfig.activeDeviceId) miotConfig.activeDeviceId = xiaomiDevices[0].did;
+        saveJson(DEVICES_FILE, xiaomiDevices);
+        saveJson(CONFIG_FILE, miotConfig);
+      }
+    } catch {}
+  }
+
+  const targetDevice = xiaomiDevices.find(d => d.did === targetDid || (d as any).deviceID === targetDid) || xiaomiDevices[0];
+  if (!targetDevice) {
+    return { success: false, error: '未找到可用的小米音箱设备' };
+  }
+
+  const localIps = getLocalNetworkIps();
+  let matchedLanIp = '';
+  if (targetDevice.ip) {
+    const targetSubnet = targetDevice.ip.split('.').slice(0, 3).join('.');
+    matchedLanIp = localIps.find(ip => ip.startsWith(`${targetSubnet}.`)) || '';
+  }
+  const primaryLanIp = matchedLanIp || localIps.find(ip => !ip.startsWith('127.') && !ip.startsWith('169.254.') && !ip.startsWith('172.17.')) || localIps[0] || '';
+
+  let baseHost = (miotConfig.serverHost && miotConfig.serverHost.startsWith('http'))
+    ? miotConfig.serverHost.replace(/\/$/, '')
+    : (primaryLanIp ? `http://${primaryLanIp}:${PORT}` : `http://localhost:${PORT}`);
+
+  const rawId = (song.id || 'song-1').toString();
+  const cleanSongId = rawId.replace(/\.(mp3|wav|flac|m4a|aac|ogg|opus|ape)$/i, '');
+  
+  let resolvedStreamUrl = `${baseHost}/api/stream/${encodeURIComponent(cleanSongId)}.mp3`;
+  if (song.url && song.url.startsWith('http') && !song.url.includes('localhost') && !song.url.includes('127.0.0.1')) {
+    resolvedStreamUrl = song.url;
+  }
+
+  const selectedCastMode = (miotConfig.castMode || 'auto') as any;
+
+  if (miotConfig.ttsAnnouncement) {
+    try {
+      await ttsEngine.dispatchToSpeaker({
+        targetDevice,
+        text: `${miotConfig.ttsPrefix || '正在为您播放'} ${song.title || '歌曲'}`,
+        mode: 'auto',
+        forSongCast: true,
+        serverHost: baseHost,
+        miotConfig,
+        sendMiioCommandFn: (ip, token, method, params, timeoutMs) => sendMiioCommand(ip, token, method, params, timeoutMs || 2500),
+        callMinaCloudApiFn: (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry)
+      });
+      await new Promise(r => setTimeout(r, 1200));
+    } catch {}
+  }
+
+  const castResult = await xiaomiAdapter.playUrl(
+    targetDevice,
+    resolvedStreamUrl,
+    song.title || '音乐',
+    (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry),
+    (ip, token, method, params, timeoutMs) => sendMiioCommand(ip, token, method, params, timeoutMs || 2500),
+    miotConfig,
+    {
+      songArtist: song.artist,
+      duration: song.duration,
+      castMode: selectedCastMode,
+      waitForStreamConsumption
+    }
+  );
+
+  if (castResult.success) {
+    targetDevice.status = {
+      ...targetDevice.status,
+      playing: true,
+      currentSongId: cleanSongId,
+      currentTitle: song.title || '未知曲目',
+      currentArtist: song.artist || '未知歌手',
+      currentDuration: song.duration || 200,
+      currentPosition: 0,
+      streamUrl: resolvedStreamUrl,
+      updatedAt: new Date().toISOString()
+    };
+    saveJson(DEVICES_FILE, xiaomiDevices);
+
+    castLogs.unshift({
+      id: `log-q-${Date.now()}`,
+      timestamp: new Date().toLocaleTimeString(),
+      type: 'cast',
+      message: `【歌单队列自动切播】《${song.title}》->【${targetDevice.name}】`,
+      detail: `歌手: ${song.artist} | 协议: ${castResult.protocol} | 串流源: ${resolvedStreamUrl}`,
+      success: true,
+      did: targetDevice.did,
+      ip: targetDevice.ip,
+      model: targetDevice.model,
+      protocol: castResult.protocol || 'MIoT / DLNA',
+      streamUrl: resolvedStreamUrl
+    });
+    if (castLogs.length > 50) castLogs.pop();
+
+    return { success: true, message: `已成功切播《${song.title}》` };
+  } else {
+    castLogs.unshift({
+      id: `log-q-err-${Date.now()}`,
+      timestamp: new Date().toLocaleTimeString(),
+      type: 'error',
+      message: `【歌单队列切播失败】《${song.title}》`,
+      detail: castResult.message || (castResult as any).error || '音箱未响应',
+      success: false,
+      did: targetDevice.did,
+      ip: targetDevice.ip,
+      model: targetDevice.model
+    });
+    if (castLogs.length > 50) castLogs.pop();
+
+    return { success: false, error: castResult.message || (castResult as any).error || '切播失败' };
+  }
+}
+
+queueEngine.setCastDispatcher(dispatchCastSongDirectly);
+
+// --- Queue Engine REST Endpoints ---
+
+// Get current play queue status
+app.get('/api/queue', (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    data: queueEngine.getStatus()
+  });
+});
+
+// Play entire playlist or songs list on speaker
+app.post('/api/queue/play-all', async (req: Request, res: Response) => {
+  const { songs, startIndex, did, mode } = req.body;
+  if (!Array.isArray(songs) || songs.length === 0) {
+    return res.status(400).json({ success: false, error: '歌曲列表不能为空' });
+  }
+
+  const targetDid = did || miotConfig.activeDeviceId || (xiaomiDevices[0] ? xiaomiDevices[0].did : '');
+  const targetDev = xiaomiDevices.find(d => d.did === targetDid || (d as any).deviceID === targetDid) || xiaomiDevices[0];
+  const deviceName = targetDev ? targetDev.name : '小爱音箱';
+
+  const result = await queueEngine.playQueue(
+    songs,
+    startIndex || 0,
+    targetDid,
+    deviceName,
+    mode as QueueLoopMode
+  );
+
+  res.json({
+    success: result.success,
+    message: result.message,
+    currentSong: result.currentSong,
+    data: queueEngine.getStatus()
+  });
+});
+
+// Next song in active queue
+app.post('/api/queue/next', async (req: Request, res: Response) => {
+  const result = await queueEngine.next(true);
+  res.json({
+    success: result.success,
+    message: result.message,
+    song: result.song,
+    data: queueEngine.getStatus()
+  });
+});
+
+// Previous song in active queue
+app.post('/api/queue/prev', async (req: Request, res: Response) => {
+  const result = await queueEngine.prev();
+  res.json({
+    success: result.success,
+    message: result.message,
+    song: result.song,
+    data: queueEngine.getStatus()
+  });
+});
+
+// Jump to specific index in queue
+app.post('/api/queue/jump', async (req: Request, res: Response) => {
+  const { index } = req.body;
+  const result = await queueEngine.jumpTo(Number(index) || 0);
+  res.json({
+    success: result.success,
+    message: result.message,
+    song: result.song,
+    data: queueEngine.getStatus()
+  });
+});
+
+// Update loop mode
+app.post('/api/queue/mode', (req: Request, res: Response) => {
+  const { mode } = req.body;
+  if (mode && ['all', 'one', 'shuffle'].includes(mode)) {
+    queueEngine.setLoopMode(mode);
+  }
+  res.json({
+    success: true,
+    mode,
+    data: queueEngine.getStatus()
+  });
+});
+
+// Remove song from queue
+app.post('/api/queue/remove', (req: Request, res: Response) => {
+  const { songId } = req.body;
+  const ok = queueEngine.removeSong(songId);
+  res.json({
+    success: ok,
+    data: queueEngine.getStatus()
+  });
+});
+
+// Clear queue
+app.post('/api/queue/clear', (req: Request, res: Response) => {
+  queueEngine.clear();
+  res.json({
+    success: true,
+    data: queueEngine.getStatus()
+  });
+});
+
+// Pause queue
+app.post('/api/queue/pause', (req: Request, res: Response) => {
+  queueEngine.pause();
+  res.json({
+    success: true,
+    data: queueEngine.getStatus()
+  });
+});
+
+// Resume queue
+app.post('/api/queue/resume', (req: Request, res: Response) => {
+  queueEngine.resume();
+  res.json({
+    success: true,
+    data: queueEngine.getStatus()
   });
 });
 
