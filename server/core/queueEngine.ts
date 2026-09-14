@@ -19,6 +19,7 @@ export interface QueueStatus {
 }
 
 export type CastDispatcherFn = (song: Song, targetDid: string) => Promise<{ success: boolean; message?: string; error?: string }>;
+export type SongProviderFn = () => Song[];
 
 export class QueueEngine extends EventEmitter {
   private queue: Song[] = [];
@@ -33,6 +34,7 @@ export class QueueEngine extends EventEmitter {
   private autoAdvanceTimer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private castDispatcher: CastDispatcherFn | null = null;
+  private songProvider: SongProviderFn | null = null;
   private isTransitioning: boolean = false;
 
   constructor() {
@@ -41,6 +43,58 @@ export class QueueEngine extends EventEmitter {
 
   public setCastDispatcher(dispatcher: CastDispatcherFn) {
     this.castDispatcher = dispatcher;
+  }
+
+  public setSongProvider(provider: SongProviderFn) {
+    this.songProvider = provider;
+  }
+
+  public setTargetDevice(targetDid: string, targetDeviceName?: string) {
+    if (targetDid) this.targetDid = targetDid;
+    if (targetDeviceName) this.targetDeviceName = targetDeviceName;
+  }
+
+  /**
+   * Synchronize active playing track and queue context from single cast / voice search
+   */
+  public syncCurrentSong(song: Song, targetDid: string = '', allSongs?: Song[], deviceName?: string) {
+    if (targetDid) this.targetDid = targetDid;
+    if (deviceName) this.targetDeviceName = deviceName;
+
+    const songs = allSongs && allSongs.length > 0 ? allSongs : (this.songProvider ? this.songProvider() : []);
+    if (songs.length > 0) {
+      this.queue = [...songs];
+      const matchIdx = this.queue.findIndex(s => s.id === song.id || s.title === song.title);
+      this.currentIndex = matchIdx >= 0 ? matchIdx : 0;
+    } else {
+      this.queue = [song];
+      this.currentIndex = 0;
+    }
+
+    this.isPlaying = true;
+    this.currentSongStarted = true;
+    this.songStartTime = Date.now();
+    this.currentDuration = (song.duration && song.duration > 5) ? song.duration : 180;
+    this.scheduleAutoAdvance(this.currentDuration);
+    this.startHeartbeat();
+    this.emit('change', this.getStatus());
+  }
+
+  /**
+   * Ensure queue is populated from songProvider if empty or single song
+   */
+  private ensureQueueContext() {
+    if ((this.queue.length <= 1) && this.songProvider) {
+      const allSongs = this.songProvider();
+      if (allSongs && allSongs.length > 0) {
+        const currentSong = this.queue[this.currentIndex];
+        this.queue = [...allSongs];
+        if (currentSong) {
+          const matchIdx = this.queue.findIndex(s => s.id === currentSong.id || s.title === currentSong.title);
+          this.currentIndex = matchIdx >= 0 ? matchIdx : 0;
+        }
+      }
+    }
   }
 
   public getStatus(): QueueStatus {
@@ -189,9 +243,16 @@ export class QueueEngine extends EventEmitter {
   /**
    * Play next song in the active queue
    */
-  public async next(force: boolean = true): Promise<{ success: boolean; song: Song | null; message: string }> {
+  public async next(force: boolean = true, targetDidOverride?: string): Promise<{ success: boolean; song: Song | null; message: string }> {
+    if (targetDidOverride) this.targetDid = targetDidOverride;
+    this.ensureQueueContext();
+
     if (this.queue.length === 0) {
-      return { success: false, song: null, message: '队列为空' };
+      return { success: false, song: null, message: '播放队列为空' };
+    }
+
+    if (force) {
+      this.isTransitioning = false;
     }
 
     let nextIdx = this.currentIndex;
@@ -211,16 +272,21 @@ export class QueueEngine extends EventEmitter {
       nextIdx = (this.currentIndex + 1) % this.queue.length;
     }
 
-    return this.jumpTo(nextIdx);
+    return this.jumpTo(nextIdx, targetDidOverride);
   }
 
   /**
    * Play previous song in the active queue
    */
-  public async prev(): Promise<{ success: boolean; song: Song | null; message: string }> {
+  public async prev(targetDidOverride?: string): Promise<{ success: boolean; song: Song | null; message: string }> {
+    if (targetDidOverride) this.targetDid = targetDidOverride;
+    this.ensureQueueContext();
+
     if (this.queue.length === 0) {
-      return { success: false, song: null, message: '队列为空' };
+      return { success: false, song: null, message: '播放队列为空' };
     }
+
+    this.isTransitioning = false;
 
     let prevIdx = 0;
     if (this.loopMode === 'shuffle') {
@@ -229,15 +295,18 @@ export class QueueEngine extends EventEmitter {
       prevIdx = (this.currentIndex - 1 + this.queue.length) % this.queue.length;
     }
 
-    return this.jumpTo(prevIdx);
+    return this.jumpTo(prevIdx, targetDidOverride);
   }
 
   /**
    * Jump to specific song index in the queue
    */
-  public async jumpTo(index: number): Promise<{ success: boolean; song: Song | null; message: string }> {
+  public async jumpTo(index: number, targetDidOverride?: string): Promise<{ success: boolean; song: Song | null; message: string }> {
+    if (targetDidOverride) this.targetDid = targetDidOverride;
+    this.ensureQueueContext();
+
     if (this.queue.length === 0) {
-      return { success: false, song: null, message: '队列为空' };
+      return { success: false, song: null, message: '播放队列为空' };
     }
 
     if (this.isTransitioning) {

@@ -213,7 +213,7 @@ export class VoiceCommandService {
     getPlaylists: () => Playlist[];
     playSong: (song: Song, playlistName?: string, deviceId?: string) => Promise<boolean>;
     playPlaylist: (playlistId: string, deviceId?: string) => Promise<boolean>;
-    controlPlayback: (action: 'next' | 'prev' | 'pause' | 'stop' | 'resume' | 'volume_up' | 'volume_down', deviceId?: string) => Promise<boolean>;
+    controlPlayback: (action: 'next' | 'prev' | 'pause' | 'stop' | 'resume' | 'volume_up' | 'volume_down', deviceId?: string) => Promise<boolean | { success: boolean; song?: Song | null; message?: string }>;
     sendTts: (deviceId: string, text: string) => Promise<any>;
     getAuthInfo: () => { userId?: string; serviceToken?: string; devices: any[] };
   }) {
@@ -653,17 +653,32 @@ export class VoiceCommandService {
 
       case 'control_command': {
         if (!rule.controlAction) throw new Error('未定义播控动作');
+        let newSongTitle = '';
+        let resultMsg = '';
         if (this.controlPlaybackFn) {
-          await this.controlPlaybackFn(rule.controlAction, deviceId);
+          const res: any = await this.controlPlaybackFn(rule.controlAction, deviceId);
+          if (res && typeof res === 'object') {
+            if (res.song && res.song.title) {
+              newSongTitle = res.song.title;
+            }
+            if (res.message) {
+              resultMsg = res.message;
+            }
+          }
         }
 
-        if (this.config.ttsFeedbackEnabled && rule.ttsFeedback && deviceId && this.sendTtsFn) {
-          await this.sendTtsFn(deviceId, rule.ttsFeedback).catch(() => {});
+        let feedbackText = rule.ttsFeedback;
+        if (newSongTitle && (rule.controlAction === 'next' || rule.controlAction === 'prev')) {
+          feedbackText = `${rule.ttsFeedback}，《${newSongTitle}》`;
+        }
+
+        if (this.config.ttsFeedbackEnabled && feedbackText && deviceId && this.sendTtsFn) {
+          await this.sendTtsFn(deviceId, feedbackText).catch(() => {});
         }
 
         const actionNames: Record<string, string> = {
-          next: '下一首',
-          prev: '上一首',
+          next: newSongTitle ? `切歌至下一首:《${newSongTitle}》` : '切歌至下一首',
+          prev: newSongTitle ? `切歌至上一首:《${newSongTitle}》` : '切歌至上一首',
           pause: '暂停播放',
           stop: '停止播放',
           resume: '继续播放',
@@ -673,7 +688,7 @@ export class VoiceCommandService {
 
         return {
           success: true,
-          summary: `已执行播控指令: ${actionNames[rule.controlAction] || rule.controlAction}`
+          summary: resultMsg || `已执行播控指令: ${actionNames[rule.controlAction] || rule.controlAction}`
         };
       }
 

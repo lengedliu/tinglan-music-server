@@ -4651,6 +4651,7 @@ async function dispatchCastSongDirectly(song: any, targetDid: string): Promise<{
 }
 
 queueEngine.setCastDispatcher(dispatchCastSongDirectly);
+queueEngine.setSongProvider(() => storedSongs);
 
 // --- Queue Engine REST Endpoints ---
 
@@ -6420,6 +6421,7 @@ async function startServer() {
     playSong: async (song, playlistName, deviceId) => {
       const targetDev = xiaomiDevices.find(d => d.did === deviceId) || xiaomiDevices.find(d => d.did === miotConfig.activeDeviceId) || xiaomiDevices[0];
       if (!targetDev) return false;
+      queueEngine.syncCurrentSong(song, targetDev.did, storedSongs, targetDev.name);
       const res = await dispatchCastSongDirectly(song, targetDev.did);
       return res.success;
     },
@@ -6447,33 +6449,33 @@ async function startServer() {
       const targetDev = xiaomiDevices.find(d => d.did === deviceId) || xiaomiDevices.find(d => d.did === miotConfig.activeDeviceId) || xiaomiDevices[0];
       if (!targetDev) return false;
       if (action === 'next') {
-        const res = await queueEngine.next();
-        return res.success;
+        const res = await queueEngine.next(true, targetDev.did);
+        return res;
       } else if (action === 'prev') {
-        const res = await queueEngine.prev();
-        return res.success;
+        const res = await queueEngine.prev(targetDev.did);
+        return res;
       } else if (action === 'pause' || action === 'stop') {
         queueEngine.pause();
         await xiaomiAdapter.setPlaybackOperation(targetDev, 'pause', (p, m, msg, tDid, r) => callMinaCloudApi(p, m, msg, tDid, r), (ip, tk, m, p, t) => sendMiioCommand(ip, tk, m, p, t), miotConfig).catch(() => {});
-        return true;
+        return { success: true, message: '已暂停播放' };
       } else if (action === 'resume') {
         queueEngine.resume();
         await xiaomiAdapter.setPlaybackOperation(targetDev, 'play', (p, m, msg, tDid, r) => callMinaCloudApi(p, m, msg, tDid, r), (ip, tk, m, p, t) => sendMiioCommand(ip, tk, m, p, t), miotConfig).catch(() => {});
-        return true;
+        return { success: true, message: '已恢复播放' };
       } else if (action === 'volume_up') {
         const currentVol = targetDev.status?.volume || 40;
         const newVol = Math.min(100, currentVol + 10);
         targetDev.status = targetDev.status || {};
         targetDev.status.volume = newVol;
         await xiaomiAdapter.setVolume(targetDev, newVol, (p, m, msg, tDid, r) => callMinaCloudApi(p, m, msg, tDid, r), (ip, tk, m, p, t) => sendMiioCommand(ip, tk, m, p, t), miotConfig).catch(() => {});
-        return true;
+        return { success: true, message: `音量已调大至 ${newVol}%` };
       } else if (action === 'volume_down') {
         const currentVol = targetDev.status?.volume || 40;
         const newVol = Math.max(0, currentVol - 10);
         targetDev.status = targetDev.status || {};
         targetDev.status.volume = newVol;
         await xiaomiAdapter.setVolume(targetDev, newVol, (p, m, msg, tDid, r) => callMinaCloudApi(p, m, msg, tDid, r), (ip, tk, m, p, t) => sendMiioCommand(ip, tk, m, p, t), miotConfig).catch(() => {});
-        return true;
+        return { success: true, message: `音量已调小至 ${newVol}%` };
       }
       return false;
     },
