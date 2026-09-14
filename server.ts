@@ -359,7 +359,7 @@ if (typeof securitySettings.allowUserMiotTts !== 'boolean') {
   securitySettings.allowUserMiotTts = false;
 }
 // Ensure security.json exists on disk with active security settings
-saveJson(SECURITY_FILE, securitySettings);
+saveJson(SECURITY_FILE, securitySettings, true);
 
 // Initialize SQLite Database Instance
 let sqliteDb: any = null;
@@ -740,7 +740,7 @@ app.post('/api/system/security', (req: Request, res: Response) => {
       securitySettings.allowUserMiotTts = allowUserMiotTts;
     }
     securitySettings.updatedAt = new Date().toISOString();
-    saveJson(SECURITY_FILE, securitySettings);
+    saveJson(SECURITY_FILE, securitySettings, true);
 
     const clientIp = getClientIp(req);
     const isLan = isPrivateOrLocalIp(clientIp);
