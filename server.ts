@@ -258,7 +258,7 @@ let navidromeConfig = loadJson(NAVIDROME_FILE, {
 function getSubsonicAuthQuery(user: string, pass: string): string {
   const salt = crypto.randomBytes(6).toString('hex');
   const token = crypto.createHash('md5').update(pass + salt).digest('hex');
-  return `u=${encodeURIComponent(user)}&t=${token}&s=${salt}&v=1.16.1&c=TingLanSongloft&f=json`;
+  return `u=${encodeURIComponent(user)}&t=${token}&s=${salt}&v=1.16.1&c=TingLanMusic&f=json`;
 }
 
 // User & Database persistence paths
@@ -4184,7 +4184,7 @@ app.post('/api/miot/devices/scan', async (req: Request, res: Response) => {
   }
 });
 
-// Songloft UBUS Request Queue: ensure commands for the same deviceId are executed sequentially
+// Mina UBUS Request Queue: ensure commands for the same deviceId are executed sequentially
 const minaUbusQueues = new Map<string, Promise<void>>();
 
 async function callMinaCloudApi(
@@ -4285,7 +4285,7 @@ async function doCallMinaCloudApi(
     }
   }
 
-  // Songloft 动态设备映射：若 deviceId 仍未知或仅为数字 MIoT DID，向 Mina 查询官方 device_list 自动补全
+  // 动态设备映射：若 deviceId 仍未知或仅为数字 MIoT DID，向 Mina 查询官方 device_list 自动补全
   if (activeMicoToken && cleanUid && (!matchedDev || !(matchedDev as any).deviceID || isSyntheticId(deviceId))) {
     try {
       const minaDevListRes = await fetch(`https://api2.mina.mi.com/admin/v2/device_list?master=1&requestId=${generateMinaRequestId()}`, {
@@ -4308,11 +4308,11 @@ async function doCallMinaCloudApi(
             if (foundMinaDev.hardware) (matchedDev as any).hardware = foundMinaDev.hardware;
             saveJson(DEVICES_FILE, xiaomiDevices);
           }
-          console.log(`[Mina] Songloft 自动关联成功: DID ${targetDid} -> 云端 DeviceID: ${deviceId} (${foundMinaDev.hardware || 'XiaoAi'})`);
+          console.log(`[Mina] 自动关联成功: DID ${targetDid} -> 云端 DeviceID: ${deviceId} (${foundMinaDev.hardware || 'XiaoAi'})`);
         }
       }
     } catch (autoDevErr: any) {
-      console.warn('[Mina] Songloft 自动关联设备列表失败:', autoDevErr.message);
+      console.warn('[Mina] 自动关联设备列表失败:', autoDevErr.message);
     }
   }
 
@@ -4384,7 +4384,7 @@ async function doCallMinaCloudApi(
       }
 
       if (response.ok && (resJson.code === 0 || resJson.message === 'ok' || resJson.info === 'ok')) {
-        // Songloft isDeviceResultOK: Check if inner data has device error code
+        // isDeviceResultOK: Check if inner data has device error code
         const innerData = resJson.data;
         if (innerData && typeof innerData === 'object' && 'code' in innerData) {
           const deviceCode = Number(innerData.code);
@@ -5490,7 +5490,7 @@ app.get('/api/miot/logs', (req: Request, res: Response) => {
   res.json(castLogs);
 });
 
-// ---------------- VOICE COMMAND LISTENER (Songloft Pattern) ----------------
+// ---------------- VOICE COMMAND LISTENER & DIRECTIVE ENGINE ----------------
 
 // Get Voice Listener Status & Config
 app.get('/api/miot/voice/status', (req: Request, res: Response) => {
@@ -6280,14 +6280,14 @@ app.get(['/api/system/3tier-architecture', '/api/system/xiaomusic-architecture']
   });
 });
 
-// ---------------- SUBSONIC & OPENSUBSONIC REST API (Songloft Standard) ----------------
+// ---------------- SUBSONIC & OPENSUBSONIC REST API STANDARD ----------------
 const subsonicError = (req: Request, res: Response, code: number, message: string) => {
   const format = String(req.query.f || 'json').toLowerCase();
   const payload = {
     "subsonic-response": {
       status: "failed",
       version: "1.16.1",
-      type: "TingLan-Songloft-Server",
+      type: "TingLan-Music-Server",
       serverVersion: "2.5.0",
       openSubsonic: true,
       error: { code, message }
@@ -6371,7 +6371,7 @@ const subsonicResponse = (req: Request, res: Response, dataKey: string, dataValu
     "subsonic-response": {
       status: "ok",
       version: "1.16.1",
-      type: "TingLan-Songloft-Server",
+      type: "TingLan-Music-Server",
       serverVersion: "2.5.0",
       openSubsonic: true,
       [dataKey]: dataValue
@@ -6521,7 +6521,7 @@ app.get('/api/subsonic/info', (req: Request, res: Response) => {
   res.json({
     status: "ok",
     version: "1.16.1",
-    server: "TingLan-Songloft",
+    server: "TingLan-Music",
     subsonicUrl: `/rest`,
     endpoints: [
       "/rest/ping",
@@ -6804,7 +6804,7 @@ app.post('/api/ai/music-insight', async (req: Request, res: Response) => {
 
 // Start server with Vite middleware in development or static in production
 async function startServer() {
-  // Bind callbacks for Songloft-style Voice Command Service
+  // Bind callbacks for Voice Command Service
   voiceCommandService.bindCallbacks({
     getSongs: () => storedSongs,
     getPlaylists: () => storedPlaylists,

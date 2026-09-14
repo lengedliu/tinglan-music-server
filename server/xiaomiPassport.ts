@@ -7,7 +7,7 @@ let cachedClientDeviceId = '';
 
 /**
  * Get or initialize a persistent client device identifier for Xiaomi Mina / Passport sessions.
- * Matches Songloft / official Mi SoundBox iOS App client identity behavior.
+ * Matches official Mi SoundBox iOS App client identity behavior.
  */
 export function getPersistentClientDeviceId(userId?: string): string {
   if (cachedClientDeviceId && cachedClientDeviceId.length === 16) {
@@ -23,7 +23,7 @@ export function getPersistentClientDeviceId(userId?: string): string {
         return cachedClientDeviceId;
       }
     }
-    // Generate a standard 16-hex client id (e.g. "45A72B8C1D9E3F0A") matching Songloft / miservice
+    // Generate a standard 16-hex client id (e.g. "45A72B8C1D9E3F0A") matching miservice
     const newId = crypto.randomBytes(8).toString('hex').toUpperCase();
     if (!fs.existsSync(dataDir)) {
       fs.mkdirSync(dataDir, { recursive: true });
@@ -59,7 +59,7 @@ export interface XiaomiAuth {
 
 /**
  * Extract a big integer or string value safely from raw JSON to avoid 64-bit precision truncation
- * Reference: Songloft extractBigIntField
+ * Reference: safe extractBigIntField
  */
 export function extractBigIntField(jsonStr: string, field: string): string {
   const match = jsonStr.match(new RegExp(`"${field}"\\s*:\\s*([0-9]{15,30})`));
@@ -74,7 +74,7 @@ export function extractBigIntField(jsonStr: string, field: string): string {
 }
 
 /**
- * Compute Songloft clientSign = base64(sha1("nonce={nonce}&{ssecurity}"))
+ * Compute clientSign = base64(sha1("nonce={nonce}&{ssecurity}"))
  * Essential for Xiaomi STS token authentication
  */
 export function computeClientSign(nonce: string, ssecurity: string): string {
@@ -100,7 +100,7 @@ export function appendQueryParams(urlStr: string, params: Record<string, string>
 
 /**
  * Build unified Mina HTTP headers with persistent client identity and cookies
- * Fully aligned with Songloft / official Mi SoundBox iOS App client identity behavior.
+ * Fully aligned with official Mi SoundBox iOS App client identity behavior.
  */
 export function buildMinaHeaders(userId: string, serviceToken: string, targetSpeakerDeviceId?: string): Record<string, string> {
   const cleanUid = String(userId || '').replace(/^uid_/, '').replace(/^["']|["']$/g, '').trim();
@@ -397,7 +397,7 @@ export class XiaomiPassport {
   /**
    * STS Token Exchange
    * Exchanges location redirect URL from Passport for a scoped serviceToken
-   * Supports Songloft clientSign computation: clientSign = base64(sha1("nonce={nonce}&{ssecurity}"))
+   * Supports clientSign computation: clientSign = base64(sha1("nonce={nonce}&{ssecurity}"))
    */
   public async exchangeStsToken(
     locationUrl: string,
@@ -423,7 +423,7 @@ export class XiaomiPassport {
         });
       }
 
-      // Songloft 规范：从原始 nonce 与 ssecurity 计算 clientSign 并追加到 location URL
+      // 签名规范：从原始 nonce 与 ssecurity 计算 clientSign 并追加到 location URL
       // 签名公式：clientSign = base64(sha1("nonce={nonce}&{ssecurity}"))
       if (nonceStr && ssecurity && !currentUrl.includes('clientSign=')) {
         const clientSign = computeClientSign(nonceStr, ssecurity);
@@ -449,7 +449,7 @@ export class XiaomiPassport {
       const maxHops = 10;
       const cleanUid = cookieKvMap.get('userId') || '';
       const clientDevId = getPersistentClientDeviceId(cleanUid);
-      const songloftUa = `Android-7.1.1-1.0.0-ONEPLUS A3010-136-${clientDevId} APP/xiaomi.smarthome APPV/62830`;
+      const standardUa = `Android-7.1.1-1.0.0-ONEPLUS A3010-136-${clientDevId} APP/xiaomi.smarthome APPV/62830`;
 
       while (hops < maxHops) {
         hops++;
@@ -457,7 +457,7 @@ export class XiaomiPassport {
           currentUrl = currentUrl.replace('http://', 'https://');
         }
 
-        // 携带与 Songloft 保持一致的核心 Cookies
+        // 携带标准核心 Cookies
         if (!cookieKvMap.has('deviceId')) cookieKvMap.set('deviceId', clientDevId);
         if (!cookieKvMap.has('sdkVersion')) cookieKvMap.set('sdkVersion', '3.8.6');
 
@@ -465,7 +465,7 @@ export class XiaomiPassport {
 
         const res = await fetch(currentUrl, {
           headers: {
-            'User-Agent': songloftUa,
+            'User-Agent': standardUa,
             'Content-Type': 'application/x-www-form-urlencoded',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Cookie': cleanCookieHeader
@@ -546,7 +546,7 @@ export class XiaomiPassport {
 
   /**
    * Fetch additional scoped STS token using passToken (e.g. for xiaomiio or micoapi)
-   * Follows Songloft 3-step handshake:
+   * Follows standard 3-step handshake:
    * 1. GET serviceLogin?sid={sid}&_json=true
    * 2. Extract nonce & ssecurity, compute clientSign
    * 3. Follow redirect location with clientSign to extract serviceToken
@@ -562,7 +562,7 @@ export class XiaomiPassport {
       const cleanPassToken = String(passToken || '').replace(/^["']|["']$/g, '').trim();
 
       const clientDevId = getPersistentClientDeviceId(cleanUid);
-      const songloftUa = `Android-7.1.1-1.0.0-ONEPLUS A3010-136-${clientDevId} APP/xiaomi.smarthome APPV/62830`;
+      const standardUa = `Android-7.1.1-1.0.0-ONEPLUS A3010-136-${clientDevId} APP/xiaomi.smarthome APPV/62830`;
 
       const cookieParts = [
         `passToken=${cleanPassToken}`,
@@ -582,7 +582,7 @@ export class XiaomiPassport {
       const res = await fetch(serviceLoginUrl, {
         method: 'GET',
         headers: {
-          'User-Agent': songloftUa,
+          'User-Agent': standardUa,
           'Cookie': cookieHeader
         }
       });
@@ -644,7 +644,7 @@ export class XiaomiPassport {
 
   /**
    * QR Code Login - Step 1: Generate Login QR Code
-   * Follows Songloft QR code initialization:
+   * Follows standard QR code initialization:
    * 1. Query serviceLogin to obtain _sign, qs, callback
    * 2. Query longPolling/loginUrl to obtain official QR PNG and long-polling lpUrl
    */
@@ -654,7 +654,7 @@ export class XiaomiPassport {
   ): Promise<QrCodeResult & { qrCodeUrl?: string; qrDataUrl?: string; qr?: string }> {
     try {
       const clientDevId = getPersistentClientDeviceId();
-      const songloftUa = `Android-7.1.1-1.0.0-ONEPLUS A3010-136-${clientDevId} APP/xiaomi.smarthome APPV/62830`;
+      const standardUa = `Android-7.1.1-1.0.0-ONEPLUS A3010-136-${clientDevId} APP/xiaomi.smarthome APPV/62830`;
       const cleanSid = sid === 'micoapi' || sid === 'xiaomiio' ? 'mijia' : (sid || 'mijia');
 
       // Step 1: GET serviceLogin to get signature parameters
@@ -665,7 +665,7 @@ export class XiaomiPassport {
         const step1Url = `https://account.xiaomi.com/pass/serviceLogin?sid=${encodeURIComponent(cleanSid)}&_json=true`;
         const step1Res = await fetch(step1Url, {
           headers: {
-            'User-Agent': songloftUa,
+            'User-Agent': standardUa,
             'Cookie': `sdkVersion=3.8.6; deviceId=${clientDevId}`
           }
         });
@@ -692,7 +692,7 @@ export class XiaomiPassport {
       const url = `https://account.xiaomi.com/longPolling/loginUrl?${params.toString()}`;
       const res = await fetch(url, {
         headers: {
-          'User-Agent': songloftUa,
+          'User-Agent': standardUa,
           'Accept': 'application/json, text/plain, */*'
         }
       });
@@ -720,7 +720,7 @@ export class XiaomiPassport {
         try {
           const imgRes = await fetch(data.qr, {
             headers: {
-              'User-Agent': songloftUa,
+              'User-Agent': standardUa,
               'Accept': 'image/png,image/*;q=0.9,*/*;q=0.8'
             }
           });
@@ -774,7 +774,7 @@ export class XiaomiPassport {
       }
 
       const clientDevId = getPersistentClientDeviceId();
-      const songloftUa = `Android-7.1.1-1.0.0-ONEPLUS A3010-136-${clientDevId} APP/xiaomi.smarthome APPV/62830`;
+      const standardUa = `Android-7.1.1-1.0.0-ONEPLUS A3010-136-${clientDevId} APP/xiaomi.smarthome APPV/62830`;
 
       let data: any = null;
       let clean = '';
@@ -784,7 +784,7 @@ export class XiaomiPassport {
 
         const res = await fetch(targetPollUrl, {
           headers: {
-            'User-Agent': songloftUa,
+            'User-Agent': standardUa,
             'Accept': 'application/json, text/plain, */*'
           },
           signal: controller.signal

@@ -1,6 +1,4 @@
-# Tinglan (听澜) - 小米智能音箱音乐中枢与高保真流媒体服务
-
-[简体中文](#) | [English](#) | [繁體中文](#) | [日本語](#) | [한국어](#)
+# Tinglan (听澜) - 小米智能音箱音乐中枢与私有流媒体服务
 
 [![Version](https://img.shields.io/badge/version-2.5.0-007ec6?style=flat-square)](https://github.com/)
 [![Node.js](https://img.shields.io/badge/Node.js-18%2B-2c8ebb?style=flat-square&logo=node.js&logoColor=white&color=2e7d32)](https://nodejs.org/)
@@ -13,13 +11,13 @@
 [![i18n](https://img.shields.io/badge/i18n-5_Languages-00897b?style=flat-square)](https://github.com/)
 [![License](https://img.shields.io/badge/License-MIT-f57c00?style=flat-square&logo=open-source-initiative&logoColor=white)](LICENSE)
 
-> 专为**小米智能音箱全系列**（小爱音箱 Pro、Xiaomi Sound Pro、小爱触屏音箱、小爱音箱 Play 等）及家庭私有 NAS 打造的高保真本地音乐流媒体中枢、MIoT 协议播控中心、OpenSubsonic 兼容服务与 LRC 动态动效歌词平台。
+> 专为**小米智能音箱全系列**（小爱音箱 Pro、Xiaomi Sound Pro、小爱触屏音箱、小爱音箱 Play 等）及家庭私有 NAS 打造的本地音乐流媒体中枢、MIoT 协议播控中心、OpenSubsonic 兼容服务与 LRC 动态动效歌词平台。
 
 ---
 
 ## 🌟 核心功能特性
 
-1. **高保真私有音乐库**：
+1. **私有无损音乐库**：
    - 支持 FLAC 24bit/96kHz、320kbps MP3、WAV、M4A、OGG、AAC、APE、OPUS 等多种无损与高码率音频格式。
    - 自动扫描挂载的本地音乐目录，实时读取歌曲元数据、专辑封面与 ID3 标签。
    - 内置 LRC 同步时间轴歌词引擎与黑胶唱片律动视觉呈现。
@@ -32,7 +30,7 @@
    - **小爱同学原声 TTS 播报**：支持投播前自动语音播报歌名、问候语或自定义广播。
    - **设备管理与网络探测**：支持多音箱切换、设备编辑、添加自定义音箱、一键清空与实时 TCP Ping 端口握手探测。
 
-3. **智能语音口令与点歌中枢 (Songloft 规范)**：
+3. **智能语音口令与点歌中枢**：
    - **多通道捕获与幂等去重**：结合 Mina WebSocket 实时推送与云端对话轮询通道，内置 5 秒滑动窗口防抖去重引擎，杜绝并发导致的重复切歌。
    - **全场景自然语言匹配**：支持搜歌、随机播放、自建歌单指定播放、上一曲、下一曲、暂停及音量调节。
    - **免开嗓模拟器**：支持在 Web 控制台进行语音指令模拟匹配与即时测试。
@@ -234,9 +232,9 @@ docker run -d \
 
 ---
 
-## 🎙️ 语音口令与点歌功能使用指南 (Songloft 规范)
+## 🎙️ 语音口令与点歌功能使用指南
 
-Tinglan 内置了基于 **Songloft 架构规范** 的小爱同学语音口令拦截与智能点歌中枢。您无需每次都打开手机或电脑网页，只需对着小爱音箱说话，系统即可毫秒级截获并自动检索本地私有无损曲库进行投播。
+Tinglan 内置了小爱同学语音口令拦截与智能点歌中枢。您无需每次都打开手机或电脑网页，只需对着小爱音箱说话，系统即可毫秒级截获并自动检索本地私有无损曲库进行投播。
 
 ### 一、默认内置口令与触发词
 
@@ -286,4 +284,4 @@ Tinglan 内置了基于 **Songloft 架构规范** 的小爱同学语音口令拦
    - 选择 **【设备控制】** 或 **【文字回答】**。
    - 填写文字回复内容：“好的，正在为您唤醒私有音乐库”。
 5. **保存生效**：
-   - 配置完成后，当您对音箱说出该口令时，小爱将不再去官方音乐库搜索报错，Tinglan 服务端将在 1-2 秒内自动截获指令并秒级无缝接管高保真音频串流！
+   - 配置完成后，当您对音箱说出该口令时，小爱将不再去官方音乐库搜索报错，Tinglan 服务端将在 1-2 秒内自动截获指令并秒级无缝接管无损音频串流！

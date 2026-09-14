@@ -43,11 +43,11 @@ export const SubsonicDashboardModal: React.FC<SubsonicDashboardModalProps> = ({
               <h3 className="text-lg font-bold text-white flex items-center gap-2">
                 Subsonic & OpenSubsonic 接口网关
                 <span className="text-xs px-2 py-0.5 rounded-full bg-[#FF6700]/20 text-[#FF6700] border border-[#FF6700]/30 font-mono">
-                  Songloft Standard
+                  OpenSubsonic Standard
                 </span>
               </h3>
               <p className="text-xs text-zinc-400">
-                兼容 Subsonic/Navidrome 协议，支持任何第三方客户端与 Songloft App 接入
+                兼容 Subsonic/Navidrome 协议，支持任何第三方 Subsonic 客户端接入
               </p>
             </div>
           </div>
@@ -127,16 +127,16 @@ export const SubsonicDashboardModal: React.FC<SubsonicDashboardModalProps> = ({
         <div className="space-y-3">
           <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
             <Smartphone className="w-3.5 h-3.5 text-[#FF6700]" />
-            推荐兼容客户端 (Songloft Ecosystem)
+            推荐兼容客户端 (Subsonic Ecosystem)
           </h4>
           
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="p-3.5 rounded-2xl bg-zinc-900/40 border border-white/5 space-y-1 text-left">
               <h5 className="text-xs font-bold text-white flex items-center gap-1.5">
-                Songloft Player
+                Tinglan Music
               </h5>
               <p className="text-[11px] text-zinc-400 leading-snug">
-                基于 Flutter 的全平台无广告音乐客户端
+                支持高保真串流与全端动态歌词同步
               </p>
             </div>
             <div className="p-3.5 rounded-2xl bg-zinc-900/40 border border-white/5 space-y-1 text-left">
@@ -174,7 +174,7 @@ export const SubsonicDashboardModal: React.FC<SubsonicDashboardModalProps> = ({
 
         {/* Footer */}
         <div className="pt-2 border-t border-white/5 text-center text-[11px] text-zinc-500">
-          基于 Songloft 插件与 Subsonic 开放规范构建
+          基于 Subsonic / OpenSubsonic 开放规范构建
         </div>
 
       </div>

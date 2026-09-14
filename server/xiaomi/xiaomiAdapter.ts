@@ -32,12 +32,12 @@ export interface CastResult {
 }
 
 /**
- * Songloft (songloft-plugin-miot) High-Compatibility Model Set
+ * XiaoWei CP High-Compatibility Model Set
  * Models that MUST use player_play_music (XiaoWei CP stream payload)
  * rather than standard player_play_url:
  * e.g. OH2P (小爱音箱Pro), L16A (小爱音箱Sound), LX06 (小爱音箱), L05C (小爱Play/闹钟)
  */
-export const SONG_LOFT_PLAY_MUSIC_HARDWARE: Record<string, boolean> = {
+export const XIAOWEI_PLAY_MUSIC_HARDWARE: Record<string, boolean> = {
   'X08C': true,
   'X08E': true,
   'X8F': true,
@@ -74,8 +74,8 @@ export function resolveDeviceHardware(device: any): string {
 export function isNeedUsePlayMusicApi(hardware?: string, model?: string): boolean {
   const hw = (hardware || '').toUpperCase().trim();
   const mdl = (model || '').toUpperCase().trim();
-  if (hw && SONG_LOFT_PLAY_MUSIC_HARDWARE[hw]) return true;
-  for (const key of Object.keys(SONG_LOFT_PLAY_MUSIC_HARDWARE)) {
+  if (hw && XIAOWEI_PLAY_MUSIC_HARDWARE[hw]) return true;
+  for (const key of Object.keys(XIAOWEI_PLAY_MUSIC_HARDWARE)) {
     if (mdl.endsWith(`.${key.toLowerCase()}`) || mdl.includes(key) || hw.includes(key)) {
       return true;
     }
@@ -86,7 +86,7 @@ export function isNeedUsePlayMusicApi(hardware?: string, model?: string): boolea
 export const DEFAULT_MUSIC_AUDIO_ID = '1732418460076477549';
 export const MUSIC_CP_ID = '355454500';
 
-export function buildSongloftMusicMessage(audioUrl: string, options?: { audioId?: string; keepLight?: boolean }) {
+export function buildXiaoWeiMusicMessage(audioUrl: string, options?: { audioId?: string; keepLight?: boolean }) {
   const audioId = options?.audioId || DEFAULT_MUSIC_AUDIO_ID;
   const music = {
     payload: {
@@ -121,9 +121,9 @@ export function buildSongloftMusicMessage(audioUrl: string, options?: { audioId?
 
 /**
  * XiaomiAdapter - Unified multi-protocol speaker control layer
- * Directly follows XiaoMusic & Songloft high-compatibility dispatch architecture:
+ * Directly follows XiaoMusic high-compatibility dispatch architecture:
  *
- * 1. Mina Cloud UBUS / WebSocket (Songloft player_play_music CP / player_play_url)
+ * 1. Mina Cloud UBUS / WebSocket (XiaoWei CP player_play_music / player_play_url)
  * 2. MIoT Cloud Action RPC (api.io.mi.com siid=3, aiid=1 / siid=7, aiid=3)
  * 3. Local miIO UDP 54321 (play_specify_url / player_play_url)
  * 4. DLNA UPnP AVTransport (Local LAN streaming fallback)
@@ -296,7 +296,7 @@ export class XiaomiAdapter {
     }
 
     // =========================================================================
-    // 2. TIER 2: Songloft-Optimized Mina Cloud UBUS (micoapi mediaplayer)
+    // 2. TIER 2: XiaoWei CP / Mina Cloud UBUS (micoapi mediaplayer)
     // Supports both player_play_music (XiaoWei CP stream for OH2P/L16A/LX06/etc.)
     // and player_play_url (standard stream for touchscreen & other models)
     // =========================================================================
@@ -304,36 +304,36 @@ export class XiaomiAdapter {
       try {
         const resolvedHw = resolveDeviceHardware(targetDevice);
         const needsPlayMusic = isNeedUsePlayMusicApi(resolvedHw, targetDevice.model);
-        console.log(`[XiaomiAdapter] [Tier 2 Songloft] 尝试 Mina Cloud UBUS 下发. 型号: "${targetDevice.model || ''}", 识别硬件: "${resolvedHw}", 优先模式: ${needsPlayMusic ? 'player_play_music (Songloft XiaoWei CP 流媒体模式)' : 'player_play_url'}...`);
+        console.log(`[XiaomiAdapter] [Tier 2 XiaoWei CP] 尝试 Mina Cloud UBUS 下发. 型号: "${targetDevice.model || ''}", 识别硬件: "${resolvedHw}", 优先模式: ${needsPlayMusic ? 'player_play_music (XiaoWei CP 流媒体模式)' : 'player_play_url'}...`);
 
         if (needsPlayMusic) {
-          // Songloft Method 1: player_play_music with XiaoWei CP structure (Required for OH2P, L16A, LX06, L05C, etc.)
-          const musicMsg = buildSongloftMusicMessage(streamUrl, { keepLight: true });
+          // XiaoWei CP Method 1: player_play_music with XiaoWei CP structure (Required for OH2P, L16A, LX06, L05C, etc.)
+          const musicMsg = buildXiaoWeiMusicMessage(streamUrl, { keepLight: true });
           let ubusRes = await callMinaCloudApiFn(
             'mediaplayer',
             'player_play_music',
             musicMsg,
             targetDevice.did
           );
-          console.log(`[XiaomiAdapter] [Tier 2 Songloft player_play_music] Result:`, JSON.stringify(ubusRes));
+          console.log(`[XiaomiAdapter] [Tier 2 XiaoWei player_play_music] Result:`, JSON.stringify(ubusRes));
 
           if (ubusRes?.success) {
             steps.push({
               timestamp: nowStr(),
-              step: 'MINA_UBUS_PLAY_MUSIC_SONGLOFT',
+              step: 'MINA_UBUS_PLAY_MUSIC_XIAOWEI',
               status: 'OK',
               statusCode: 200,
-              message: `Songloft 协议 player_play_music(XiaoWei CP 流媒体模式) 下发成功`
+              message: `XiaoWei CP 协议 player_play_music(流媒体模式) 下发成功`
             });
 
             // Async background stream verification (non-blocking)
-            verifyStreamConsumed('Tier 2 Songloft player_play_music').catch(() => {});
+            verifyStreamConsumed('Tier 2 XiaoWei player_play_music').catch(() => {});
 
             this.deviceManager.updatePlaybackState(targetDevice.did, true, songTitle);
             return {
               success: true,
-              message: `已通过小米云端 (Songloft player_play_music 协议) 成功下发播放到【${targetDevice.name}】`,
-              protocol: 'Songloft Mina Cloud UBUS (XiaoWei CP)',
+              message: `已通过小米云端 (XiaoWei player_play_music 协议) 成功下发播放到【${targetDevice.name}】`,
+              protocol: 'Mina Cloud UBUS (XiaoWei CP)',
               streamUrl,
               details: ubusRes,
               steps
@@ -347,7 +347,7 @@ export class XiaomiAdapter {
             { url: streamUrl, type: 1, media: 'app_ios' },
             targetDevice.did
           );
-          console.log(`[XiaomiAdapter] [Tier 2 Songloft fallback player_play_url type=1] Result:`, JSON.stringify(ubusRes));
+          console.log(`[XiaomiAdapter] [Tier 2 fallback player_play_url type=1] Result:`, JSON.stringify(ubusRes));
 
           if (ubusRes?.success) {
             steps.push({
@@ -461,23 +461,23 @@ export class XiaomiAdapter {
             };
           }
 
-          // Sub-fallback 2: Songloft player_play_music
-          const musicMsg = buildSongloftMusicMessage(streamUrl, { keepLight: true });
+          // Sub-fallback 2: XiaoWei CP player_play_music
+          const musicMsg = buildXiaoWeiMusicMessage(streamUrl, { keepLight: true });
           ubusRes = await callMinaCloudApiFn(
             'mediaplayer',
             'player_play_music',
             musicMsg,
             targetDevice.did
           );
-          console.log(`[XiaomiAdapter] [Tier 2 Songloft fallback player_play_music] Result:`, JSON.stringify(ubusRes));
+          console.log(`[XiaomiAdapter] [Tier 2 XiaoWei fallback player_play_music] Result:`, JSON.stringify(ubusRes));
 
           if (ubusRes?.success) {
             steps.push({
               timestamp: nowStr(),
-              step: 'MINA_UBUS_PLAY_MUSIC_SONGLOFT',
+              step: 'MINA_UBUS_PLAY_MUSIC_XIAOWEI',
               status: 'OK',
               statusCode: 200,
-              message: 'Songloft 协议 player_play_music(XiaoWei CP) 成功'
+              message: 'XiaoWei CP 协议 player_play_music 成功'
             });
 
             verifyStreamConsumed('Tier 2 Mina player_play_music').catch(() => {});
@@ -485,7 +485,7 @@ export class XiaomiAdapter {
             this.deviceManager.updatePlaybackState(targetDevice.did, true, songTitle);
             return {
               success: true,
-              message: `已通过小米云端 (Songloft player_play_music) 成功下发播放到【${targetDevice.name}】`,
+              message: `已通过小米云端 (XiaoWei player_play_music) 成功下发播放到【${targetDevice.name}】`,
               protocol: 'MiService Mina Cloud UBUS (player_play_music)',
               streamUrl,
               details: ubusRes,

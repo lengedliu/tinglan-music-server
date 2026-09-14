@@ -133,7 +133,7 @@ export const LyricsView: React.FC<LyricsViewProps> = ({
               </span>
             </h2>
             <p className="text-xs text-zinc-400">
-              支持 Songloft LRC 时间轴滚动，点击歌词即可精准跳转进度
+              支持标准 LRC 时间轴同步滚动，点击歌词即可精准跳转进度
             </p>
           </div>
         </div>

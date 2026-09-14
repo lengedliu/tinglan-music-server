@@ -211,7 +211,7 @@ export const AudioEqualizerModal: React.FC<AudioEqualizerModalProps> = ({
               <h3 className="text-lg font-bold text-white flex items-center gap-2">
                 10段专业均衡器 (EQ)
                 <span className="text-xs px-2 py-0.5 rounded-full bg-[#FF6700]/20 text-[#FF6700] border border-[#FF6700]/30 font-mono">
-                  Songloft Engine
+                  DSP Audio Engine
                 </span>
               </h3>
               <p className="text-xs text-zinc-400">
