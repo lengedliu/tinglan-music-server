@@ -1316,7 +1316,11 @@ export default function App() {
               activeDevice={activeDevice}
               isCasting={isCasting}
               onToggleCast={handleToggleCast}
-              onSongUpdated={(updated) => setSongs(prev => prev.map(s => s.id === updated.id ? updated : s))}
+              onSongUpdated={(updated) => {
+                setSongs(prev => prev.map(s => s.id === updated.id ? updated : s));
+                setPlayQueue(prev => prev.map(s => s.id === updated.id ? updated : s));
+                setCurrentSong(prev => prev?.id === updated.id ? updated : prev);
+              }}
             />
           )}
 

@@ -27,7 +27,7 @@ export function cleanSearchKeyword(title: string, artist?: string): { cleanTitle
   let cleanArtist = String(artist || '')
     .replace(/\.[a-zA-Z0-9]{2,5}$/, '')
     .replace(/未知歌手|群星|Various Artists/gi, '')
-    .split(/[,/&、;]|feat\.|ft\./i)[0] // Pick primary artist
+    .split(/[,/&、;_|]|feat\.|ft\./i)[0] // Pick primary artist
     .trim();
 
   // If artist is part of title (e.g. "陈百强 - 偏偏喜欢你")
@@ -50,7 +50,22 @@ export function cleanSearchKeyword(title: string, artist?: string): { cleanTitle
  */
 export function hasValidLrcTimestamps(lrcText: string): boolean {
   if (!lrcText || typeof lrcText !== 'string') return false;
-  return /\[\d{2}:\d{2}(\.\d{2,3})?\]/.test(lrcText);
+  return /\[\d{1,2}:\d{2}(?:\.\d{1,3})?\]/.test(lrcText);
+}
+
+/**
+ * Check if the lyric is just a default placeholder
+ */
+export function isPlaceholderLyrics(lrcText?: string): boolean {
+  if (!lrcText || typeof lrcText !== 'string') return true;
+  if (lrcText.trim().length < 20) return true;
+  return (
+    lrcText.includes('听蓝高保真音乐库') ||
+    lrcText.includes('来自 Navidrome 远程曲库') ||
+    lrcText.includes('小爱音箱高保真串流中') ||
+    lrcText.includes('享受无损音质') ||
+    lrcText.includes('暂未匹配到外网歌词')
+  );
 }
 
 /**
@@ -274,9 +289,9 @@ export class LyricsService {
     }
 
     // 2. Check if existing lyrics is already valid synced LRC
-    if (!options.forceOnline && options.existingLyrics && options.existingLyrics.trim().length > 30) {
+    if (!options.forceOnline && options.existingLyrics && !isPlaceholderLyrics(options.existingLyrics)) {
       const isSynced = hasValidLrcTimestamps(options.existingLyrics);
-      if (isSynced && !options.existingLyrics.includes('听蓝高保真音乐库')) {
+      if (isSynced) {
         const res: LyricsSearchResult = {
           success: true,
           lyrics: options.existingLyrics.trim(),

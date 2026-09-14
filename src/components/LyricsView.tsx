@@ -48,11 +48,29 @@ export const LyricsView: React.FC<LyricsViewProps> = ({
   const [lyricOffset, setLyricOffset] = useState<number>(0);
   const [isSearchingLyrics, setIsSearchingLyrics] = useState<boolean>(false);
   const [lyricsProviderInfo, setLyricsProviderInfo] = useState<string | null>(null);
+  const [localLyrics, setLocalLyrics] = useState<string>(currentSong?.lyrics || '');
+
+  // Synchronize when currentSong changes
+  useEffect(() => {
+    setLocalLyrics(currentSong?.lyrics || '');
+    setLyricOffset(0);
+    // If the song has placeholder lyrics, auto search online in background
+    if (
+      currentSong && 
+      (!currentSong.lyrics || 
+       currentSong.lyrics.includes('来自 Navidrome 远程曲库') || 
+       currentSong.lyrics.includes('听蓝高保真音乐库') || 
+       currentSong.lyrics.includes('小爱音箱高保真串流中'))
+    ) {
+      handleFetchOnlineLyrics();
+    }
+  }, [currentSong?.id]);
 
   const parsedLyrics = useMemo(() => {
-    if (!currentSong?.lyrics) return [];
-    return parseLrc(currentSong.lyrics);
-  }, [currentSong?.lyrics]);
+    const textToParse = localLyrics || currentSong?.lyrics || '';
+    if (!textToParse) return [];
+    return parseLrc(textToParse, duration || currentSong?.duration || 200);
+  }, [localLyrics, currentSong?.lyrics, duration, currentSong?.duration]);
 
   // Adjusted time considering offset
   const effectiveTime = currentTime + lyricOffset;
@@ -99,10 +117,11 @@ export const LyricsView: React.FC<LyricsViewProps> = ({
       });
       const data = await res.json();
       if (data.success && data.lyrics) {
-        const updated = { ...currentSong, lyrics: data.lyrics };
+        setLocalLyrics(data.lyrics);
         if (data.providerName) {
           setLyricsProviderInfo(data.providerName);
         }
+        const updated = { ...currentSong, lyrics: data.lyrics };
         if (onSongUpdated) onSongUpdated(updated);
       }
     } catch (e) {
