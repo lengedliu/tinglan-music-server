@@ -4370,11 +4370,10 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
   const resolvedServerHost = baseHost;
 
   // Smart Stream URL selection: always point to the actual audio endpoint for the requested song
-  let resolvedStreamUrl = '';
-  if (streamUrl && streamUrl.startsWith('http') && !streamUrl.includes('localhost') && !streamUrl.includes('127.0.0.1')) {
+  let resolvedStreamUrl = `${baseHost}/api/stream/${encodeURIComponent(cleanSongId)}.mp3`;
+  const isNavidromeOrRawStream = streamUrl && (streamUrl.includes('/rest/stream.view') || streamUrl.includes(':4533') || streamUrl.includes('subsonic'));
+  if (streamUrl && streamUrl.startsWith('http') && !streamUrl.includes('localhost') && !streamUrl.includes('127.0.0.1') && !isNavidromeOrRawStream) {
     resolvedStreamUrl = streamUrl;
-  } else {
-    resolvedStreamUrl = `${baseHost}/api/stream/${encodeURIComponent(cleanSongId)}.mp3`;
   }
 
   console.log(`[Cast] Target: "${targetDevice.name}" (${targetDevice.did}), songId: ${cleanSongId}, mode: ${selectedCastMode}, streamUrl: ${resolvedStreamUrl}`);
@@ -4540,13 +4539,24 @@ async function dispatchCastSongDirectly(song: any, targetDid: string): Promise<{
     ? miotConfig.serverHost.replace(/\/$/, '')
     : (primaryLanIp ? `http://${primaryLanIp}:${PORT}` : `http://localhost:${PORT}`);
 
+  // Loopback and speaker-self-IP guards
+  const isLoopback = baseHost.includes('localhost') || baseHost.includes('127.0.0.1');
+  if (isLoopback && primaryLanIp) {
+    baseHost = `http://${primaryLanIp}:${PORT}`;
+  }
+  if (targetDevice.ip && baseHost.includes(targetDevice.ip) && primaryLanIp && primaryLanIp !== targetDevice.ip) {
+    baseHost = `http://${primaryLanIp}:${PORT}`;
+  }
+
   const rawId = (song.id || 'song-1').toString();
   const cleanSongId = rawId.replace(/\.(mp3|wav|flac|m4a|aac|ogg|opus|ape)$/i, '');
   
-  let resolvedStreamUrl = `${baseHost}/api/stream/${encodeURIComponent(cleanSongId)}.mp3`;
-  if (song.url && song.url.startsWith('http') && !song.url.includes('localhost') && !song.url.includes('127.0.0.1')) {
-    resolvedStreamUrl = song.url;
-  }
+  // ALWAYS stream through Tinglan proxy endpoint (/api/stream/:id.mp3)
+  // This guarantees:
+  // 1. XiaoAi firmware receives a standardized .mp3 URL (not raw Subsonic .view queries)
+  // 2. Tinglan handles HTTP 206 Range headers & proxies remote Navidrome/local files
+  // 3. QueueEngine stream consumption tracking and auto-advance timers function accurately
+  const resolvedStreamUrl = `${baseHost}/api/stream/${encodeURIComponent(cleanSongId)}.mp3`;
 
   const selectedCastMode = (miotConfig.castMode || 'auto') as any;
 
@@ -5396,12 +5406,32 @@ const streamAudioHandler = async (req: Request, res: Response) => {
   }
 
   // Find song in library metadata if available
-  const foundSong = storedSongs.find(s => 
+  let foundSong = storedSongs.find(s => 
     s.id === songId || 
     s.id === decodedSongId || 
     s.id === cleanSongId || 
     s.id === decodedCleanSongId
   );
+
+  // Fallback to queueEngine active songs
+  if (!foundSong) {
+    const qStatus = queueEngine.getStatus();
+    if (qStatus.currentSong && (
+      qStatus.currentSong.id === songId || 
+      qStatus.currentSong.id === decodedSongId || 
+      qStatus.currentSong.id === cleanSongId || 
+      qStatus.currentSong.id === decodedCleanSongId
+    )) {
+      foundSong = qStatus.currentSong;
+    } else if (Array.isArray(qStatus.queue)) {
+      foundSong = qStatus.queue.find((s: any) => 
+        s.id === songId || 
+        s.id === decodedSongId || 
+        s.id === cleanSongId || 
+        s.id === decodedCleanSongId
+      );
+    }
+  }
 
   let localFilePath: string | null = null;
   let matchedExt = '.wav';

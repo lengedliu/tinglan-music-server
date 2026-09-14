@@ -211,6 +211,10 @@ export class XiaomiAdapter {
      */
     const verifyStreamConsumed = async (tierName: string): Promise<boolean> => {
       if (!options.waitForStreamConsumption) return true;
+      const isLocalOrProxied = streamUrl.includes('/api/stream') || streamUrl.includes('/stream/') || streamUrl.includes('/music/');
+      if (!isLocalOrProxied) {
+        return true;
+      }
       console.log(`[XiaomiAdapter] [${tierName}] 控制指令已下发，正在进行音频流消费检测 (等待服务器收到音箱 GET /api/stream/ 请求)...`);
       const verifyRes = await options.waitForStreamConsumption(targetDevice.ip, cleanSongId, 3500);
       if (verifyRes.consumed) {
