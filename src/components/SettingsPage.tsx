@@ -39,7 +39,11 @@ import {
   Palette,
   Sparkles,
   Sun,
-  Moon
+  Moon,
+  Heart,
+  Coffee,
+  ExternalLink,
+  QrCode
 } from 'lucide-react';
 import { SecurityStatus, User, DbEngine, DbStatusInfo } from '../types';
 import { apiFetch } from '../utils/api';
@@ -51,16 +55,18 @@ interface SettingsPageProps {
   onOpenAuthModal: () => void;
   onShowToast: (title: string, message: string, type?: 'success' | 'error' | 'info') => void;
   onSecurityUpdated?: () => void;
+  onNavigateToSponsor?: () => void;
 }
 
 export const SettingsPage: React.FC<SettingsPageProps> = ({
   currentUser,
   onOpenAuthModal,
   onShowToast,
-  onSecurityUpdated
+  onSecurityUpdated,
+  onNavigateToSponsor
 }) => {
   const { theme, setTheme, themeConfig } = useTheme();
-  const [subTab, setSubTab] = useState<'all' | 'theme' | 'users' | 'security' | 'database' | 'system'>('all');
+  const [subTab, setSubTab] = useState<'all' | 'theme' | 'users' | 'security' | 'database' | 'system' | 'sponsor'>('all');
 
   // --- Security State ---
   const [secLoading, setSecLoading] = useState(false);
@@ -798,6 +804,19 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         >
           <Server className="w-3.5 h-3.5" />
           <span>网络与环境信息</span>
+        </button>
+
+        <button
+          onClick={() => setSubTab('sponsor')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap cursor-pointer ${
+            subTab === 'sponsor'
+              ? 'bg-rose-500/15 text-rose-400 border border-rose-500/40'
+              : 'text-rose-400/80 hover:text-rose-300 hover:bg-rose-500/10'
+          }`}
+        >
+          <Heart className="w-3.5 h-3.5 text-rose-400" />
+          <span>赞助与支持</span>
+          <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" />
         </button>
       </div>
 
@@ -1821,6 +1840,86 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 <div className="flex justify-between">
                   <span className="text-zinc-500">当前客户端网络</span>
                   <span className="font-mono text-[#FF6700]">{secStatus?.isLan ? '内网局域网 (LAN)' : '外部网络 (WAN)'}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= SECTION: SPONSOR & DONATION ================= */}
+      {(subTab === 'all' || subTab === 'sponsor') && (
+        <div className="space-y-6 pt-2">
+          <div className="p-6 sm:p-8 rounded-3xl bg-zinc-900/60 border border-rose-500/20 space-y-6 relative overflow-hidden shadow-lg backdrop-blur-md">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-2xl bg-rose-500/15 border border-rose-500/30 text-rose-400">
+                  <Heart className="w-5 h-5 fill-rose-500/30" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-white tracking-tight flex items-center gap-2">
+                    赞助与支持开源项目
+                    <span className="text-xs px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 font-mono border border-rose-500/30">
+                      Sponsor Tinglan
+                    </span>
+                  </h2>
+                  <p className="text-xs text-zinc-400 mt-0.5">
+                    Tinglan 是一款 100% 免费开源的私有音乐中枢，您的支持是作者持续迭代与真机适配的最大动力！
+                  </p>
+                </div>
+              </div>
+
+              {onNavigateToSponsor && (
+                <button
+                  onClick={onNavigateToSponsor}
+                  className="px-4 py-2 rounded-xl bg-rose-500 hover:bg-rose-600 text-white text-xs font-semibold shadow-md transition flex items-center gap-1.5 cursor-pointer self-start sm:self-auto"
+                >
+                  <Heart className="w-3.5 h-3.5 fill-white" />
+                  <span>打开完整赞助页</span>
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+              <div className="p-5 rounded-2xl bg-zinc-950/70 border border-white/5 space-y-4 flex flex-col justify-between">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-rose-400">
+                    <Coffee className="w-4 h-4" />
+                    <span className="text-xs font-bold uppercase tracking-wider">请作者喝一杯热咖啡</span>
+                  </div>
+                  <p className="text-xs text-zinc-300 leading-relaxed">
+                    支持作者在业余时间持续逆向适配最新小爱音箱固件、优化多协议投播调度算法与维护 Subsonic 兼容生态。
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-between pt-2 border-t border-white/5 text-xs">
+                  <span className="text-zinc-400">已有 30+ 位音乐极客爱心支持</span>
+                  <span className="text-amber-400 font-mono font-bold">¥ 9.9 起投喂</span>
+                </div>
+              </div>
+
+              <div className="p-5 rounded-2xl bg-zinc-950/70 border border-white/5 space-y-4 flex flex-col justify-between">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-emerald-400">
+                    <QrCode className="w-4 h-4" />
+                    <span className="text-xs font-bold uppercase tracking-wider">扫码即刻支持</span>
+                  </div>
+                  <p className="text-xs text-zinc-300 leading-relaxed">
+                    提供微信赞赏码、支付宝收款码、GitHub Sponsors 及加密货币地址等多种投喂渠道。
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-between pt-2 border-t border-white/5 text-xs">
+                  <span className="text-zinc-400">扫码转账附言可登致谢榜</span>
+                  {onNavigateToSponsor ? (
+                    <button
+                      onClick={onNavigateToSponsor}
+                      className="text-rose-400 hover:text-rose-300 font-semibold flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>前往扫码</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </button>
+                  ) : null}
                 </div>
               </div>
             </div>

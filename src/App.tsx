@@ -12,6 +12,7 @@ import { SubsonicServerView } from './components/SubsonicServerView';
 import { NavidromeModal } from './components/NavidromeModal';
 import { AuthModal } from './components/AuthModal';
 import { SettingsPage } from './components/SettingsPage';
+import { SponsorPage } from './components/SponsorPage';
 import { ThemeSelectorModal } from './components/ThemeSelectorModal';
 import { useTheme } from './context/ThemeContext';
 import { Song, Playlist, XiaomiDevice, MiotConfig, CastLog, User, SecurityStatus, DeviceCommandState } from './types';
@@ -34,11 +35,11 @@ export default function App() {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [securityStatus, setSecurityStatus] = useState<SecurityStatus | null>(null);
 
-  // Navigation: 音乐曲库, 歌词播放, 智能音箱, Subsonic API, 设置
-  const [activeTab, setActiveTab] = useState<'library' | 'lyrics' | 'xiaomi' | 'subsonic' | 'settings'>(() => {
+  // Navigation: 音乐曲库, 歌词播放, 智能音箱, Subsonic API, 设置, 赞助
+  const [activeTab, setActiveTab] = useState<'library' | 'lyrics' | 'xiaomi' | 'subsonic' | 'settings' | 'sponsor'>(() => {
     try {
       const saved = localStorage.getItem('tinglan_active_tab');
-      return (saved === 'library' || saved === 'lyrics' || saved === 'xiaomi' || saved === 'subsonic' || saved === 'settings') ? saved : 'library';
+      return (saved === 'library' || saved === 'lyrics' || saved === 'xiaomi' || saved === 'subsonic' || saved === 'settings' || saved === 'sponsor') ? saved : 'library';
     } catch {
       return 'library';
     }
@@ -1369,6 +1370,13 @@ export default function App() {
               onOpenAuthModal={() => setIsAuthModalOpen(true)}
               onShowToast={(title, desc, type) => showToast(title, desc, type)}
               onSecurityUpdated={checkSecurityStatus}
+              onNavigateToSponsor={() => setActiveTab('sponsor')}
+            />
+          )}
+
+          {activeTab === 'sponsor' && (
+            <SponsorPage
+              onShowToast={(title, desc, type) => showToast(title, desc, type)}
             />
           )}
         </main>

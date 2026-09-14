@@ -9,15 +9,16 @@ import {
   Cast,
   Palette,
   Sun,
-  Moon
+  Moon,
+  Heart
 } from 'lucide-react';
 import { XiaomiDevice, MiotConfig, User } from '../types';
 import { UserHeader } from './UserHeader';
 import { useTheme } from '../context/ThemeContext';
 
 interface NavbarProps {
-  activeTab: 'library' | 'lyrics' | 'xiaomi' | 'subsonic' | 'settings';
-  setActiveTab: (tab: 'library' | 'lyrics' | 'xiaomi' | 'subsonic' | 'settings') => void;
+  activeTab: 'library' | 'lyrics' | 'xiaomi' | 'subsonic' | 'settings' | 'sponsor';
+  setActiveTab: (tab: 'library' | 'lyrics' | 'xiaomi' | 'subsonic' | 'settings' | 'sponsor') => void;
   activeDevice: XiaomiDevice | undefined;
   miotConfig: MiotConfig;
   isCasting: boolean;
@@ -241,6 +242,22 @@ export const Navbar: React.FC<NavbarProps> = ({
               {securityAuthEnabled && (
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]" title="已开启登录防护" />
               )}
+            </button>
+
+            {/* 赞助支持 */}
+            <button
+              id="nav-tab-sponsor"
+              onClick={() => setActiveTab('sponsor')}
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-sm font-medium transition-all whitespace-nowrap ${
+                activeTab === 'sponsor'
+                  ? 'bg-rose-500/15 text-rose-400 border border-rose-500/40 shadow-sm'
+                  : 'text-rose-400/80 hover:text-rose-300 hover:bg-rose-500/10 border border-transparent'
+              }`}
+              title="请作者喝杯咖啡，支持 Tinglan 持续迭代与硬件适配"
+            >
+              <Heart className={`w-4 h-4 ${activeTab === 'sponsor' ? 'fill-rose-500/40 text-rose-400' : 'text-rose-400'}`} />
+              <span className="font-semibold">赞助支持</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse shadow-[0_0_6px_rgba(244,63,94,0.9)]" />
             </button>
           </nav>
         </div>
