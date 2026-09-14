@@ -10,3 +10,4 @@ export * from './miotRpc.js';
 export * from './ttsEngine.js';
 export * from './xiaoaiResolver.js';
 export * from './xiaomiPassport.js';
+export * from './lyricsService.js';

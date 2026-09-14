@@ -33,7 +33,8 @@ import {
   FfmpegTranscoder,
   StreamServer,
   DeviceManager,
-  XiaomiAdapter
+  XiaomiAdapter,
+  lyricsService
 } from './server/index.js';
 
 const dynamicRequire = typeof require !== 'undefined'
@@ -6482,8 +6483,8 @@ const subsonicPlaylists = (req: Request, res: Response) => {
   subsonicResponse(req, res, "playlists", { playlist: list });
 };
 
-// Subsonic Get Lyrics
-const subsonicGetLyrics = (req: Request, res: Response) => {
+// Subsonic Get Lyrics (Open-Source Multi-source Support)
+const subsonicGetLyrics = async (req: Request, res: Response) => {
   if (!verifySubsonicAuth(req, res)) return;
   const { artist, title } = req.query;
   const song = storedSongs.find(s => 
@@ -6491,10 +6492,32 @@ const subsonicGetLyrics = (req: Request, res: Response) => {
     (title && s.title.toLowerCase().includes(String(title).toLowerCase()))
   );
 
+  let lyricsVal = song?.lyrics || '';
+
+  if (!lyricsVal || lyricsVal.trim().length < 20 || lyricsVal.includes('听蓝高保真音乐库')) {
+    try {
+      const matchRes = await lyricsService.searchLyricsAsync({
+        title: String(title || song?.title || ''),
+        artist: String(artist || song?.artist || ''),
+        duration: song?.duration,
+        existingLyrics: song?.lyrics
+      });
+      if (matchRes.lyrics) {
+        lyricsVal = matchRes.lyrics;
+        if (song && matchRes.source !== 'generated') {
+          song.lyrics = matchRes.lyrics;
+          saveJson(SONGS_FILE, storedSongs);
+        }
+      }
+    } catch (e: any) {
+      console.warn('[Subsonic] getLyrics search failed:', e.message);
+    }
+  }
+
   subsonicResponse(req, res, "lyrics", {
     artist: song?.artist || String(artist || "未知歌手"),
     title: song?.title || String(title || "未知曲目"),
-    value: song?.lyrics || "[00:00.00]听蓝音乐 - 高保真音频播放中\n[00:05.00]享受无损音质"
+    value: lyricsVal || "[00:00.00]听蓝音乐 - 高保真音频播放中\n[00:05.00]享受无损音质"
   });
 };
 
@@ -6536,46 +6559,42 @@ app.get('/api/subsonic/info', (req: Request, res: Response) => {
 });
 
 // ---------------- ONLINE LYRICS SEARCH & AUTO-MATCH API ----------------
-app.post('/api/lyrics/search', (req: Request, res: Response) => {
-  const { title, artist, songId } = req.body;
-  
-  if (songId) {
-    const song = storedSongs.find(s => s.id === songId);
-    if (song && song.lyrics && song.lyrics.trim().length > 10) {
-      return res.json({ success: true, lyrics: song.lyrics, source: 'library' });
-    }
-  }
+app.post('/api/lyrics/search', async (req: Request, res: Response) => {
+  try {
+    const { title, artist, songId, duration, forceOnline } = req.body;
+    let song = songId ? storedSongs.find(s => s.id === songId) : null;
 
-  const cleanTitle = String(title || '').trim();
-  const cleanArtist = String(artist || '').trim();
+    const cleanTitle = String(title || song?.title || '').trim();
+    const cleanArtist = String(artist || song?.artist || '').trim();
+    const songDuration = duration || song?.duration;
 
-  // Generate an elegant, synchronized LRC lyric structure
-  const sampleLyrics = `[00:00.00] ${cleanTitle || '音乐曲目'} - ${cleanArtist || '听蓝音乐'}
-[00:03.00] 词/曲：听蓝高保真音乐库
-[00:08.00] 微风拂过宁静的夜 旋律在空气中漫延
-[00:15.50] 音符跳跃在指尖 带来无与伦比的惬意
-[00:22.00] 伴随小米智能音箱 聆听无损震撼重低音
-[00:29.80] 让音乐充满房间的每一个角落
-[00:36.20] 倾听内心深处的共鸣 沉浸在纯粹的听觉盛宴
-[00:43.00] 听蓝音乐 · 享受属于你的专属时刻
-[00:52.00] (音乐间奏 - 沉浸播放中)
-[01:10.00] 无论身在何方 音乐始终相伴
-[01:18.50] 听蓝音乐服务已开启 高品质流媒体同步中`;
+    const searchResult = await lyricsService.searchLyricsAsync({
+      title: cleanTitle,
+      artist: cleanArtist,
+      duration: songDuration,
+      forceOnline: Boolean(forceOnline),
+      existingLyrics: song?.lyrics
+    });
 
-  // Update song lyrics if songId provided
-  if (songId) {
-    const song = storedSongs.find(s => s.id === songId);
-    if (song) {
-      song.lyrics = sampleLyrics;
+    // If a valid lyric was retrieved and we have a songId, update the stored song
+    if (song && searchResult.lyrics && searchResult.source !== 'generated') {
+      song.lyrics = searchResult.lyrics;
       saveJson(SONGS_FILE, storedSongs);
     }
-  }
 
-  res.json({
-    success: true,
-    lyrics: sampleLyrics,
-    source: 'generated'
-  });
+    return res.json({
+      success: true,
+      lyrics: searchResult.lyrics,
+      source: searchResult.source,
+      providerName: searchResult.providerName,
+      isSynced: searchResult.isSynced,
+      title: searchResult.title || cleanTitle,
+      artist: searchResult.artist || cleanArtist
+    });
+  } catch (err: any) {
+    console.error('[API /api/lyrics/search] Error:', err);
+    return res.status(500).json({ success: false, message: '检索歌词时发生错误', error: err.message });
+  }
 });
 
 // ---------------- NAVIDROME / SUBSONIC REMOTE SERVER INTEGRATION ----------------

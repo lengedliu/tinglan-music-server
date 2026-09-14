@@ -47,6 +47,7 @@ export const LyricsView: React.FC<LyricsViewProps> = ({
 
   const [lyricOffset, setLyricOffset] = useState<number>(0);
   const [isSearchingLyrics, setIsSearchingLyrics] = useState<boolean>(false);
+  const [lyricsProviderInfo, setLyricsProviderInfo] = useState<string | null>(null);
 
   const parsedLyrics = useMemo(() => {
     if (!currentSong?.lyrics) return [];
@@ -80,7 +81,7 @@ export const LyricsView: React.FC<LyricsViewProps> = ({
     }
   }, [activeIndex]);
 
-  // Fetch / Auto Match Lyrics
+  // Fetch / Auto Match Lyrics via Open Source Providers
   const handleFetchOnlineLyrics = async () => {
     if (!currentSong) return;
     setIsSearchingLyrics(true);
@@ -91,12 +92,17 @@ export const LyricsView: React.FC<LyricsViewProps> = ({
         body: JSON.stringify({
           songId: currentSong.id,
           title: currentSong.title,
-          artist: currentSong.artist
+          artist: currentSong.artist,
+          duration: duration || currentSong.duration,
+          forceOnline: true
         })
       });
       const data = await res.json();
       if (data.success && data.lyrics) {
         const updated = { ...currentSong, lyrics: data.lyrics };
+        if (data.providerName) {
+          setLyricsProviderInfo(data.providerName);
+        }
         if (onSongUpdated) onSongUpdated(updated);
       }
     } catch (e) {
@@ -287,9 +293,16 @@ export const LyricsView: React.FC<LyricsViewProps> = ({
         <div className="lg:col-span-7 bg-zinc-900/40 backdrop-blur-md border border-white/5 rounded-3xl p-6 sm:p-8 flex flex-col h-[520px]">
           
           <div className="flex items-center justify-between pb-4 border-b border-white/5 mb-4">
-            <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
-              歌词文本 ({parsedLyrics.length} 行)
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
+                歌词文本 ({parsedLyrics.length} 行)
+              </span>
+              {lyricsProviderInfo && (
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/30 font-medium">
+                  {lyricsProviderInfo}
+                </span>
+              )}
+            </div>
             <span className="text-xs text-zinc-500">
               点击歌词即时定位
             </span>
