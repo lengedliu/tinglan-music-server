@@ -146,4 +146,13 @@ html.theme-light .bg-black\/80 {
   background-color: rgba(15, 23, 42, 0.4) !important;
 }
 
+@keyframes toastProgress {
+  from {
+    width: 100%;
+  }
+  to {
+    width: 0%;
+  }
+}
+
 

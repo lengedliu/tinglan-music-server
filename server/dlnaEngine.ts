@@ -418,6 +418,19 @@ export class DlnaEngine {
     const elapsed = Date.now() - t0;
 
     if (playRes.success || playRes.statusCode === 200) {
+      // Set DLNA PlayMode to NORMAL to prevent speaker renderer from looping a single track
+      try {
+        await sendSoapRequest(
+          endpoint.ip,
+          endpoint.port,
+          endpoint.controlUrl,
+          'urn:schemas-upnp-org:service:AVTransport:1',
+          'SetPlayMode',
+          '<InstanceID>0</InstanceID><NewPlayMode>NORMAL</NewPlayMode>',
+          1000
+        );
+      } catch {}
+
       return {
         success: true,
         port: endpoint.port,

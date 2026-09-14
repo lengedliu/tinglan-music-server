@@ -1519,7 +1519,7 @@ interface StreamEventInfo {
 }
 let recentStreamEvents: StreamEventInfo[] = [];
 
-type StreamConsumerCallback = (event: { clientIp: string; songId: string; userAgent: string; status: number; timeMs: number }) => void;
+type StreamConsumerCallback = (event: { clientIp: string; songId: string; userAgent: string; status: number; timeMs: number; isBrowser?: boolean; startByte?: number; range?: string; duration?: number }) => void;
 const streamConsumerCallbacks: Set<StreamConsumerCallback> = new Set();
 
 function registerStreamConsumerCallback(cb: StreamConsumerCallback) {
@@ -1529,12 +1529,17 @@ function registerStreamConsumerCallback(cb: StreamConsumerCallback) {
   };
 }
 
-function notifyStreamConsumed(event: { clientIp: string; songId: string; userAgent: string; status: number; timeMs: number }) {
+function notifyStreamConsumed(event: { clientIp: string; songId: string; userAgent: string; status: number; timeMs: number; isBrowser?: boolean; startByte?: number; range?: string; duration?: number }) {
   for (const cb of streamConsumerCallbacks) {
     try { cb(event); } catch {}
   }
   try {
-    queueEngine.notifyStreamConsumed(event.songId);
+    queueEngine.notifyStreamConsumed(event.songId, {
+      isBrowser: event.isBrowser,
+      startByte: event.startByte,
+      range: event.range,
+      duration: event.duration
+    });
   } catch {}
 }
 
@@ -5587,12 +5592,22 @@ const streamAudioHandler = async (req: Request, res: Response) => {
       });
       if (recentStreamEvents.length > 50) recentStreamEvents.pop();
 
+      const navRangeHdr = (req.headers.range as string) || '';
+      let navStartByte: number | undefined = undefined;
+      if (navRangeHdr) {
+        const m = navRangeHdr.match(/bytes=(\d+)-/);
+        if (m) navStartByte = parseInt(m[1], 10);
+      }
+
       notifyStreamConsumed({
         clientIp,
         songId: String(songId),
         userAgent,
         status: remoteRes.status,
-        timeMs: Date.now()
+        timeMs: Date.now(),
+        isBrowser: isBrowserClient,
+        startByte: navStartByte,
+        range: navRangeHdr
       });
 
       const streamLogEntry = {
@@ -5755,12 +5770,23 @@ const streamAudioHandler = async (req: Request, res: Response) => {
     });
     if (recentStreamEvents.length > 50) recentStreamEvents.pop();
 
+    const localRangeHdr = (req.headers.range as string) || '';
+    let localStartByte: number | undefined = undefined;
+    if (localRangeHdr) {
+      const m = localRangeHdr.match(/bytes=(\d+)-/);
+      if (m) localStartByte = parseInt(m[1], 10);
+    }
+
     notifyStreamConsumed({
       clientIp,
       songId: String(songId),
       userAgent,
       status: isPartial ? 206 : 200,
-      timeMs: Date.now()
+      timeMs: Date.now(),
+      isBrowser: isBrowserClient,
+      startByte: localStartByte,
+      range: localRangeHdr,
+      duration: foundSong?.duration
     });
     const isSpeakerIp = xiaomiDevices.some(d => d.ip && (d.ip === clientIp || clientIp.includes(d.ip)));
     const clientTag = isSpeakerIp

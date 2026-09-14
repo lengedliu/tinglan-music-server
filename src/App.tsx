@@ -90,7 +90,20 @@ export default function App() {
   const [isSubsonicModalOpen, setIsSubsonicModalOpen] = useState(false);
   const [isNavidromeModalOpen, setIsNavidromeModalOpen] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
-  const [toastMessage, setToastMessage] = useState<{ title: string; desc?: string; type: 'success' | 'info' | 'error' } | null>(null);
+  const [toastMessage, setToastMessage] = useState<{ id: number; title: string; desc?: string; type: 'success' | 'info' | 'error'; duration?: number } | null>(null);
+
+  // Auto-dismiss toast notification:
+  // Operation success (and info) cards automatically close after 3 seconds
+  useEffect(() => {
+    if (!toastMessage) return;
+
+    const delay = toastMessage.duration ?? (toastMessage.type === 'error' ? 5000 : 3000);
+    const timer = setTimeout(() => {
+      setToastMessage(null);
+    }, delay);
+
+    return () => clearTimeout(timer);
+  }, [toastMessage?.id]);
 
   // Keep command status banner and failure prompt persistent until manual dismissal
 
@@ -110,8 +123,14 @@ export default function App() {
 
   const activeDevice = devices.find(d => d.did === activeDeviceId) || devices[0];
 
-  const showToast = (title: string, desc?: string, type: 'success' | 'info' | 'error' = 'success') => {
-    setToastMessage({ title, desc, type });
+  const showToast = (title: string, desc?: string, type: 'success' | 'info' | 'error' = 'success', durationMs?: number) => {
+    setToastMessage({
+      id: Date.now() + Math.random(),
+      title,
+      desc,
+      type,
+      duration: durationMs ?? (type === 'error' ? 5000 : 3000)
+    });
   };
 
   const loadAllAppData = () => {
@@ -254,6 +273,39 @@ export default function App() {
     }
   }, [volume]);
 
+  // Active synchronization with speaker queueEngine
+  useEffect(() => {
+    if (!isCasting && !isQueueDrawerOpen) return;
+
+    let isMounted = true;
+    const interval = setInterval(() => {
+      apiFetch('/api/queue')
+        .then(res => res.json())
+        .then(resData => {
+          if (!isMounted || !resData) return;
+          const status = resData.data || resData;
+          if (status && status.isPlaying) {
+            if (status.currentSong && status.currentSong.id !== currentSong?.id) {
+              setCurrentSong(status.currentSong);
+              setDuration(status.currentSong.duration || 200);
+            }
+            if (typeof status.elapsedSeconds === 'number' && status.elapsedSeconds >= 0) {
+              setCurrentTime(status.elapsedSeconds);
+            }
+            if (status.queue && status.queue.length > 0) {
+              setPlayQueue(status.queue);
+            }
+          }
+        })
+        .catch(() => {});
+    }, 2000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [isCasting, isQueueDrawerOpen, currentSong?.id]);
+
   // Audio event handlers
   const handlePlayPause = () => {
     if (!currentSong) return;
@@ -263,13 +315,15 @@ export default function App() {
       setIsPlaying(false);
       if (isCasting && activeDevice) {
         handleControlDevice(activeDevice.did, 'pause');
+        apiFetch('/api/queue/pause', { method: 'POST' }).catch(() => {});
       }
     } else {
-      audioRef.current?.play().catch(() => {});
       setIsPlaying(true);
       if (isCasting && activeDevice && currentSong) {
-        // Explicitly re-cast the current song stream URL to guarantee the exact track plays
-        castSongToDevice(currentSong, activeDevice);
+        apiFetch('/api/queue/resume', { method: 'POST' }).catch(() => {});
+        handleControlDevice(activeDevice.did, 'play');
+      } else {
+        audioRef.current?.play().catch(() => {});
       }
     }
   };
@@ -312,9 +366,22 @@ export default function App() {
     setPlayQueue(targetSongs);
     const startSong = targetSongs[startIndex] || targetSongs[0];
 
-    if (autoCastToSpeaker || isCasting || miotConfig.autoCast) {
+    const shouldCast = autoCastToSpeaker || isCasting || miotConfig.autoCast;
+
+    if (shouldCast) {
       setIsCasting(true);
+      // Ensure continuous playlist loop unless user explicitly selected 'one'
       const queueMode = isShuffle ? 'shuffle' : repeatMode === 'one' ? 'one' : 'all';
+
+      setCurrentSong(startSong);
+      setCurrentTime(0);
+      setDuration(startSong.duration || 200);
+      setIsPlaying(true);
+
+      // Mute/pause browser audio so it does not double-play or trigger onEnded conflicts
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
 
       apiFetch('/api/queue/play-all', {
         method: 'POST',
@@ -328,12 +395,12 @@ export default function App() {
       }).then(res => res.json()).then(data => {
         if (data && data.success) {
           showToast('已启动全歌单连续投播', `已向【${activeDevice?.name || '小爱音箱'}】下发全歌单 (${targetSongs.length} 首) 智能连播`, 'success');
+        } else {
+          showToast('全歌单投播提示', data?.message || data?.error || '投播指令已发送', 'info');
         }
       }).catch(err => {
         console.warn('Play-all queue request error:', err);
       });
-
-      handlePlaySong(startSong, targetSongs);
     } else {
       handlePlaySong(startSong, targetSongs);
       showToast('开始播放列表全部', `已将 ${targetSongs.length} 首歌曲载入播放队列`, 'success');
@@ -360,11 +427,17 @@ export default function App() {
       nextIndex = (currentIndex + 1) % queue.length;
     }
 
-    if (isCasting && activeDevice) {
-      apiFetch('/api/queue/next', { method: 'POST' }).catch(() => {});
-    }
+    const nextSong = queue[nextIndex];
 
-    handlePlaySong(queue[nextIndex], queue);
+    if (isCasting && activeDevice) {
+      setCurrentSong(nextSong);
+      setCurrentTime(0);
+      setDuration(nextSong.duration || 200);
+      apiFetch('/api/queue/next', { method: 'POST' }).catch(() => {});
+      if (audioRef.current) audioRef.current.pause();
+    } else {
+      handlePlaySong(nextSong, queue);
+    }
   };
 
   const handlePrevSong = () => {
@@ -377,6 +450,9 @@ export default function App() {
       // If played for more than 3 seconds, restart current track
       if (audioRef.current) audioRef.current.currentTime = 0;
       setCurrentTime(0);
+      if (isCasting && activeDevice) {
+        handleControlDevice(activeDevice.did, 'seek', 0);
+      }
       return;
     }
 
@@ -386,11 +462,17 @@ export default function App() {
       prevIndex = (currentIndex - 1 + queue.length) % queue.length;
     }
 
-    if (isCasting && activeDevice) {
-      apiFetch('/api/queue/prev', { method: 'POST' }).catch(() => {});
-    }
+    const prevSong = queue[prevIndex];
 
-    handlePlaySong(queue[prevIndex], queue);
+    if (isCasting && activeDevice) {
+      setCurrentSong(prevSong);
+      setCurrentTime(0);
+      setDuration(prevSong.duration || 200);
+      apiFetch('/api/queue/prev', { method: 'POST' }).catch(() => {});
+      if (audioRef.current) audioRef.current.pause();
+    } else {
+      handlePlaySong(prevSong, queue);
+    }
   };
 
   const handleSeek = (time: number) => {
@@ -405,9 +487,16 @@ export default function App() {
 
   const handleCycleRepeat = () => {
     setRepeatMode(prev => {
-      if (prev === 'off') return 'all';
-      if (prev === 'all') return 'one';
-      return 'off';
+      const nextMode = prev === 'off' ? 'all' : prev === 'all' ? 'one' : 'off';
+      if (isCasting && activeDevice) {
+        const queueMode = isShuffle ? 'shuffle' : nextMode === 'one' ? 'one' : 'all';
+        apiFetch('/api/queue/mode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: queueMode })
+        }).catch(() => {});
+      }
+      return nextMode;
     });
   };
 
@@ -1193,7 +1282,12 @@ export default function App() {
               onPlaySong={handlePlaySong}
               onPlayAll={handlePlayAll}
               onCastSongToXiaomi={(song) => {
-                handlePlaySong(song);
+                setCurrentSong(song);
+                setCurrentTime(0);
+                setDuration(song.duration || 200);
+                setIsPlaying(true);
+                setIsCasting(true);
+                if (audioRef.current) audioRef.current.pause();
                 castSongToDevice(song, activeDevice);
               }}
               onCastAllToXiaomi={handleCastAllToXiaomi}
@@ -1366,8 +1460,12 @@ export default function App() {
 
       {/* Global Toast Notification - Rendered crisp outside of blurred content wrapper */}
       {toastMessage && (
-        <div className="fixed top-20 right-6 z-[120] animate-in fade-in slide-in-from-top-4 duration-200 pointer-events-auto">
-          <div className="flex items-start gap-3 p-4 rounded-2xl bg-zinc-900 border border-zinc-700 shadow-[0_8px_32px_rgba(0,0,0,0.8)] text-xs max-w-sm">
+        <div 
+          id="toast-notification-card"
+          key={toastMessage.id}
+          className="fixed top-20 right-6 z-[120] animate-in fade-in slide-in-from-top-4 duration-200 pointer-events-auto"
+        >
+          <div className="relative overflow-hidden flex items-start gap-3 p-4 rounded-2xl bg-zinc-900 border border-zinc-700 shadow-[0_8px_32px_rgba(0,0,0,0.8)] text-xs max-w-sm">
             {toastMessage.type === 'success' ? (
               <CheckCircle2 className="w-5 h-5 text-emerald-400 flex-shrink-0 mt-0.5" />
             ) : toastMessage.type === 'info' ? (
@@ -1375,19 +1473,33 @@ export default function App() {
             ) : (
               <AlertCircle className="w-5 h-5 text-rose-400 flex-shrink-0 mt-0.5" />
             )}
-            <div className="flex-1 min-w-0">
-              <h5 className="font-semibold text-zinc-100">{toastMessage.title}</h5>
+            <div className="flex-1 min-w-0 pr-1">
+              <h5 className="font-semibold text-zinc-100 leading-snug">{toastMessage.title}</h5>
               {toastMessage.desc && (
-                <p className="text-zinc-300 mt-0.5 leading-relaxed">{toastMessage.desc}</p>
+                <p className="text-zinc-300 mt-1 leading-relaxed">{toastMessage.desc}</p>
               )}
             </div>
             <button 
+              id="btn-close-toast"
               onClick={() => setToastMessage(null)}
-              className="text-zinc-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition cursor-pointer -mr-1 -mt-1"
+              className="text-zinc-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition cursor-pointer -mr-1 -mt-1 flex-shrink-0"
               title="关闭提示"
             >
               <X className="w-4 h-4" />
             </button>
+            {/* 3秒自动关闭微动效进度条 */}
+            <div 
+              className={`absolute bottom-0 left-0 h-[2.5px] rounded-full ${
+                toastMessage.type === 'success' 
+                  ? 'bg-emerald-500/80' 
+                  : toastMessage.type === 'info' 
+                    ? 'bg-[#FF6700]/80' 
+                    : 'bg-rose-500/80'
+              }`}
+              style={{
+                animation: `toastProgress ${toastMessage.duration ?? 3000}ms linear forwards`
+              }}
+            />
           </div>
         </div>
       )}
