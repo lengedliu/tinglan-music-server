@@ -236,6 +236,24 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
   const [isTestingSound, setIsTestingSound] = useState(false);
   const [soundTestResult, setSoundTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
+  // Speaker Volume State with Mouse/Touch Release (Debounced/Committed) Control
+  const [speakerVolume, setSpeakerVolume] = useState<number>(activeDevice?.status?.volume ?? 40);
+  const [isDraggingVolume, setIsDraggingVolume] = useState(false);
+
+  useEffect(() => {
+    if (!isDraggingVolume && activeDevice?.status?.volume !== undefined) {
+      setSpeakerVolume(activeDevice.status.volume);
+    }
+  }, [activeDevice?.status?.volume, activeDevice?.did, isDraggingVolume]);
+
+  const handleCommitSpeakerVolume = (val?: number) => {
+    const targetVal = typeof val === 'number' ? val : speakerVolume;
+    setIsDraggingVolume(false);
+    if (activeDevice) {
+      onControlDevice(activeDevice.did, 'volume', targetVal);
+    }
+  };
+
   const handleTestSound = async () => {
     if (!activeDevice) return;
     setIsTestingSound(true);
@@ -2715,26 +2733,94 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                 <span className="text-zinc-400 flex items-center gap-1.5">
                   <Volume2 className="w-4 h-4 text-[#FF6700]" />
                   音箱输出音量
+                  {isDraggingVolume && (
+                    <span className="text-[10px] text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded font-mono ml-1 animate-pulse">
+                      松开后下发指令
+                    </span>
+                  )}
                 </span>
-                <span className="text-white font-mono font-bold">
-                  {activeDevice?.status?.volume ?? 40}%
+                <span className="text-white font-mono font-bold text-sm">
+                  {speakerVolume}%
                 </span>
               </div>
               <input
+                id="input-speaker-volume-slider"
                 type="range"
                 min="0"
                 max="100"
                 step="1"
-                value={activeDevice?.status?.volume ?? 40}
-                onChange={(e) => onControlDevice(activeDevice!.did, 'volume', e.target.value)}
-                className="w-full h-2 bg-zinc-800 rounded-lg accent-[#FF6700] cursor-pointer"
+                value={speakerVolume}
+                onMouseDown={() => setIsDraggingVolume(true)}
+                onTouchStart={() => setIsDraggingVolume(true)}
+                onChange={(e) => {
+                  setSpeakerVolume(Number(e.target.value));
+                  setIsDraggingVolume(true);
+                }}
+                onMouseUp={(e) => handleCommitSpeakerVolume(Number((e.target as HTMLInputElement).value))}
+                onTouchEnd={(e) => handleCommitSpeakerVolume(Number((e.target as HTMLInputElement).value))}
+                onKeyUp={(e) => {
+                  if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'].includes(e.key)) {
+                    handleCommitSpeakerVolume(Number((e.target as HTMLInputElement).value));
+                  }
+                }}
+                className="w-full h-2 bg-zinc-800 rounded-lg accent-[#FF6700] cursor-pointer focus:outline-none"
               />
-              <div className="flex items-center justify-between text-[10px] text-zinc-500 font-mono">
-                <span>0% 静音</span>
-                <span>25% 夜间伴听</span>
-                <span>50% 居室标准</span>
-                <span>75% Hi-Fi 发烧</span>
-                <span>100% 派对最大</span>
+              <div className="flex items-center justify-between text-[10px] text-zinc-500 font-mono select-none">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSpeakerVolume(0);
+                    handleCommitSpeakerVolume(0);
+                  }}
+                  className="hover:text-amber-400 transition cursor-pointer hover:underline"
+                  title="点击设为 0% (静音)"
+                >
+                  0% 静音
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSpeakerVolume(25);
+                    handleCommitSpeakerVolume(25);
+                  }}
+                  className="hover:text-zinc-300 transition cursor-pointer hover:underline"
+                  title="点击设为 25%"
+                >
+                  25% 夜间伴听
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSpeakerVolume(50);
+                    handleCommitSpeakerVolume(50);
+                  }}
+                  className="hover:text-zinc-300 transition cursor-pointer hover:underline"
+                  title="点击设为 50%"
+                >
+                  50% 居室标准
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSpeakerVolume(75);
+                    handleCommitSpeakerVolume(75);
+                  }}
+                  className="hover:text-zinc-300 transition cursor-pointer hover:underline"
+                  title="点击设为 75%"
+                >
+                  75% Hi-Fi 发烧
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSpeakerVolume(100);
+                    handleCommitSpeakerVolume(100);
+                  }}
+                  className="hover:text-zinc-300 transition cursor-pointer hover:underline"
+                  title="点击设为 100%"
+                >
+                  100% 派对最大
+                </button>
               </div>
             </div>
 
