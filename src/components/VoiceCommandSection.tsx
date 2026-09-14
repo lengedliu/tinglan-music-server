@@ -24,7 +24,10 @@ import {
   ShieldCheck,
   Send,
   Zap,
-  ListMusic
+  ListMusic,
+  CloudLightning,
+  VolumeX,
+  Info
 } from 'lucide-react';
 import { XiaomiDevice, VoiceListenerConfig, VoiceListenerStatus, VoiceDialogueLog, VoiceCommandRule, Playlist } from '../types';
 import { apiFetch } from '../utils/api';
@@ -47,6 +50,10 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
   const [logs, setLogs] = useState<VoiceDialogueLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isUpdating, setIsUpdating] = useState(false);
+  const [isPollingNow, setIsPollingNow] = useState(false);
+  const [pollNowMessage, setPollNowMessage] = useState<{ text: string; type: 'success' | 'warning' | 'error' } | null>(null);
+
+  // Test Query Simulator state
   const [testQueryText, setTestQueryText] = useState('');
   const [isTestingQuery, setIsTestingQuery] = useState(false);
   const [testResult, setTestResult] = useState<{ matched: boolean; summary: string } | null>(null);
@@ -138,6 +145,15 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
     }
   };
 
+  const handleClearLogs = async () => {
+    try {
+      await apiFetch('/api/miot/voice/logs/clear', { method: 'POST' });
+      setLogs([]);
+    } catch (err) {
+      console.error('Clear logs error:', err);
+    }
+  };
+
   const handleToggleRule = (ruleId: string) => {
     if (!config) return;
     const newRules = config.rules.map(r => r.id === ruleId ? { ...r, enabled: !r.enabled } : r);
@@ -188,21 +204,11 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
 
     handleUpdateConfig({ rules: newRules });
     setIsRuleModalOpen(false);
-    setEditingRule(null);
   };
 
-  const handleClearLogs = async () => {
-    try {
-      await apiFetch('/api/miot/voice/logs/clear', { method: 'POST' });
-      setLogs([]);
-    } catch (err) {
-      console.warn('Failed to clear logs:', err);
-    }
-  };
-
-  const handleTestQuery = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!testQueryText.trim()) return;
+  const executeTestQuery = async (queryText: string) => {
+    const clean = queryText.trim();
+    if (!clean) return;
 
     setIsTestingQuery(true);
     setTestResult(null);
@@ -211,7 +217,7 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          query: testQueryText.trim(),
+          query: clean,
           did: config?.targetDeviceId || activeDevice?.did
         })
       });
@@ -231,6 +237,54 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
     }
   };
 
+  const handleTestQuery = (e: React.FormEvent) => {
+    e.preventDefault();
+    executeTestQuery(testQueryText);
+  };
+
+  const handlePollNow = async () => {
+    setIsPollingNow(true);
+    setPollNowMessage(null);
+    try {
+      const res = await apiFetch('/api/miot/voice/poll-now', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setPollNowMessage({
+          text: data.message || `同步成功 (获取到 ${data.recordsFound} 条对话记录)`,
+          type: 'success'
+        });
+        if (data.logs) setLogs(data.logs);
+        if (data.status) setStatus(data.status);
+      } else {
+        setPollNowMessage({
+          text: data.error || data.message || '从音箱云端同步对话记录失败',
+          type: 'warning'
+        });
+      }
+    } catch (err: any) {
+      setPollNowMessage({
+        text: `同步请求异常: ${err.message}`,
+        type: 'error'
+      });
+    } finally {
+      setIsPollingNow(false);
+      setTimeout(() => setPollNowMessage(null), 6000);
+    }
+  };
+
+  const QUICK_TEST_PRESETS = [
+    { label: '🎵 点播月半小夜曲', query: '放一首月半小夜曲' },
+    { label: '🎤 歌手+歌名搜索', query: '放一首周杰伦的夜的第七章' },
+    { label: '❤️ 播放我喜欢的音乐', query: '播放我喜欢的歌' },
+    { label: '⏭️ 语音切歌 (下一首)', query: '换一首' },
+    { label: '⏮️ 语音切歌 (上一首)', query: '上一首' },
+    { label: '🔊 调大音量', query: '大点声' },
+    { label: '🔉 调小音量', query: '小点声' },
+    { label: '⏸️ 暂停播放', query: '暂停音乐' },
+    { label: '▶️ 继续播放', query: '继续播放' },
+    { label: '🎲 随便放点歌', query: '随便放点歌' }
+  ];
+
   return (
     <div className="space-y-6">
       {/* ---------------- 1. Top Master Control Panel ---------------- */}
@@ -248,103 +302,212 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
                 <Mic className="w-6 h-6" />
               </div>
               <div>
-                <div className="flex items-center gap-2.5">
-                  <h3 className="text-lg font-bold text-white tracking-wide">
-                    小爱同学语音口令与点歌引擎
-                  </h3>
-                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold border ${
+                <div className="flex items-center gap-2">
+                  <h3 className="text-lg font-bold text-white tracking-tight">小爱音箱语音口令与点歌引擎</h3>
+                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border transition ${
                     status?.isRunning
-                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 animate-pulse'
+                      ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30 animate-pulse'
                       : 'bg-zinc-800 text-zinc-400 border-white/10'
                   }`}>
-                    {status?.isRunning ? '● 正在自适应捕获中' : '○ 已停止监听'}
+                    {status?.isRunning ? '● 语音捕获运行中' : '○ 已停止'}
                   </span>
                 </div>
-                <p className="text-xs text-zinc-400 mt-1">
-                  基于 Songloft 架构规范：支持对小爱音箱直接说“来首[歌名]”、“播放私房歌”或“换一首”，自动解析并无缝投播
+                <p className="text-xs text-zinc-400 mt-1 max-w-2xl leading-relaxed">
+                  实时捕获小爱音箱对话（对音箱说“小爱同学，来首稻香”），自适应解析歌手与曲目，智能劫持并投播至私有高保真曲库。
                 </p>
               </div>
             </div>
           </div>
 
-          {/* Quick Toggle Controls */}
+          {/* Action Buttons */}
           <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto">
-            {/* Target Device Selector */}
-            <div className="flex items-center gap-2 bg-zinc-950/80 border border-white/10 rounded-2xl px-3 py-2 text-xs">
-              <Radio className="w-4 h-4 text-[#FF6700]" />
-              <span className="text-zinc-400 whitespace-nowrap">监听音箱:</span>
-              <select
-                value={config?.targetDeviceId || ''}
-                onChange={(e) => handleUpdateConfig({ targetDeviceId: e.targetDeviceId || undefined })}
-                className="bg-transparent text-white font-medium focus:outline-none cursor-pointer max-w-[140px] truncate"
-              >
-                <option value="" className="bg-zinc-900 text-zinc-400">全部 / 默认音箱</option>
-                {devices.map(d => (
-                  <option key={d.did} value={d.did} className="bg-zinc-900 text-white">
-                    {d.name || d.model}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {/* TTS Feedback Toggle */}
-            <button
-              type="button"
-              onClick={() => handleUpdateConfig({ ttsFeedbackEnabled: !config?.ttsFeedbackEnabled })}
-              className={`flex items-center gap-2 px-3.5 py-2 rounded-2xl text-xs font-semibold border transition active:scale-95 ${
-                config?.ttsFeedbackEnabled
-                  ? 'bg-amber-500/15 border-amber-500/30 text-amber-300'
-                  : 'bg-zinc-950/60 border-white/10 text-zinc-400'
-              }`}
-              title="命中指令后是否让小爱音箱朗读确认语音（如：好的，为您播放xxx）"
-            >
-              <Volume2 className="w-4 h-4" />
-              <span>语音应答 (TTS)</span>
-              <span className="text-[10px] opacity-75">{config?.ttsFeedbackEnabled ? '开' : '关'}</span>
-            </button>
-
-            {/* Master Start / Stop Button */}
             <button
               type="button"
               onClick={handleToggleListener}
-              disabled={isUpdating || isLoading}
-              className={`flex items-center gap-2 px-6 py-2.5 rounded-2xl text-sm font-bold shadow-lg transition active:scale-95 cursor-pointer ${
+              disabled={isUpdating}
+              className={`px-5 py-2.5 rounded-2xl text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer flex-1 sm:flex-initial shadow-lg ${
                 status?.isRunning
-                  ? 'bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 shadow-rose-500/10'
-                  : 'bg-gradient-to-r from-[#FF6700] to-amber-600 hover:from-[#e55c00] hover:to-amber-500 text-white shadow-[#FF6700]/20'
+                  ? 'bg-zinc-800 hover:bg-zinc-700 text-amber-300 border border-amber-500/20'
+                  : 'bg-[#FF6700] hover:bg-[#e55c00] text-white shadow-[#FF6700]/20'
               }`}
             >
-              {isUpdating ? (
-                <RefreshCw className="w-4 h-4 animate-spin" />
-              ) : status?.isRunning ? (
-                <Pause className="w-4 h-4" />
+              {status?.isRunning ? (
+                <>
+                  <Pause className="w-4 h-4" />
+                  <span>暂停监听</span>
+                </>
               ) : (
-                <Play className="w-4 h-4 fill-current" />
+                <>
+                  <Play className="w-4 h-4 fill-current" />
+                  <span>开启语音监听</span>
+                </>
               )}
-              <span>{status?.isRunning ? '停止语音监听' : '启动语音监听'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handlePollNow}
+              disabled={isPollingNow}
+              className="px-4 py-2.5 rounded-2xl bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-medium border border-white/10 flex items-center justify-center gap-2 transition cursor-pointer shrink-0"
+              title="立即向小爱云端发起对话查询"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-[#FF6700] ${isPollingNow ? 'animate-spin' : ''}`} />
+              <span>{isPollingNow ? '正在拉取...' : '立即同步音箱对话'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowTrainingGuide(!showTrainingGuide)}
+              className="px-4 py-2.5 rounded-2xl bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-medium border border-white/10 flex items-center justify-center gap-1.5 transition cursor-pointer shrink-0"
+            >
+              <HelpCircle className="w-3.5 h-3.5 text-amber-400" />
+              <span>使用说明</span>
             </button>
           </div>
         </div>
 
-        {/* Status Metrics Bar */}
-        <div className="mt-5 pt-4 border-t border-white/10 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-          <div className="p-3 rounded-2xl bg-zinc-950/50 border border-white/5 flex items-center justify-between">
-            <span className="text-zinc-400">已启用规则</span>
-            <strong className="text-white font-mono text-sm">{config?.rules.filter(r => r.enabled).length || 0} / {config?.rules.length || 0}</strong>
+        {/* Sync result banner */}
+        {pollNowMessage && (
+          <div className={`mt-4 p-3 rounded-2xl border text-xs flex items-center gap-2.5 transition animate-fadeIn ${
+            pollNowMessage.type === 'success'
+              ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+              : pollNowMessage.type === 'warning'
+              ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+              : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+          }`}>
+            <Info className="w-4 h-4 shrink-0" />
+            <span>{pollNowMessage.text}</span>
           </div>
-          <div className="p-3 rounded-2xl bg-zinc-950/50 border border-white/5 flex items-center justify-between">
-            <span className="text-zinc-400">自适应轮询间隔</span>
-            <strong className="text-emerald-400 font-mono text-sm">{(config?.pollIntervalMs || 2500) / 1000}s</strong>
+        )}
+
+        {/* Cloud Login Warning Banner if not logged in */}
+        {status && !status.isLoggedIn && (
+          <div className="mt-4 p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-3">
+            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <span className="font-bold">提示：尚未绑定小米云端账号 (Mina Cloud Token)</span>
+              <p className="text-zinc-300 text-[11px] leading-relaxed">
+                小爱音箱的真实语音捕获需要调用小米云端对话接口或长连接。如果语音对话捕获未显示数据，请前往顶部导航的<b>【设备与连接】</b>中登录小米账号。在此期间，您依然可以使用下方的<b>快捷测试按钮</b>测试私有曲库的所有搜歌和播控逻辑。
+              </p>
+            </div>
           </div>
-          <div className="p-3 rounded-2xl bg-zinc-950/50 border border-white/5 flex items-center justify-between">
-            <span className="text-zinc-400">捕获对话日志</span>
-            <strong className="text-purple-400 font-mono text-sm">{logs.length} 条</strong>
+        )}
+
+        {/* Settings Bar */}
+        <div className="mt-6 pt-5 border-t border-white/10 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+          {/* Target Speaker Selector */}
+          <div className="space-y-1.5">
+            <label className="text-zinc-400 font-medium flex items-center gap-1.5">
+              <Radio className="w-3.5 h-3.5 text-[#FF6700]" />
+              <span>监听绑定音箱</span>
+            </label>
+            <select
+              value={config?.targetDeviceId || activeDevice?.did || ''}
+              onChange={(e) => {
+                const did = e.target.value;
+                handleUpdateConfig({ targetDeviceId: did });
+                onSelectDevice(did);
+              }}
+              className="w-full bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-[#FF6700] cursor-pointer"
+            >
+              {devices.map(dev => (
+                <option key={dev.did} value={dev.did}>
+                  {dev.name} ({dev.model || '小爱音箱'})
+                </option>
+              ))}
+            </select>
           </div>
-          <div className="p-3 rounded-2xl bg-zinc-950/50 border border-white/5 flex items-center justify-between">
-            <span className="text-zinc-400">捕获通道</span>
-            <strong className="text-amber-400 font-mono text-xs">Mina 对话流 (无需训练)</strong>
+
+          {/* Polling Interval */}
+          <div className="space-y-1.5">
+            <label className="text-zinc-400 font-medium flex items-center gap-1.5">
+              <Activity className="w-3.5 h-3.5 text-blue-400" />
+              <span>云端巡检轮询频率</span>
+            </label>
+            <select
+              value={config?.pollIntervalMs || 3000}
+              onChange={(e) => handleUpdateConfig({ pollIntervalMs: Number(e.target.value) })}
+              className="w-full bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-[#FF6700] cursor-pointer"
+            >
+              <option value={2000}>极速响应 (2秒/次)</option>
+              <option value={3000}>均衡推荐 (3秒/次)</option>
+              <option value={5000}>省流模式 (5秒/次)</option>
+              <option value={8000}>低频待机 (8秒/次)</option>
+            </select>
+          </div>
+
+          {/* TTS Response Toggle */}
+          <div className="space-y-1.5">
+            <label className="text-zinc-400 font-medium flex items-center gap-1.5">
+              <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>命中后音箱语音应答</span>
+            </label>
+            <button
+              type="button"
+              onClick={() => handleUpdateConfig({ ttsFeedbackEnabled: !config?.ttsFeedbackEnabled })}
+              className={`w-full py-2 px-3 rounded-xl border flex items-center justify-between transition cursor-pointer ${
+                config?.ttsFeedbackEnabled
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                  : 'bg-zinc-950 border-white/10 text-zinc-400'
+              }`}
+            >
+              <span>{config?.ttsFeedbackEnabled ? '已开启应答朗读' : '静默点歌 (不应答)'}</span>
+              <span className={`w-2 h-2 rounded-full ${config?.ttsFeedbackEnabled ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-600'}`} />
+            </button>
+          </div>
+
+          {/* Status Metrics */}
+          <div className="space-y-1.5">
+            <label className="text-zinc-400 font-medium flex items-center gap-1.5">
+              <ShieldCheck className="w-3.5 h-3.5 text-purple-400" />
+              <span>规则与日志统计</span>
+            </label>
+            <div className="w-full bg-zinc-950/80 border border-white/5 rounded-xl px-3 py-2 text-zinc-300 flex items-center justify-between">
+              <span>生效规则: {config?.rules.filter(r => r.enabled).length || 0} 条</span>
+              <span className="text-zinc-500">|</span>
+              <span>捕获日志: {logs.length} 条</span>
+            </div>
           </div>
         </div>
+
+        {/* Training Accordion */}
+        {showTrainingGuide && (
+          <div className="mt-5 p-4 rounded-2xl bg-zinc-950/90 border border-[#FF6700]/20 text-xs space-y-3 animate-fadeIn">
+            <div className="flex items-center justify-between">
+              <h4 className="font-bold text-white flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-[#FF6700]" />
+                <span>小爱音箱私有曲库语音交互指南</span>
+              </h4>
+              <button
+                type="button"
+                onClick={() => setShowTrainingGuide(false)}
+                className="text-zinc-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-zinc-300">
+              <div className="p-3 rounded-xl bg-zinc-900/80 border border-white/5 space-y-1">
+                <span className="text-[#FF6700] font-bold block">1. 智能搜歌点播</span>
+                <p className="text-[11px] text-zinc-400 leading-relaxed">
+                  对音箱说：<b>“小爱同学，来首稻香”</b>、<b>“小爱同学，放一首周杰伦的晴天”</b>。系统将自动提取歌名与歌手并在本地曲库中模糊匹配投播。
+                </p>
+              </div>
+              <div className="p-3 rounded-xl bg-zinc-900/80 border border-white/5 space-y-1">
+                <span className="text-blue-400 font-bold block">2. 歌单与随机播放</span>
+                <p className="text-[11px] text-zinc-400 leading-relaxed">
+                  对音箱说：<b>“播放我喜欢的歌”</b>、<b>“播放本地歌单”</b>、<b>“随便放点歌”</b>。即可一键投播收藏夹或整个曲库。
+                </p>
+              </div>
+              <div className="p-3 rounded-xl bg-zinc-900/80 border border-white/5 space-y-1">
+                <span className="text-emerald-400 font-bold block">3. 语音播控指令</span>
+                <p className="text-[11px] text-zinc-400 leading-relaxed">
+                  对音箱说：<b>“换一首”</b>、<b>“下一曲”</b>、<b>“调大音量”</b>、<b>“暂停音乐”</b>、<b>“继续播放”</b>。即刻联动音箱与网页端播放队列。
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ---------------- 2. Instant Voice Query Simulator & Debugger ---------------- */}
@@ -366,7 +529,7 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
               type="text"
               value={testQueryText}
               onChange={(e) => setTestQueryText(e.target.value)}
-              placeholder="例如：点歌 稻香、播放私房歌、换一首、随机播放全部..."
+              placeholder="例如：放一首月半小夜曲、播放我喜欢的歌、换一首、调大音量..."
               className="w-full bg-zinc-950/80 border border-white/10 rounded-2xl pl-10 pr-4 py-2.5 text-xs sm:text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-[#FF6700]/60 transition"
             />
           </div>
@@ -380,6 +543,26 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
             <span>测试指令匹配与执行</span>
           </button>
         </form>
+
+        {/* Quick Test Presets Chips */}
+        <div className="space-y-1.5 pt-1">
+          <span className="text-[11px] text-zinc-500 font-medium block">快捷指令测试推荐（点击即可立即运行验证）：</span>
+          <div className="flex flex-wrap gap-2">
+            {QUICK_TEST_PRESETS.map((preset, idx) => (
+              <button
+                key={idx}
+                type="button"
+                onClick={() => {
+                  setTestQueryText(preset.query);
+                  executeTestQuery(preset.query);
+                }}
+                className="px-3 py-1.5 rounded-xl bg-zinc-800/70 hover:bg-zinc-700/90 text-zinc-300 hover:text-white border border-white/5 hover:border-[#FF6700]/40 text-xs transition flex items-center gap-1.5 cursor-pointer"
+              >
+                <span>{preset.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
 
         {/* Test Result Feedback */}
         {testResult && (
@@ -412,57 +595,38 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
               语音口令触发规则清单 ({config?.rules.length || 0})
             </h4>
             <p className="text-xs text-zinc-400 mt-0.5">
-              自定义触发前缀、动作类型（搜歌点播/歌单投播/播控），支持模糊算法精准匹配
+              已预装智能搜歌、歌单投播、播控切歌及音量调节规则，支持自由增改触发词
             </p>
           </div>
 
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => setShowTrainingGuide(!showTrainingGuide)}
-              className="px-3.5 py-1.5 rounded-xl bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 text-xs font-medium border border-white/5 flex items-center gap-1.5 transition cursor-pointer"
-            >
-              <HelpCircle className="w-3.5 h-3.5 text-blue-400" />
-              <span>{showTrainingGuide ? '收起小爱训练指引' : '查看小爱训练计划配置'}</span>
-            </button>
-
-            <button
-              type="button"
               onClick={() => handleOpenEditRule()}
-              className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-[#FF6700] to-amber-600 hover:from-[#e55c00] text-white text-xs font-bold flex items-center gap-1.5 transition active:scale-95 shadow-md cursor-pointer"
+              className="px-4 py-2 rounded-2xl bg-[#FF6700]/20 hover:bg-[#FF6700]/30 text-[#FF6700] border border-[#FF6700]/30 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>添加口令规则</span>
+              <span>新建语音规则</span>
             </button>
           </div>
         </div>
 
-        {/* XiaoAi Training App Optional Guide Accordion */}
-        {showTrainingGuide && (
-          <div className="p-5 rounded-3xl bg-blue-500/10 border border-blue-500/20 text-xs text-blue-200 space-y-3 animate-fadeIn">
-            <div className="flex items-center gap-2 font-bold text-sm text-white">
-              <Sparkles className="w-4 h-4 text-blue-400" />
-              <span>进阶技巧：在「小爱音箱 App」或「米家小爱训练计划」中打造更顺畅的体验</span>
-            </div>
-            <p className="leading-relaxed text-[11px] text-zinc-300">
-              默认情况下，本系统通过 Mina 对话通道<strong>无需任何训练</strong>即可实时捕获对音箱说出的指令。但由于官方小爱对于“播放xxx”会默认去 QQ音乐/小米音乐搜索并提示“正在播放”，如果您希望彻底拦截官方语音，可在小爱音箱 App 中配置训练计划：
-            </p>
-            <ol className="list-decimal list-inside space-y-1 text-[11px] text-zinc-300 font-mono bg-zinc-950/60 p-3 rounded-2xl border border-white/5">
-              <li>打开【小爱音箱 App】➔【技能中心】➔【小爱训练计划】➔ 点击【创建训练】</li>
-              <li>设置触发词（例如：“播放私房歌”、“点播本地音乐”）</li>
-              <li>设置执行动作：选择【设备控制】或【文字回答】，填写“好的，正在为您唤醒私有音乐库”</li>
-              <li>保存后，当您呼叫该口令时，小爱将不再报错，本系统将秒级截获并接管音频串流！</li>
-            </ol>
-          </div>
-        )}
-
-        {/* Rules Cards Grid */}
+        {/* Rules Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {config?.rules.map((rule) => {
             const isSongSearch = rule.actionType === 'play_song_search';
             const isPlaylist = rule.actionType === 'play_playlist';
             const isRandom = rule.actionType === 'play_random_all';
-            const isControl = rule.actionType === 'control_command';
+
+            const controlLabels: Record<string, string> = {
+              next: '下一首',
+              prev: '上一首',
+              pause: '暂停播放',
+              stop: '停止播放',
+              resume: '继续播放',
+              volume_up: '调大音量',
+              volume_down: '调小音量'
+            };
 
             return (
               <div
@@ -494,9 +658,9 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
                       <span>动作类型:</span>
                       <span className="font-semibold text-zinc-200">
                         {isSongSearch ? '模糊搜歌并起播' :
-                         isPlaylist ? `投播歌单 (${rule.targetPlaylistId === 'default' ? '默认' : rule.targetPlaylistId})` :
+                         isPlaylist ? `投播歌单 (${rule.targetPlaylistId === 'favorites' ? '我喜欢的音乐' : (rule.targetPlaylistId === 'default' ? '默认歌单' : rule.targetPlaylistId)})` :
                          isRandom ? '曲库全随机起播' :
-                         `播控指令 (${rule.controlAction})`}
+                         `播控指令 (${controlLabels[rule.controlAction || 'next'] || rule.controlAction})`}
                       </span>
                     </div>
                   </div>
@@ -574,6 +738,16 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
           <div className="flex items-center gap-2">
             <button
               type="button"
+              onClick={handlePollNow}
+              disabled={isPollingNow}
+              className="p-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white transition text-xs flex items-center gap-1.5"
+              title="立即向小爱云端发起同步"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 text-[#FF6700] ${isPollingNow ? 'animate-spin' : ''}`} />
+              <span>{isPollingNow ? '同步中...' : '同步音箱'}</span>
+            </button>
+            <button
+              type="button"
               onClick={fetchVoiceStatus}
               className="p-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition text-xs flex items-center gap-1.5"
             >
@@ -596,8 +770,8 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
             <div className="text-center py-12 text-zinc-500 text-xs space-y-2">
               <Mic className="w-8 h-8 text-zinc-600 mx-auto" />
               <p>暂无捕获到的语音对话记录</p>
-              <p className="text-[11px] text-zinc-600">
-                请确认语音监听已开启，并对小爱音箱说出：“小爱同学，来首稻香”或使用上方测试器调试。
+              <p className="text-[11px] text-zinc-600 max-w-md mx-auto">
+                您可对真实小爱音箱说出：“小爱同学，来首稻香”，或点击上方的快捷测试按钮模拟对话。
               </p>
             </div>
           ) : (
@@ -619,6 +793,12 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
                         : 'bg-zinc-800 text-zinc-400'
                     }`}>
                       {log.status === 'matched' ? '已命中口令' : log.status === 'error' ? '执行失败' : '未命中规则'}
+                    </span>
+
+                    {/* Source Tag */}
+                    <span className="px-1.5 py-0.5 rounded text-[9px] bg-white/5 text-zinc-400 border border-white/5">
+                      {log.source === 'speaker_mina_poll' ? '云端轮询捕获' :
+                       log.source === 'speaker_mina_ws' ? '长连实时推送' : '模拟测试'}
                     </span>
                   </div>
 
@@ -668,23 +848,23 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
                   type="text"
                   value={editingRule.name}
                   onChange={(e) => setEditingRule({ ...editingRule, name: e.target.value })}
-                  placeholder="例如：智能搜歌点歌、播放私房歌单..."
+                  placeholder="例如：智能搜歌点播"
                   className="w-full bg-zinc-950 border border-white/10 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-[#FF6700]"
                 />
               </div>
 
               {/* Action Type */}
               <div className="space-y-1.5">
-                <label className="text-zinc-400 font-medium block">执行动作类型</label>
+                <label className="text-zinc-400 font-medium block">命中后执行动作</label>
                 <select
                   value={editingRule.actionType}
                   onChange={(e: any) => setEditingRule({ ...editingRule, actionType: e.target.value })}
                   className="w-full bg-zinc-950 border border-white/10 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-[#FF6700] cursor-pointer"
                 >
-                  <option value="play_song_search">智能搜歌点歌 (自动提取关键词匹配本地歌曲)</option>
+                  <option value="play_song_search">智能搜歌点歌 (自动提取关键词模糊匹配本地歌曲)</option>
                   <option value="play_random_all">随机播放全部音乐 (曲库全随机起播)</option>
                   <option value="play_playlist">投播指定歌单 (投播整个歌单到音箱)</option>
-                  <option value="control_command">执行播控动作 (下一首/上一首/暂停等)</option>
+                  <option value="control_command">执行播控动作 (下一首/上一首/暂停/音量调节等)</option>
                 </select>
               </div>
 
@@ -698,6 +878,7 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
                     className="w-full bg-zinc-950 border border-white/10 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-[#FF6700] cursor-pointer"
                   >
                     <option value="default">默认主歌单</option>
+                    <option value="favorites">我喜欢的音乐 (收藏夹)</option>
                     {playlists.map(pl => (
                       <option key={pl.id} value={pl.id}>{pl.name} ({pl.songIds.length} 首)</option>
                     ))}
@@ -717,6 +898,9 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
                     <option value="next">下一首 (Next)</option>
                     <option value="prev">上一首 (Prev)</option>
                     <option value="pause">暂停/停止播放 (Pause)</option>
+                    <option value="resume">继续播放/恢复 (Resume)</option>
+                    <option value="volume_up">调大音量 +10% (Volume Up)</option>
+                    <option value="volume_down">调小音量 -10% (Volume Down)</option>
                   </select>
                 </div>
               )}
@@ -764,9 +948,10 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
               <button
                 type="button"
                 onClick={handleSaveRule}
-                className="px-6 py-2 rounded-xl bg-[#FF6700] hover:bg-[#e55c00] text-white font-bold transition shadow-md"
+                className="px-5 py-2 rounded-xl bg-[#FF6700] hover:bg-[#e55c00] text-white font-bold transition flex items-center gap-1.5"
               >
-                保存规则
+                <Check className="w-4 h-4" />
+                <span>保存规则</span>
               </button>
             </div>
           </div>

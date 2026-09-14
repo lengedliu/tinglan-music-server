@@ -90,6 +90,15 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(15);
 
+  // Selected song in list (Single click to select without playing, double click to select and play)
+  const [selectedSongId, setSelectedSongId] = useState<string | null>(() => currentSong?.id || null);
+
+  useEffect(() => {
+    if (currentSong?.id) {
+      setSelectedSongId(currentSong.id);
+    }
+  }, [currentSong?.id]);
+
   // Tab bar scroll ref & drag scroll states
   const tabsNavRef = useRef<HTMLDivElement>(null);
   const [isDraggingTabs, setIsDraggingTabs] = useState(false);
@@ -554,7 +563,10 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
         <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between text-xs text-zinc-400 font-medium">
           <div className="flex items-center gap-4">
             <span className="w-6 text-center">#</span>
-            <span className="text-[10px] uppercase tracking-[0.15em] text-zinc-500 font-bold">Track & Artist</span>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] uppercase tracking-[0.15em] text-zinc-500 font-bold">Track & Artist</span>
+              <span className="text-[10px] text-zinc-500 font-normal hidden sm:inline">(单击选中 · 双击播放)</span>
+            </div>
           </div>
           <div className="flex items-center gap-8">
             <span className="hidden md:inline text-[10px] uppercase tracking-[0.15em] text-zinc-500 font-bold">Audio Quality</span>
@@ -573,16 +585,33 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
           ) : (
             paginatedSongs.map((song, index) => {
               const isCurrent = currentSong?.id === song.id;
+              const isSelected = selectedSongId === song.id;
               const isSongCasting = isCurrent && isCasting;
 
               return (
                 <div
                   key={song.id}
                   id={`song-row-${song.id}`}
-                  className={`group flex items-center justify-between px-6 py-3.5 transition-colors cursor-pointer ${
-                    isCurrent 
+                  tabIndex={0}
+                  onClick={() => {
+                    setSelectedSongId(song.id);
+                  }}
+                  onDoubleClick={() => {
+                    setSelectedSongId(song.id);
+                    onPlaySong(song);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setSelectedSongId(song.id);
+                      onPlaySong(song);
+                    }
+                  }}
+                  title={isCurrent ? "当前正在播放（双击可重新播放）" : "单击选中歌曲，双击开始播放"}
+                  className={`group flex items-center justify-between px-6 py-3.5 transition-all duration-150 cursor-pointer select-none outline-none ${
+                    isSelected 
                       ? 'bg-[#FF6700]/10 hover:bg-[#FF6700]/15 border-l-2 border-l-[#FF6700]' 
-                      : 'hover:bg-white/5'
+                      : 'hover:bg-white/5 border-l-2 border-l-transparent'
                   }`}
                 >
                   {/* Left: Index / Play button & Song Details */}
@@ -599,8 +628,13 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                       ) : (
                         <button
                           id={`btn-play-${song.id}`}
-                          onClick={() => onPlaySong(song)}
-                          className="w-7 h-7 rounded-full flex items-center justify-center text-zinc-400 group-hover:text-white group-hover:bg-white/10 transition"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedSongId(song.id);
+                            onPlaySong(song);
+                          }}
+                          className="w-7 h-7 rounded-full flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/20 group-hover:text-white transition"
+                          title="播放"
                         >
                           <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
                         </button>
@@ -624,7 +658,11 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                     {/* Titles */}
                     <div className="min-w-0 pr-4">
                       <div className="flex items-center gap-2">
-                        <span className={`text-sm font-semibold truncate ${isCurrent ? 'text-[#FF6700]' : 'text-zinc-100 group-hover:text-white'}`}>
+                        <span className={`text-sm font-semibold truncate ${
+                          isSelected 
+                            ? 'text-[#FF6700]' 
+                            : 'text-zinc-100 group-hover:text-white'
+                        }`}>
                           {song.title}
                         </span>
                         {song.source === 'uploaded' && (
@@ -662,7 +700,10 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                     {/* Favorite Heart */}
                     <button
                       id={`btn-fav-${song.id}`}
-                      onClick={() => onToggleFavorite(song.id)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onToggleFavorite(song.id);
+                      }}
                       className="p-1.5 text-zinc-500 hover:text-rose-500 transition"
                       title={song.isFavorite ? '取消收藏' : '添加到我喜欢'}
                     >
@@ -672,7 +713,10 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                     {/* Add to Playlist button */}
                     <button
                       id={`btn-add-playlist-${song.id}`}
-                      onClick={() => setSongToAddToPlaylist(song)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSongToAddToPlaylist(song);
+                      }}
                       className="p-1.5 text-zinc-400 hover:text-[#FF6700] hover:bg-white/5 rounded-lg transition"
                       title="加入指定歌单"
                     >
@@ -683,7 +727,10 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                     {selectedPlaylistId !== 'all' && selectedPlaylistId !== 'favorites' && onToggleSongInPlaylist && (
                       <button
                         id={`btn-remove-from-playlist-${song.id}`}
-                        onClick={() => onToggleSongInPlaylist(song.id, selectedPlaylistId)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onToggleSongInPlaylist(song.id, selectedPlaylistId);
+                        }}
                         className="p-1.5 text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition"
                         title="从当前歌单移除"
                       >
@@ -694,7 +741,11 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                     {/* One-Click Cast to Xiaomi Speaker Button */}
                     <button
                       id={`btn-cast-song-${song.id}`}
-                      onClick={() => onCastSongToXiaomi(song)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedSongId(song.id);
+                        onCastSongToXiaomi(song);
+                      }}
                       className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold transition ${
                         isSongCasting
                           ? 'bg-[#FF6700] text-white shadow-[0_0_12px_rgba(255,103,0,0.5)]'

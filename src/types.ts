@@ -259,7 +259,7 @@ export interface VoiceCommandRule {
   triggerPhrases: string[];
   actionType: 'play_playlist' | 'play_random_all' | 'play_song_search' | 'control_command';
   targetPlaylistId?: string;
-  controlAction?: 'next' | 'prev' | 'pause' | 'stop' | 'volume_up' | 'volume_down';
+  controlAction?: 'next' | 'prev' | 'pause' | 'stop' | 'resume' | 'volume_up' | 'volume_down';
   ttsFeedback?: string;
   enabled: boolean;
 }
@@ -272,6 +272,7 @@ export interface VoiceDialogueLog {
   matchedRuleName?: string;
   actionSummary?: string;
   status: 'matched' | 'ignored' | 'error';
+  source?: 'speaker_mina_poll' | 'speaker_mina_ws' | 'test_manual';
   deviceId?: string;
   deviceName?: string;
 }
@@ -287,6 +288,7 @@ export interface VoiceListenerConfig {
 export interface VoiceListenerStatus {
   isRunning: boolean;
   enabled: boolean;
+  isLoggedIn?: boolean;
   pollIntervalMs: number;
   targetDeviceId: string | null;
   rulesCount: number;

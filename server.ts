@@ -1661,6 +1661,17 @@ minaWsClient.on('error', (err: any) => {
   }
 });
 
+// Bridge real-time XiaoAi voice conversations from WebSocket to voiceCommandService
+minaWsClient.on('event', (evt: any) => {
+  if (evt && evt.type === 'voice_dialogue') {
+    const query = evt.data?.query || evt.data?.text;
+    if (query) {
+      const targetDev = xiaomiDevices.find(d => d.did === evt.deviceId) || xiaomiDevices[0];
+      voiceCommandService.onDialogueEvent(query, targetDev?.did, targetDev?.name);
+    }
+  }
+});
+
 if (miotConfig.isLoggedIn && miotConfig.userId && miotConfig.serviceToken) {
   try {
     minaWsClient.connect(miotConfig.userId, miotConfig.serviceToken, miotConfig.activeDeviceId || '');
@@ -5374,7 +5385,7 @@ app.post('/api/miot/voice/test-query', async (req: Request, res: Response) => {
   const deviceName = targetDev?.name || '测试音箱';
 
   try {
-    const result = await voiceCommandService.processVoiceQuery(query, deviceId, deviceName);
+    const result = await voiceCommandService.processVoiceQuery(query, deviceId, deviceName, 'test_manual');
     res.json({
       success: true,
       result,
@@ -5384,6 +5395,29 @@ app.post('/api/miot/voice/test-query', async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       error: err.message
+    });
+  }
+});
+
+// Trigger instant cloud conversation fetch & diagnostics
+app.post('/api/miot/voice/poll-now', async (req: Request, res: Response) => {
+  if (!checkMiotControlPermission(req, res)) return;
+  try {
+    const report = await voiceCommandService.pollNow();
+    res.json({
+      success: report.success,
+      message: report.message,
+      recordsFound: report.recordsFound,
+      lastQuery: report.lastQuery,
+      status: voiceCommandService.getStatus(),
+      logs: voiceCommandService.getDialogueLogs()
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      error: err.message,
+      status: voiceCommandService.getStatus(),
+      logs: voiceCommandService.getDialogueLogs()
     });
   }
 });
@@ -6392,9 +6426,19 @@ async function startServer() {
     playPlaylist: async (playlistId, deviceId) => {
       const targetDev = xiaomiDevices.find(d => d.did === deviceId) || xiaomiDevices.find(d => d.did === miotConfig.activeDeviceId) || xiaomiDevices[0];
       if (!targetDev) return false;
-      const playlist = storedPlaylists.find(p => p.id === playlistId) || storedPlaylists[0];
-      if (!playlist) return false;
-      const plSongs = storedSongs.filter(s => playlist.songIds.includes(s.id));
+      let plSongs: any[] = [];
+      if (playlistId === 'favorites') {
+        plSongs = storedSongs.filter(s => s.isFavorite);
+        if (plSongs.length === 0) {
+          plSongs = storedSongs.slice(0, 10);
+        }
+      } else {
+        const playlist = storedPlaylists.find(p => p.id === playlistId) || storedPlaylists[0];
+        if (playlist) {
+          plSongs = storedSongs.filter(s => playlist.songIds.includes(s.id));
+        }
+      }
+      if (plSongs.length === 0) plSongs = storedSongs;
       if (plSongs.length === 0) return false;
       const res = await queueEngine.playQueue(plSongs, 0, targetDev.did, targetDev.name);
       return res.success;
@@ -6410,6 +6454,25 @@ async function startServer() {
         return res.success;
       } else if (action === 'pause' || action === 'stop') {
         queueEngine.pause();
+        await xiaomiAdapter.setPlaybackOperation(targetDev, 'pause', (p, m, msg, tDid, r) => callMinaCloudApi(p, m, msg, tDid, r), (ip, tk, m, p, t) => sendMiioCommand(ip, tk, m, p, t), miotConfig).catch(() => {});
+        return true;
+      } else if (action === 'resume') {
+        queueEngine.resume();
+        await xiaomiAdapter.setPlaybackOperation(targetDev, 'play', (p, m, msg, tDid, r) => callMinaCloudApi(p, m, msg, tDid, r), (ip, tk, m, p, t) => sendMiioCommand(ip, tk, m, p, t), miotConfig).catch(() => {});
+        return true;
+      } else if (action === 'volume_up') {
+        const currentVol = targetDev.status?.volume || 40;
+        const newVol = Math.min(100, currentVol + 10);
+        targetDev.status = targetDev.status || {};
+        targetDev.status.volume = newVol;
+        await xiaomiAdapter.setVolume(targetDev, newVol, (p, m, msg, tDid, r) => callMinaCloudApi(p, m, msg, tDid, r), (ip, tk, m, p, t) => sendMiioCommand(ip, tk, m, p, t), miotConfig).catch(() => {});
+        return true;
+      } else if (action === 'volume_down') {
+        const currentVol = targetDev.status?.volume || 40;
+        const newVol = Math.max(0, currentVol - 10);
+        targetDev.status = targetDev.status || {};
+        targetDev.status.volume = newVol;
+        await xiaomiAdapter.setVolume(targetDev, newVol, (p, m, msg, tDid, r) => callMinaCloudApi(p, m, msg, tDid, r), (ip, tk, m, p, t) => sendMiioCommand(ip, tk, m, p, t), miotConfig).catch(() => {});
         return true;
       }
       return false;
@@ -6427,7 +6490,7 @@ async function startServer() {
     },
     getAuthInfo: () => ({
       userId: miotConfig.userId,
-      serviceToken: (miotConfig as any).micoServiceToken || miotConfig.serviceToken,
+      serviceToken: (miotConfig as any).micoServiceToken || (miotConfig as any).xiaomiioServiceToken || miotConfig.serviceToken,
       devices: xiaomiDevices
     })
   });
