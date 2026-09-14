@@ -279,6 +279,7 @@ export default function App() {
 
     let isMounted = true;
     const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       apiFetch('/api/queue')
         .then(res => res.json())
         .then(resData => {

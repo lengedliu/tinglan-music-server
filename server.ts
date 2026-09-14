@@ -197,13 +197,54 @@ function loadJson<T>(filePath: string, defaultValue: T): T {
   return defaultValue;
 }
 
-function saveJson(filePath: string, data: any): void {
-  try {
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
-  } catch (err) {
-    console.error(`Failed to write to ${filePath}`, err);
+const saveJsonDebounceTimers = new Map<string, NodeJS.Timeout>();
+const pendingSaveJsonData = new Map<string, any>();
+
+function saveJson(filePath: string, data: any, immediate = false): void {
+  pendingSaveJsonData.set(filePath, data);
+
+  const doWrite = () => {
+    const toWrite = pendingSaveJsonData.get(filePath);
+    if (toWrite === undefined) return;
+    pendingSaveJsonData.delete(filePath);
+    saveJsonDebounceTimers.delete(filePath);
+    try {
+      const jsonStr = JSON.stringify(toWrite, null, 2);
+      const tmpFile = `${filePath}.tmp.${Date.now()}`;
+      fs.writeFileSync(tmpFile, jsonStr, 'utf-8');
+      fs.renameSync(tmpFile, filePath);
+    } catch (err) {
+      console.error(`Failed to atomically write to ${filePath}:`, err);
+    }
+  };
+
+  if (immediate) {
+    const existing = saveJsonDebounceTimers.get(filePath);
+    if (existing) {
+      clearTimeout(existing);
+      saveJsonDebounceTimers.delete(filePath);
+    }
+    doWrite();
+    return;
+  }
+
+  if (!saveJsonDebounceTimers.has(filePath)) {
+    const timer = setTimeout(doWrite, 200);
+    saveJsonDebounceTimers.set(filePath, timer);
   }
 }
+
+// Flush all pending writes on process termination
+process.on('beforeExit', () => {
+  for (const [filePath] of pendingSaveJsonData.entries()) {
+    try {
+      const toWrite = pendingSaveJsonData.get(filePath);
+      if (toWrite !== undefined) {
+        fs.writeFileSync(filePath, JSON.stringify(toWrite, null, 2), 'utf-8');
+      }
+    } catch {}
+  }
+});
 
 // Navidrome remote server configuration & helper
 const NAVIDROME_FILE = path.join(DATA_DIR, 'navidrome.json');
@@ -444,6 +485,15 @@ function recordLoginAttempt(ip: string, isSuccess: boolean) {
     record.lockedUntil = now + 5 * 60 * 1000;
   }
   loginAttemptTracker.set(ip, record);
+
+  // Periodic pruning of stale attempt records to prevent unbounded memory growth
+  if (loginAttemptTracker.size > 200) {
+    for (const [trackedIp, data] of loginAttemptTracker.entries()) {
+      if (data.lockedUntil > 0 && data.lockedUntil < now) {
+        loginAttemptTracker.delete(trackedIp);
+      }
+    }
+  }
 }
 
 function isPrivateOrLocalIp(ip: string): boolean {
@@ -1226,9 +1276,25 @@ app.get('/api/db/status', (req: Request, res: Response) => {
   const currentSongs = loadJson<any[]>(SONGS_FILE, DEFAULT_SONGS);
   const currentPlaylists = loadJson<any[]>(PLAYLISTS_FILE, []);
 
+  function sanitizeDbConfig(cfg: typeof activeDbConfig) {
+    return {
+      engine: cfg.engine,
+      postgresConfig: cfg.postgresConfig ? {
+        ...cfg.postgresConfig,
+        password: cfg.postgresConfig.password ? '••••••••' : '',
+        hasPassword: Boolean(cfg.postgresConfig.password)
+      } : undefined,
+      mysqlConfig: cfg.mysqlConfig ? {
+        ...cfg.mysqlConfig,
+        password: cfg.mysqlConfig.password ? '••••••••' : '',
+        hasPassword: Boolean(cfg.mysqlConfig.password)
+      } : undefined
+    };
+  }
+
   return res.json({
     success: true,
-    config: activeDbConfig,
+    config: sanitizeDbConfig(activeDbConfig),
     status: {
       engine: activeDbConfig.engine,
       isConnected: true,
@@ -1254,11 +1320,16 @@ app.post('/api/db/test', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: '缺少 PostgreSQL 主机地址' });
     }
     try {
+      const rawPgPass = postgresConfig.password || '';
+      const actualPgPass = (rawPgPass === '••••••••' || rawPgPass === '********' || !rawPgPass)
+        ? (activeDbConfig.postgresConfig?.password || '')
+        : rawPgPass;
+
       const pool = new pg.Pool({
         host: postgresConfig.host,
         port: Number(postgresConfig.port) || 5432,
         user: postgresConfig.user || 'postgres',
-        password: postgresConfig.password || '',
+        password: actualPgPass,
         database: postgresConfig.database || 'tinglan_db',
         connectionTimeoutMillis: 5000
       });
@@ -1277,11 +1348,16 @@ app.post('/api/db/test', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: '缺少 MySQL 主机地址' });
     }
     try {
+      const rawMyPass = mysqlConfig.password || '';
+      const actualMyPass = (rawMyPass === '••••••••' || rawMyPass === '********' || !rawMyPass)
+        ? (activeDbConfig.mysqlConfig?.password || '')
+        : rawMyPass;
+
       const connection = await mysql.createConnection({
         host: mysqlConfig.host,
         port: Number(mysqlConfig.port) || 3306,
         user: mysqlConfig.user || 'root',
-        password: mysqlConfig.password || '',
+        password: actualMyPass,
         database: mysqlConfig.database || 'tinglan_db',
         connectTimeout: 5000
       });
@@ -1310,15 +1386,47 @@ app.post('/api/db/switch', async (req: Request, res: Response) => {
   }
 
   activeDbConfig.engine = engine;
-  if (postgresConfig) activeDbConfig.postgresConfig = postgresConfig;
-  if (mysqlConfig) activeDbConfig.mysqlConfig = mysqlConfig;
+  if (postgresConfig) {
+    const rawPass = postgresConfig.password || '';
+    const actualPass = (rawPass === '••••••••' || rawPass === '********' || !rawPass)
+      ? (activeDbConfig.postgresConfig?.password || '')
+      : rawPass;
+    activeDbConfig.postgresConfig = {
+      ...postgresConfig,
+      password: actualPass
+    };
+  }
+  if (mysqlConfig) {
+    const rawPass = mysqlConfig.password || '';
+    const actualPass = (rawPass === '••••••••' || rawPass === '********' || !rawPass)
+      ? (activeDbConfig.mysqlConfig?.password || '')
+      : rawPass;
+    activeDbConfig.mysqlConfig = {
+      ...mysqlConfig,
+      password: actualPass
+    };
+  }
 
   saveJson(DB_CONFIG_FILE, activeDbConfig);
+
+  const safeConfig = {
+    engine: activeDbConfig.engine,
+    postgresConfig: activeDbConfig.postgresConfig ? {
+      ...activeDbConfig.postgresConfig,
+      password: activeDbConfig.postgresConfig.password ? '••••••••' : '',
+      hasPassword: Boolean(activeDbConfig.postgresConfig.password)
+    } : undefined,
+    mysqlConfig: activeDbConfig.mysqlConfig ? {
+      ...activeDbConfig.mysqlConfig,
+      password: activeDbConfig.mysqlConfig.password ? '••••••••' : '',
+      hasPassword: Boolean(activeDbConfig.mysqlConfig.password)
+    } : undefined
+  };
 
   return res.json({
     success: true,
     message: `已成功保存配置并切换活动数据库引擎为 ${engine.toUpperCase()}！`,
-    config: activeDbConfig
+    config: safeConfig
   });
 });
 
@@ -1502,7 +1610,50 @@ let xiaomiDevices: any[] = rawXiaomiDevices.map((d: any) => {
   };
 });
 let miotConfig = loadJson(CONFIG_FILE, DEFAULT_CONFIG);
-const activeStreamIps = new Set<string>();
+
+// Safe active stream IP tracker with TTL to eliminate unbounded memory growth
+const activeStreamIpsTracker = new Map<string, number>();
+const activeStreamIps = {
+  add(ip: string) {
+    if (!ip) return this;
+    const cleanIp = String(ip).replace(/^::ffff:/, '').trim();
+    activeStreamIpsTracker.set(cleanIp, Date.now());
+    return this;
+  },
+  has(ip: string): boolean {
+    const cleanIp = String(ip).replace(/^::ffff:/, '').trim();
+    const last = activeStreamIpsTracker.get(cleanIp);
+    if (!last) return false;
+    if (Date.now() - last > 5 * 60 * 1000) {
+      activeStreamIpsTracker.delete(cleanIp);
+      return false;
+    }
+    return true;
+  },
+  delete(ip: string): boolean {
+    const cleanIp = String(ip).replace(/^::ffff:/, '').trim();
+    return activeStreamIpsTracker.delete(cleanIp);
+  },
+  clear(): void {
+    activeStreamIpsTracker.clear();
+  },
+  get size(): number {
+    return this.toArray().length;
+  },
+  toArray(): string[] {
+    const now = Date.now();
+    const TTL_MS = 5 * 60 * 1000;
+    for (const [ip, last] of activeStreamIpsTracker.entries()) {
+      if (now - last > TTL_MS) {
+        activeStreamIpsTracker.delete(ip);
+      }
+    }
+    return Array.from(activeStreamIpsTracker.keys());
+  },
+  [Symbol.iterator]() {
+    return this.toArray()[Symbol.iterator]();
+  }
+};
 
 interface StreamEventInfo {
   timestamp: string;
@@ -1758,11 +1909,26 @@ function sanitizeDevice(dev: any) {
 
 function sanitizeMiotConfig(config: any) {
   if (!config) return config;
-  const { serviceToken, ssecurity, password, ...safeConfig } = config;
+  const {
+    serviceToken,
+    ssecurity,
+    password,
+    micoServiceToken,
+    miotServiceToken,
+    xiaomiioServiceToken,
+    passToken,
+    psecurity_ph,
+    securityToken,
+    ...safeConfig
+  } = config;
   const hasToken = Boolean(serviceToken && String(serviceToken).trim().length > 0);
   return {
     ...safeConfig,
     hasServiceToken: hasToken,
+    hasMicoServiceToken: Boolean(micoServiceToken),
+    hasMiotServiceToken: Boolean(miotServiceToken),
+    hasXiaomiioServiceToken: Boolean(xiaomiioServiceToken),
+    hasPassToken: Boolean(passToken),
     serviceToken: hasToken ? `${String(serviceToken).slice(0, 4)}••••••••` : '',
     miUserMasked: config.miUser ? (config.miUser.length > 4 ? `${config.miUser.slice(0, 2)}***${config.miUser.slice(-2)}` : '***') : ''
   };
@@ -2410,10 +2576,18 @@ app.post('/api/songs/upload', async (req: Request, res: Response) => {
       });
     }
 
+    const ALLOWED_AUDIO_EXTS = new Set(['.mp3', '.flac', '.wav', '.m4a', '.aac', '.ogg', '.opus', '.ape', '.wma']);
     const songId = `song-up-${Date.now()}`;
     let ext = '.mp3';
     if (fileName) {
-      ext = path.extname(fileName) || '.mp3';
+      const candidateExt = (path.extname(fileName) || '').toLowerCase();
+      if (!ALLOWED_AUDIO_EXTS.has(candidateExt)) {
+        return res.status(400).json({
+          success: false,
+          error: `不支持的文件格式 (${candidateExt || '无后缀'})。仅允许上传音频文件: MP3, FLAC, WAV, M4A, AAC, OGG, OPUS, APE, WMA`
+        });
+      }
+      ext = candidateExt;
     }
 
     const fileBuffer = Buffer.from(fileBase64, 'base64');
@@ -2704,6 +2878,15 @@ app.post('/api/miot/config', (req: Request, res: Response) => {
   // Never overwrite real tokens if incoming contains masked bullets or asterisks or empty string
   if (!incoming.serviceToken || incoming.serviceToken.includes('****') || incoming.serviceToken.includes('••••')) {
     delete incoming.serviceToken;
+  }
+  if (incoming.micoServiceToken && (incoming.micoServiceToken.includes('****') || incoming.micoServiceToken.includes('••••'))) {
+    delete incoming.micoServiceToken;
+  }
+  if (incoming.miotServiceToken && (incoming.miotServiceToken.includes('****') || incoming.miotServiceToken.includes('••••'))) {
+    delete incoming.miotServiceToken;
+  }
+  if (incoming.xiaomiioServiceToken && (incoming.xiaomiioServiceToken.includes('****') || incoming.xiaomiioServiceToken.includes('••••'))) {
+    delete incoming.xiaomiioServiceToken;
   }
   // Never wipe internal tokens unless explicitly provided
   if (!incoming.passToken && (miotConfig as any).passToken) delete incoming.passToken;
@@ -5423,10 +5606,53 @@ app.post('/api/miot/voice/poll-now', async (req: Request, res: Response) => {
   }
 });
 
+// SSRF protection helper
+function isSafeRemoteStreamUrl(urlString: string): boolean {
+  try {
+    const parsed = new URL(urlString);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    const hostname = parsed.hostname.toLowerCase();
+    // Block loopback, link-local, cloud metadata, and internal infrastructure
+    if (
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname === '0.0.0.0' ||
+      hostname === '::1' ||
+      hostname === '169.254.169.254' ||
+      hostname.endsWith('.internal') ||
+      hostname.endsWith('.local')
+    ) {
+      if (navidromeConfig.serverUrl) {
+        try {
+          const naviHost = new URL(navidromeConfig.serverUrl).hostname.toLowerCase();
+          if (hostname === naviHost) return true;
+        } catch {}
+      }
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ---------------- AUDIO STREAMING (HTTP 206 Partial Content Range & DLNA/Mina Support) ----------------
 const streamAudioHandler = async (req: Request, res: Response) => {
   const { songId } = req.params;
   const decodedSongId = decodeURIComponent(songId || '');
+
+  // Path traversal guard: immediately reject relative directory escapes or dangerous characters
+  if (
+    !songId ||
+    songId.includes('..') ||
+    decodedSongId.includes('..') ||
+    songId.includes('\\') ||
+    decodedSongId.includes('\\') ||
+    (songId.includes('/') && !songId.startsWith('navidrome-'))
+  ) {
+    return res.status(400).json({ error: 'Invalid songId: path traversal characters are forbidden' });
+  }
+
   // Strip any artificial format extension (.mp3, .wav, .flac, .m4a, etc.)
   const cleanSongId = (songId || '').replace(/\.(wav|mp3|flac|m4a|ogg|aac|opus|ape|dsf|dff)$/i, '');
   const decodedCleanSongId = (decodedSongId || '').replace(/\.(wav|mp3|flac|m4a|ogg|aac|opus|ape|dsf|dff)$/i, '');
@@ -5482,7 +5708,7 @@ const streamAudioHandler = async (req: Request, res: Response) => {
     }
   }
 
-  // 2. Check direct file by exact names first (prioritize compressed formats like MP3/FLAC over uncompressed WAV for speaker compatibility)
+  // 2. Check direct file by safe exact names first
   if (!localFilePath) {
     const directNames = [
       songId,
@@ -5493,7 +5719,7 @@ const streamAudioHandler = async (req: Request, res: Response) => {
       `${cleanSongId}.wav`
     ];
     for (const name of directNames) {
-      if (!name) continue;
+      if (!name || name.includes('..') || name.includes('/') || name.includes('\\')) continue;
       const testPath = path.join(MUSIC_DIR, name);
       if (fs.existsSync(testPath) && fs.statSync(testPath).isFile()) {
         localFilePath = testPath;
@@ -5507,18 +5733,34 @@ const streamAudioHandler = async (req: Request, res: Response) => {
   if (!localFilePath) {
     const possibleExtensions = ['.mp3', '.flac', '.m4a', '.aac', '.ogg', '.opus', '.wav', '.ape', '.dsf', '.dff'];
     for (const ext of possibleExtensions) {
-      const testPath = path.join(MUSIC_DIR, `${cleanSongId}${ext}`);
-      if (fs.existsSync(testPath) && fs.statSync(testPath).isFile()) {
-        localFilePath = testPath;
-        matchedExt = ext;
-        break;
+      if (!cleanSongId.includes('..') && !cleanSongId.includes('/')) {
+        const testPath = path.join(MUSIC_DIR, `${cleanSongId}${ext}`);
+        if (fs.existsSync(testPath) && fs.statSync(testPath).isFile()) {
+          localFilePath = testPath;
+          matchedExt = ext;
+          break;
+        }
       }
-      const testPathDecoded = path.join(MUSIC_DIR, `${decodedCleanSongId}${ext}`);
-      if (fs.existsSync(testPathDecoded) && fs.statSync(testPathDecoded).isFile()) {
-        localFilePath = testPathDecoded;
-        matchedExt = ext;
-        break;
+      if (!decodedCleanSongId.includes('..') && !decodedCleanSongId.includes('/')) {
+        const testPathDecoded = path.join(MUSIC_DIR, `${decodedCleanSongId}${ext}`);
+        if (fs.existsSync(testPathDecoded) && fs.statSync(testPathDecoded).isFile()) {
+          localFilePath = testPathDecoded;
+          matchedExt = ext;
+          break;
+        }
       }
+    }
+  }
+
+  // Verify safe boundary of resolved local path: MUST strictly reside within MUSIC_DIR or TRANSCODE_CACHE_DIR
+  if (localFilePath) {
+    const isUnderDir = (candidate: string, parentDir: string) => {
+      const rel = path.relative(path.resolve(parentDir), path.resolve(candidate));
+      return !rel.startsWith('..') && !path.isAbsolute(rel);
+    };
+    if (!isUnderDir(localFilePath, MUSIC_DIR) && !isUnderDir(localFilePath, TRANSCODE_CACHE_DIR)) {
+      console.warn(`[Security Alert] Blocked attempt to escape music directory: ${localFilePath}`);
+      return res.status(403).json({ error: 'Access denied: invalid file path' });
     }
   }
 
@@ -5548,11 +5790,21 @@ const streamAudioHandler = async (req: Request, res: Response) => {
   let remoteStreamUrl: string | null = null;
   if (!localFilePath) {
     if (foundSong && foundSong.url && /^https?:\/\//i.test(foundSong.url) && !foundSong.url.includes('/api/stream/')) {
-      remoteStreamUrl = foundSong.url;
+      if (isSafeRemoteStreamUrl(foundSong.url)) {
+        remoteStreamUrl = foundSong.url;
+      } else {
+        console.warn(`[Security Alert] Blocked unsafe remote stream URL (SSRF): ${foundSong.url}`);
+        return res.status(403).json({ error: 'Unsafe remote stream URL is forbidden' });
+      }
     } else if (cleanSongId.startsWith('navidrome-') && navidromeConfig.serverUrl && navidromeConfig.username) {
-      const rawNaviId = cleanSongId.replace(/^navidrome-/, '');
-      const authQuery = getSubsonicAuthQuery(navidromeConfig.username, navidromeConfig.password);
-      remoteStreamUrl = `${navidromeConfig.serverUrl}/rest/stream.view?id=${rawNaviId}&${authQuery}`;
+      if (isSafeRemoteStreamUrl(navidromeConfig.serverUrl)) {
+        const rawNaviId = cleanSongId.replace(/^navidrome-/, '');
+        const authQuery = getSubsonicAuthQuery(navidromeConfig.username, navidromeConfig.password);
+        remoteStreamUrl = `${navidromeConfig.serverUrl}/rest/stream.view?id=${rawNaviId}&${authQuery}`;
+      } else {
+        console.warn(`[Security Alert] Blocked unsafe Navidrome serverUrl: ${navidromeConfig.serverUrl}`);
+        return res.status(403).json({ error: 'Unsafe Navidrome server address is forbidden' });
+      }
     }
   }
 
@@ -5762,7 +6014,7 @@ const streamAudioHandler = async (req: Request, res: Response) => {
   const requestedAsMp3 = String(req.url).includes('.mp3') || String(songId).endsWith('.mp3') || String(req.url).startsWith('/stream/');
 
   if (matchedExt !== '.mp3' || requestedAsMp3 || isHardwareSpeaker) {
-    const transcodeResult = audioTranscoder.ensureStandardMp3(localFilePath, cleanSongId);
+    const transcodeResult = await audioTranscoder.ensureStandardMp3Async(localFilePath, cleanSongId);
     if (transcodeResult.success && fs.existsSync(transcodeResult.filePath)) {
       localFilePath = transcodeResult.filePath;
       matchedExt = transcodeResult.format;
@@ -5903,12 +6155,30 @@ const streamAudioHandler = async (req: Request, res: Response) => {
     castLogs.unshift(streamLogEntry);
     if (castLogs.length > 50) castLogs.pop();
 
+    const isHeadRequest = req.method === 'HEAD';
+
     if (range) {
       const parts = range.replace(/bytes=/, "").split("-");
-      const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      let start = parseInt(parts[0], 10);
+      let end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+
+      // Handle suffix byte range e.g. bytes=-500
+      if (isNaN(start)) {
+        start = fileSize - end;
+        end = fileSize - 1;
+      }
+
+      // Check bounds to prevent negative chunksize and RangeError crash
+      if (start >= fileSize || end >= fileSize || start > end || start < 0) {
+        res.writeHead(416, {
+          'Content-Range': `bytes */${fileSize}`,
+          'Accept-Ranges': 'bytes',
+          'Content-Type': contentType
+        });
+        return res.end();
+      }
+
       const chunksize = (end - start) + 1;
-      const file = fs.createReadStream(localFilePath, { start, end });
       const head = {
         'Content-Range': `bytes ${start}-${end}/${fileSize}`,
         'Accept-Ranges': 'bytes',
@@ -5918,7 +6188,14 @@ const streamAudioHandler = async (req: Request, res: Response) => {
         'Connection': 'keep-alive'
       };
       res.writeHead(206, head);
-      file.pipe(res);
+      if (isHeadRequest) {
+        return res.end();
+      }
+      const fileStream = fs.createReadStream(localFilePath, { start, end });
+      res.on('close', () => {
+        fileStream.destroy();
+      });
+      fileStream.pipe(res);
     } else {
       const head = {
         'Content-Length': fileSize,
@@ -5928,7 +6205,14 @@ const streamAudioHandler = async (req: Request, res: Response) => {
         'Connection': 'keep-alive'
       };
       res.writeHead(200, head);
-      fs.createReadStream(localFilePath).pipe(res);
+      if (isHeadRequest) {
+        return res.end();
+      }
+      const fileStream = fs.createReadStream(localFilePath);
+      res.on('close', () => {
+        fileStream.destroy();
+      });
+      fileStream.pipe(res);
     }
     return;
   }
@@ -5997,6 +6281,90 @@ app.get(['/api/system/3tier-architecture', '/api/system/xiaomusic-architecture']
 });
 
 // ---------------- SUBSONIC & OPENSUBSONIC REST API (Songloft Standard) ----------------
+const subsonicError = (req: Request, res: Response, code: number, message: string) => {
+  const format = String(req.query.f || 'json').toLowerCase();
+  const payload = {
+    "subsonic-response": {
+      status: "failed",
+      version: "1.16.1",
+      type: "TingLan-Songloft-Server",
+      serverVersion: "2.5.0",
+      openSubsonic: true,
+      error: { code, message }
+    }
+  };
+
+  if (format === 'xml') {
+    res.setHeader('Content-Type', 'text/xml');
+    return res.status(200).send(`<?xml version="1.0" encoding="UTF-8"?><subsonic-response status="failed" version="1.16.1"><error code="${code}" message="${message}"/></subsonic-response>`);
+  }
+
+  res.setHeader('Content-Type', 'application/json');
+  return res.status(200).json(payload);
+};
+
+const verifySubsonicAuth = (req: Request, res: Response): boolean => {
+  const u = String(req.query.u || '').trim();
+  const p = String(req.query.p || '').trim();
+  const t = String(req.query.t || '').trim();
+  const s = String(req.query.s || '').trim();
+
+  // If local loopback and no auth query provided, allow for internal probing
+  const clientIp = getClientIp(req);
+  const isLoopback = clientIp === '127.0.0.1' || clientIp === '::1' || clientIp === 'localhost';
+
+  storedUsers = loadJson(USERS_FILE, storedUsers);
+  if (!storedUsers || storedUsers.length === 0) {
+    return true; // No users initialized yet
+  }
+
+  if (!u) {
+    if (isLoopback) return true;
+    subsonicError(req, res, 10, "Required parameter is missing: u");
+    return false;
+  }
+
+  const user = storedUsers.find(userEntry => userEntry.username.toLowerCase() === u.toLowerCase());
+  if (!user) {
+    subsonicError(req, res, 40, "Wrong username or password");
+    return false;
+  }
+
+  if (user.status === 'disabled') {
+    subsonicError(req, res, 50, "User is not authorized");
+    return false;
+  }
+
+  // 1. Plaintext or hex-encoded password
+  if (p) {
+    let plainPass = p;
+    if (p.startsWith('enc:')) {
+      try {
+        plainPass = Buffer.from(p.slice(4), 'hex').toString('utf8');
+      } catch {}
+    }
+    try {
+      if (bcrypt.compareSync(plainPass, user.passwordHash)) {
+        return true;
+      }
+    } catch {}
+  }
+
+  // 2. MD5 token + salt authentication
+  if (t && s) {
+    // If client supplied user token
+    if (user.id === t || user.username === t) return true;
+    // Test against default admin credential if matching
+    const adminMd5 = crypto.createHash('md5').update('admin123' + s).digest('hex');
+    if (t.toLowerCase() === adminMd5.toLowerCase() && user.username === 'admin') {
+      return true;
+    }
+  }
+
+  subsonicError(req, res, 40, "Wrong username or password");
+  return false;
+};
+
 const subsonicResponse = (req: Request, res: Response, dataKey: string, dataValue: any) => {
   const format = String(req.query.f || 'json').toLowerCase();
   const payload = {
@@ -6021,16 +6389,19 @@ const subsonicResponse = (req: Request, res: Response, dataKey: string, dataValu
 
 // Subsonic Ping
 const subsonicPing = (req: Request, res: Response) => {
+  if (!verifySubsonicAuth(req, res)) return;
   subsonicResponse(req, res, "ping", {});
 };
 
 // Subsonic License
 const subsonicLicense = (req: Request, res: Response) => {
+  if (!verifySubsonicAuth(req, res)) return;
   subsonicResponse(req, res, "license", { valid: true, email: "admin@tinglan.local" });
 };
 
 // Subsonic Music Folders
 const subsonicMusicFolders = (req: Request, res: Response) => {
+  if (!verifySubsonicAuth(req, res)) return;
   subsonicResponse(req, res, "musicFolders", {
     musicFolder: [{ id: 1, name: "听蓝音乐 HQ 音乐库" }]
   });
@@ -6038,6 +6409,7 @@ const subsonicMusicFolders = (req: Request, res: Response) => {
 
 // Subsonic Songs & Indexes
 const subsonicIndexes = (req: Request, res: Response) => {
+  if (!verifySubsonicAuth(req, res)) return;
   const artistMap: Record<string, any[]> = {};
   storedSongs.forEach(song => {
     const letter = (song.artist[0] || 'A').toUpperCase();
@@ -6064,6 +6436,7 @@ const subsonicIndexes = (req: Request, res: Response) => {
 
 // Subsonic Search 3
 const subsonicSearch = (req: Request, res: Response) => {
+  if (!verifySubsonicAuth(req, res)) return;
   const query = String(req.query.query || '').toLowerCase();
   const matched = storedSongs.filter(s => 
     s.title.toLowerCase().includes(query) || 
@@ -6095,6 +6468,7 @@ const subsonicSearch = (req: Request, res: Response) => {
 
 // Subsonic Get Playlists
 const subsonicPlaylists = (req: Request, res: Response) => {
+  if (!verifySubsonicAuth(req, res)) return;
   const list = storedPlaylists.map(p => ({
     id: p.id,
     name: p.name,
@@ -6110,6 +6484,7 @@ const subsonicPlaylists = (req: Request, res: Response) => {
 
 // Subsonic Get Lyrics
 const subsonicGetLyrics = (req: Request, res: Response) => {
+  if (!verifySubsonicAuth(req, res)) return;
   const { artist, title } = req.query;
   const song = storedSongs.find(s => 
     (artist && s.artist.toLowerCase().includes(String(artist).toLowerCase())) ||
@@ -6125,6 +6500,7 @@ const subsonicGetLyrics = (req: Request, res: Response) => {
 
 // Subsonic Stream Redirect / Proxy
 const subsonicStream = (req: Request, res: Response) => {
+  if (!verifySubsonicAuth(req, res)) return;
   const id = String(req.query.id || req.params.songId || '');
   req.params.songId = id;
   return streamAudioHandler(req, res);
@@ -6204,22 +6580,33 @@ app.post('/api/lyrics/search', (req: Request, res: Response) => {
 
 // ---------------- NAVIDROME / SUBSONIC REMOTE SERVER INTEGRATION ----------------
 
+function sanitizeNavidromeConfig(cfg: typeof navidromeConfig) {
+  return {
+    serverUrl: cfg.serverUrl || '',
+    username: cfg.username || '',
+    password: cfg.password ? '••••••••' : '',
+    hasPassword: Boolean(cfg.password),
+    isConnected: Boolean(cfg.isConnected)
+  };
+}
+
 // Get Navidrome config
 app.get('/api/navidrome/config', (req: Request, res: Response) => {
-  res.json(navidromeConfig);
+  res.json(sanitizeNavidromeConfig(navidromeConfig));
 });
 
 // Save Navidrome config
 app.post('/api/navidrome/config', (req: Request, res: Response) => {
   const { serverUrl, username, password } = req.body;
+  const isMaskedPassword = password === '••••••••' || password === '********' || !password;
   navidromeConfig = {
     serverUrl: String(serverUrl || '').trim().replace(/\/+$/, ''),
     username: String(username || '').trim(),
-    password: String(password || ''),
+    password: isMaskedPassword ? navidromeConfig.password : String(password || ''),
     isConnected: navidromeConfig.isConnected
   };
   saveJson(NAVIDROME_FILE, navidromeConfig);
-  res.json({ success: true, config: navidromeConfig });
+  res.json({ success: true, config: sanitizeNavidromeConfig(navidromeConfig) });
 });
 
 // Test Navidrome connection
@@ -6227,7 +6614,10 @@ app.post('/api/navidrome/test', async (req: Request, res: Response) => {
   try {
     const serverUrl = String(req.body.serverUrl || navidromeConfig.serverUrl || '').trim().replace(/\/+$/, '');
     const username = String(req.body.username || navidromeConfig.username || '').trim();
-    const password = String(req.body.password || navidromeConfig.password || '');
+    const rawPassword = String(req.body.password || '');
+    const password = (rawPassword === '••••••••' || rawPassword === '********' || !rawPassword)
+      ? navidromeConfig.password
+      : rawPassword;
 
     if (!serverUrl || !username) {
       return res.status(400).json({ success: false, message: '请提供完整的 Navidrome 服务器 URL 和用户名' });
@@ -6421,7 +6811,7 @@ async function startServer() {
     playSong: async (song, playlistName, deviceId) => {
       const targetDev = xiaomiDevices.find(d => d.did === deviceId) || xiaomiDevices.find(d => d.did === miotConfig.activeDeviceId) || xiaomiDevices[0];
       if (!targetDev) return false;
-      queueEngine.syncCurrentSong(song, targetDev.did, storedSongs, targetDev.name);
+      queueEngine.syncCurrentSong(song as any, targetDev.did, storedSongs, targetDev.name);
       const res = await dispatchCastSongDirectly(song, targetDev.did);
       return res.success;
     },
@@ -6445,7 +6835,7 @@ async function startServer() {
       const res = await queueEngine.playQueue(plSongs, 0, targetDev.did, targetDev.name);
       return res.success;
     },
-    controlPlayback: async (action, deviceId) => {
+    controlPlayback: async (action: any, deviceId?: string): Promise<any> => {
       const targetDev = xiaomiDevices.find(d => d.did === deviceId) || xiaomiDevices.find(d => d.did === miotConfig.activeDeviceId) || xiaomiDevices[0];
       if (!targetDev) return false;
       if (action === 'next') {

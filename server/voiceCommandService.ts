@@ -149,13 +149,14 @@ export class VoiceCommandService {
   private consecutiveErrors = 0;
   private lastSeenQuery = '';
   private lastSeenQueryTime = 0;
+  private recentCommands: Map<string, number> = new Map();
 
   // External bindings provided by server.ts
   private getSongsFn: (() => Song[]) | null = null;
   private getPlaylistsFn: (() => Playlist[]) | null = null;
   private playSongFn: ((song: Song, playlistName?: string, deviceId?: string) => Promise<boolean>) | null = null;
   private playPlaylistFn: ((playlistId: string, deviceId?: string) => Promise<boolean>) | null = null;
-  private controlPlaybackFn: ((action: 'next' | 'prev' | 'pause' | 'stop' | 'resume' | 'volume_up' | 'volume_down', deviceId?: string) => Promise<boolean>) | null = null;
+  private controlPlaybackFn: ((action: 'next' | 'prev' | 'pause' | 'stop' | 'resume' | 'volume_up' | 'volume_down', deviceId?: string) => Promise<boolean | { success: boolean; song?: any; message?: string }>) | null = null;
   private sendTtsFn: ((deviceId: string, text: string) => Promise<any>) | null = null;
   private getAuthInfoFn: (() => { userId?: string; serviceToken?: string; devices: any[] }) | null = null;
 
@@ -495,6 +496,23 @@ export class VoiceCommandService {
       .trim();
 
     if (!cleanQuery) cleanQuery = rawQuery;
+
+    // Idempotency de-duplication: prevent double execution from concurrent Mina WS and Mina cloud poll
+    const dedupeKey = `${cleanQuery.toLowerCase()}_${deviceId || 'any'}`;
+    const now = Date.now();
+    const lastTrigger = this.recentCommands.get(dedupeKey);
+    if (source !== 'test_manual' && lastTrigger && (now - lastTrigger < 5000)) {
+      console.log(`[VoiceCommandService] ⏳ 忽略5秒内重复语音指令: “${rawQuery}” (来源: ${source})`);
+      return { matched: false, summary: '重复语音指令（5秒内已处理，自动去重忽略）' };
+    }
+    this.recentCommands.set(dedupeKey, now);
+
+    // Housekeep dedupe map
+    if (this.recentCommands.size > 100) {
+      for (const [k, ts] of this.recentCommands.entries()) {
+        if (now - ts > 30000) this.recentCommands.delete(k);
+      }
+    }
 
     // Sort rules by specificity (control & playlist commands have higher priority than generic search)
     const enabledRules = [...this.config.rules.filter(r => r.enabled)].sort((a, b) => {
