@@ -1,5 +1,18 @@
 # Tinglan (听澜) - 小米智能音箱音乐中枢与高保真流媒体服务
 
+[简体中文](#) | [English](#) | [繁體中文](#) | [日本語](#) | [한국어](#)
+
+[![Version](https://img.shields.io/badge/version-2.5.0-007ec6?style=flat-square)](https://github.com/)
+[![Node.js](https://img.shields.io/badge/Node.js-18%2B-2c8ebb?style=flat-square&logo=node.js&logoColor=white&color=2e7d32)](https://nodejs.org/)
+[![WebSocket](https://img.shields.io/badge/WebSocket-Realtime-black?style=flat-square&logo=socketdotio&logoColor=white)](https://github.com/)
+[![MCP](https://img.shields.io/badge/MCP-22_Tools-7b1fa2?style=flat-square&logo=anthropic&logoColor=white)](https://github.com/)
+[![Git](https://img.shields.io/badge/Git-Auto_Backup-d84315?style=flat-square&logo=git&logoColor=white)](https://github.com/)
+[![Obsidian](https://img.shields.io/badge/Obsidian-Plugin-424242?style=flat-square&logo=obsidian&logoColor=white)](https://obsidian.md/)
+[![Database](https://img.shields.io/badge/Database-JSON_%7C_SQLite_%7C_Postgres_%7C_MySQL-0277bd?style=flat-square&logo=sqlite&logoColor=white)](https://github.com/)
+[![Docker](https://img.shields.io/badge/Docker-Ready-0288d1?style=flat-square&logo=docker&logoColor=white)](https://www.docker.com/)
+[![i18n](https://img.shields.io/badge/i18n-5_Languages-00897b?style=flat-square)](https://github.com/)
+[![License](https://img.shields.io/badge/License-MIT-f57c00?style=flat-square&logo=open-source-initiative&logoColor=white)](LICENSE)
+
 > 专为**小米智能音箱全系列**（小爱音箱 Pro、Xiaomi Sound Pro、小爱触屏音箱、小爱音箱 Play 等）及家庭私有 NAS 打造的高保真本地音乐流媒体中枢、MIoT 协议播控中心、OpenSubsonic 兼容服务与 LRC 动态动效歌词平台。
 
 ---
