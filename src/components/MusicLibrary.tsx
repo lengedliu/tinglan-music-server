@@ -241,36 +241,33 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
   return (
     <div className="space-y-6 pb-28">
       
-      {/* Top Banner / Dashboard Hero Info with Immersive UI Styling */}
-      <div className="relative overflow-hidden rounded-3xl border border-white/10 shadow-2xl p-6 sm:p-8 bg-zinc-950/80">
-        <div className="absolute inset-0 bg-gradient-to-r from-blue-900/25 to-[#FF6700]/30 mix-blend-overlay pointer-events-none" />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent pointer-events-none" />
-        <div className="absolute top-[-20%] right-[-10%] w-[350px] h-[350px] bg-[#FF6700]/15 rounded-full blur-[90px] pointer-events-none" />
-
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="space-y-2.5">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#FF6700]/10 border border-[#FF6700]/30 text-[#FF6700] text-xs font-semibold tracking-wide">
+      {/* Top Banner / Dashboard Hero Info (Referencing Subsonic Server Card Architecture) */}
+      <div className="p-6 sm:p-8 rounded-3xl bg-zinc-900/60 backdrop-blur-xl border border-white/10 relative overflow-hidden shadow-2xl">
+        <div className="absolute top-0 right-0 w-96 h-96 bg-[#FF6700]/10 blur-[120px] pointer-events-none" />
+        
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
+          <div className="space-y-3 max-w-2xl">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/30 text-xs font-semibold">
               <Radio className="w-3.5 h-3.5" />
               <span>当前连接音箱：{activeDevice?.name || '未选择音箱'}</span>
               <span className={`w-2 h-2 rounded-full ${activeDevice?.isOnline ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]' : 'bg-zinc-500'}`} />
             </div>
-            <span className="text-[10px] uppercase tracking-[0.2em] text-[#FF6700] font-bold block">
-              Featured Master Audio
-            </span>
-            <h1 className="text-2xl sm:text-3xl font-bold text-white tracking-tight">
+
+            <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
               私有音乐曲库
             </h1>
-            <p className="text-xs sm:text-sm text-zinc-300 max-w-2xl leading-relaxed">
+
+            <p className="text-sm text-zinc-300 leading-relaxed">
               支持 FLAC / 320k MP3 / DSD 纯净串流，通过 MIoT 协议一键推送到小米小爱音箱。本地目录实时挂载，适配 NAS 与 Docker 独立部署。
             </p>
           </div>
 
-          <div className="relative z-10 flex flex-wrap items-center gap-3">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 flex-shrink-0 relative z-10">
             {onOpenNavidromeModal && (
               <button
                 id="btn-open-navidrome-modal"
                 onClick={onOpenNavidromeModal}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 text-sm font-semibold backdrop-blur-md transition-all border border-emerald-500/30 active:scale-95 shadow-sm"
+                className="flex items-center justify-center gap-2 px-4 py-3 rounded-2xl bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-semibold border border-white/10 transition active:scale-95 shadow-sm"
                 title="连接 Navidrome / Subsonic 远程服务器"
               >
                 <Server className="w-4 h-4 text-emerald-400" />
@@ -282,21 +279,41 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
               id="btn-scan-music-library"
               onClick={onScanMusicDir}
               disabled={isScanning}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-white/10 hover:bg-white/20 text-white text-sm font-semibold backdrop-blur-md transition-all border border-white/10 active:scale-95 disabled:opacity-50 shadow-sm"
+              className="flex items-center justify-center gap-2 px-4 py-3 rounded-2xl bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-semibold border border-white/10 transition active:scale-95 disabled:opacity-50 shadow-sm"
               title="重新扫描 Docker 挂载的 /app/music 目录"
             >
-              <FolderSync className={`w-4 h-4 ${isScanning ? 'animate-spin text-[#FF6700]' : ''}`} />
+              <FolderSync className={`w-4 h-4 ${isScanning ? 'animate-spin text-[#FF6700]' : 'text-zinc-400'}`} />
               <span>{isScanning ? '扫描中...' : '扫描挂载目录'}</span>
             </button>
 
             <button
               id="btn-upload-music-file"
               onClick={onOpenUploadModal}
-              className="flex items-center gap-2 px-6 py-2.5 rounded-full bg-[#FF6700] hover:bg-[#e55c00] text-white text-sm font-semibold shadow-[0_4px_20px_rgba(255,103,0,0.35)] transition-all active:scale-95"
+              className="flex items-center justify-center gap-2 px-5 py-3 rounded-2xl bg-[#FF6700] hover:bg-[#e55c00] text-white text-xs font-bold shadow-[0_4px_20px_rgba(255,103,0,0.3)] transition active:scale-95"
             >
               <UploadCloud className="w-4 h-4" />
               <span>导入/上传音乐</span>
             </button>
+          </div>
+        </div>
+
+        {/* Library Metrics Cards (Subsonic Style) */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-8 pt-6 border-t border-white/10 relative z-10">
+          <div className="p-4 rounded-2xl bg-zinc-950/60 border border-white/5 space-y-1">
+            <span className="text-[10px] text-zinc-500 font-medium uppercase tracking-wider block">曲库总量</span>
+            <span className="text-base font-bold text-white font-mono">{songs.length} 首发烧曲目</span>
+          </div>
+          <div className="p-4 rounded-2xl bg-zinc-950/60 border border-white/5 space-y-1">
+            <span className="text-[10px] text-zinc-500 font-medium uppercase tracking-wider block">自建歌单</span>
+            <span className="text-base font-bold text-amber-400 font-mono">{playlists.length} 个播放列表</span>
+          </div>
+          <div className="p-4 rounded-2xl bg-zinc-950/60 border border-white/5 space-y-1">
+            <span className="text-[10px] text-zinc-500 font-medium uppercase tracking-wider block">当前筛选匹配</span>
+            <span className="text-base font-bold text-emerald-400 font-mono">{filteredSongs.length} 首曲目</span>
+          </div>
+          <div className="p-4 rounded-2xl bg-zinc-950/60 border border-white/5 space-y-1">
+            <span className="text-[10px] text-zinc-500 font-medium uppercase tracking-wider block">母带串流标准</span>
+            <span className="text-base font-bold text-cyan-400 font-mono">FLAC 96k / MIoT</span>
           </div>
         </div>
       </div>

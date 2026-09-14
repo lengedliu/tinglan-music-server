@@ -1170,79 +1170,72 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
   return (
     <div className="space-y-6 pb-28">
       
-      {/* Top Banner with Immersive UI Styling */}
-      <div className="relative overflow-hidden rounded-3xl bg-zinc-950/80 border border-white/10 shadow-2xl p-6 sm:p-8">
-        <div className="absolute inset-0 bg-gradient-to-r from-blue-900/20 to-[#FF6700]/25 mix-blend-overlay pointer-events-none" />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent pointer-events-none" />
-        <div className="absolute top-[-10%] right-[-5%] w-[350px] h-[350px] bg-[#FF6700]/15 rounded-full blur-[100px] pointer-events-none" />
+      {/* Top Banner: Xiaomi & Audio Protocol Hub (Referencing Subsonic Server Card Architecture) */}
+      <div className="p-6 sm:p-8 rounded-3xl bg-zinc-900/60 backdrop-blur-xl border border-white/10 relative overflow-hidden shadow-2xl">
+        <div className="absolute top-0 right-0 w-96 h-96 bg-[#FF6700]/10 blur-[120px] pointer-events-none" />
 
-        <div className="relative z-10 space-y-3">
-          {/* Main Controls & Header Row */}
-          <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
-            {/* Title + Status Pills */}
-            <div className="flex flex-wrap items-center gap-2 sm:gap-2.5 min-w-0">
-              <span className="p-1.5 sm:p-2 rounded-xl bg-[#FF6700]/20 text-[#FF6700] border border-[#FF6700]/30 shadow-[0_0_10px_rgba(255,103,0,0.3)] shrink-0">
-                <Radio className="w-4 h-4 sm:w-5 sm:h-5" />
-              </span>
-              <h1 className="text-[1.4rem] font-bold text-white tracking-tight shrink-0 mr-1 leading-tight">
-                播放协议控制中枢 (Cast Protocols Hub)
-              </h1>
-
-              {/* Unified compact status badges: only 2 pills directly after title */}
-              <span className="text-[11px] uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold flex items-center gap-1.5 shadow-sm shrink-0 whitespace-nowrap">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_6px_rgba(52,211,153,0.8)]" />
-                多协议在线
-              </span>
-
-              {minaWsStatus.connected ? (
-                <span
-                  className="text-[11px] uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-blue-500/20 text-blue-400 border border-blue-500/30 font-semibold flex items-center gap-1.5 shadow-sm shrink-0 whitespace-nowrap"
-                  title={`Mina WS 长连接在线 (已接收 ${minaWsStatus.messageCount} 条小爱事件)`}
-                >
-                  <Activity className="w-3.5 h-3.5 text-blue-400 animate-pulse" />
-                  <span>Mina WS 在线</span>
-                </span>
-              ) : (
-                <button
-                  onClick={handleReconnectMinaWs}
-                  className="text-[11px] uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-zinc-900/90 hover:bg-blue-500/20 text-zinc-400 hover:text-blue-300 border border-white/10 hover:border-blue-500/30 font-semibold flex items-center gap-1.5 shadow-sm shrink-0 whitespace-nowrap transition active:scale-95 group cursor-pointer"
-                  title="Mina WS 离线，点击重新建立长连接"
-                >
-                  <Activity className="w-3.5 h-3.5 text-zinc-500 group-hover:text-blue-400" />
-                  <span>Mina WS 离线 <span className="text-blue-400/80 font-normal">· 重连</span></span>
-                </button>
-              )}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
+          <div className="space-y-3 max-w-2xl">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/30 text-xs font-semibold">
+              <Radio className="w-3.5 h-3.5" />
+              <span>智能音箱与多协议控制中枢 · MIoT / Mina / DLNA / AirPlay</span>
             </div>
 
-            {/* Right Action Buttons */}
-            <div className="flex items-center gap-3 shrink-0 self-start xl:self-center">
-              <button
-                id="btn-scan-xiaomi-devices"
-                onClick={onScanDevices}
-                disabled={isScanning}
-                className="flex items-center gap-2 px-4 py-2 rounded-full bg-white/10 hover:bg-white/20 text-white text-xs sm:text-sm font-semibold backdrop-blur-md border border-white/10 transition active:scale-95 disabled:opacity-50 shadow-sm shrink-0 whitespace-nowrap"
-              >
-                <RefreshCw className={`w-4 h-4 ${isScanning ? 'animate-spin text-[#FF6700]' : ''}`} />
-                <span>{isScanning ? '扫描设备中...' : '重新扫描设备'}</span>
-              </button>
+            <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
+              播放协议控制中枢
+            </h1>
 
-              {currentSong && (
-                <button
-                  id="btn-cast-now-banner"
-                  onClick={onCastCurrentSong}
-                  className="flex items-center gap-2 px-5 py-2 rounded-full bg-gradient-to-r from-[#FF6700] to-[#ff7b1a] hover:from-[#e55c00] hover:to-[#FF6700] text-white text-xs sm:text-sm font-bold shadow-[0_4px_22px_rgba(255,103,0,0.45)] border border-[#FF6700]/50 transition active:scale-95 shrink-0 whitespace-nowrap"
-                >
-                  <Cast className="w-4 h-4" />
-                  <span>投放到【{cleanDeviceName(activeDevice?.name)}】</span>
-                </button>
-              )}
-            </div>
+            <p className="text-sm text-zinc-300 leading-relaxed">
+              Tinglan 家庭音乐控制层：支持 XiaoAi MIoT / Mina 智能音箱、DLNA / UPnP 局域网影音设备、AirPlay 音频路由及 Web Audio 本地高保真 DAC 声卡输出。
+            </p>
           </div>
 
-          {/* Subtitle / Description */}
-          <p className="text-xs sm:text-sm text-zinc-300 leading-relaxed max-w-3xl">
-            Tinglan 家庭音乐控制层：支持 XiaoAi MIoT / Mina 智能音箱、DLNA / UPnP 局域网影音设备、AirPlay 音频路由及 Web Audio 本地高保真 DAC 声卡输出。
-          </p>
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 flex-shrink-0 relative z-10">
+            <button
+              id="btn-scan-xiaomi-devices"
+              onClick={onScanDevices}
+              disabled={isScanning}
+              className="flex items-center justify-center gap-2 px-4 py-3 rounded-2xl bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-semibold border border-white/10 transition active:scale-95 disabled:opacity-50 shadow-sm"
+            >
+              <RefreshCw className={`w-4 h-4 ${isScanning ? 'animate-spin text-[#FF6700]' : 'text-zinc-400'}`} />
+              <span>{isScanning ? '扫描设备中...' : '重新扫描设备'}</span>
+            </button>
+
+            {currentSong && (
+              <button
+                id="btn-cast-now-banner"
+                onClick={onCastCurrentSong}
+                className="flex items-center justify-center gap-2 px-5 py-3 rounded-2xl bg-[#FF6700] hover:bg-[#e55c00] text-white text-xs font-bold shadow-[0_4px_20px_rgba(255,103,0,0.3)] transition active:scale-95"
+              >
+                <Cast className="w-4 h-4" />
+                <span>投放到【{cleanDeviceName(activeDevice?.name)}】</span>
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Protocol & Device Metrics Cards (Identical Subsonic Style) */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-8 pt-6 border-t border-white/10 relative z-10">
+          <div className="p-4 rounded-2xl bg-zinc-950/60 border border-white/5 space-y-1">
+            <span className="text-[10px] text-zinc-500 font-medium uppercase tracking-wider block">音箱设备</span>
+            <span className="text-base font-bold text-emerald-400 font-mono">{devices.length} 台已发现</span>
+          </div>
+          <div className="p-4 rounded-2xl bg-zinc-950/60 border border-white/5 space-y-1">
+            <span className="text-[10px] text-zinc-500 font-medium uppercase tracking-wider block">Mina WS 监听</span>
+            <span className={`text-base font-bold font-mono ${minaWsStatus.connected ? 'text-blue-400' : 'text-zinc-400'}`}>
+              {minaWsStatus.connected ? '长连已握手' : '长连离线'}
+            </span>
+          </div>
+          <div className="p-4 rounded-2xl bg-zinc-950/60 border border-white/5 space-y-1">
+            <span className="text-[10px] text-zinc-500 font-medium uppercase tracking-wider block">当前目标设备</span>
+            <span className="text-base font-bold text-amber-400 font-mono truncate block" title={cleanDeviceName(activeDevice?.name)}>
+              {cleanDeviceName(activeDevice?.name)}
+            </span>
+          </div>
+          <div className="p-4 rounded-2xl bg-zinc-950/60 border border-white/5 space-y-1">
+            <span className="text-[10px] text-zinc-500 font-medium uppercase tracking-wider block">协议网关</span>
+            <span className="text-base font-bold text-white font-mono">MIoT + DLNA</span>
+          </div>
         </div>
 
         {/* Phase 4: Stream Lifecycle State Banner */}
