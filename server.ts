@@ -254,7 +254,9 @@ let navidromeConfig = loadJson(NAVIDROME_FILE, {
   serverUrl: '',
   username: '',
   password: '',
-  isConnected: false
+  isConnected: false,
+  apiVersion: '1.16.1',
+  serverVersion: ''
 });
 
 // Reset if config file previously stored masked placeholder string
@@ -263,10 +265,16 @@ if (navidromeConfig.password === '••••••••' || navidromeConfig.p
   navidromeConfig.isConnected = false;
 }
 
-function getSubsonicAuthQuery(user: string, pass: string): string {
+function getSubsonicAuthQuery(user: string, pass: string, apiVer?: string): string {
   const salt = crypto.randomBytes(6).toString('hex');
   const token = crypto.createHash('md5').update(pass + salt).digest('hex');
-  return `u=${encodeURIComponent(user)}&t=${token}&s=${salt}&v=1.16.1&c=TingLanMusic&f=json`;
+  const ver = apiVer || navidromeConfig.apiVersion || '1.16.1';
+  return `u=${encodeURIComponent(user)}&t=${token}&s=${salt}&v=${encodeURIComponent(ver)}&c=TingLanMusic&f=json`;
+}
+
+function getSubsonicPassAuthQuery(user: string, pass: string, apiVer?: string): string {
+  const ver = apiVer || navidromeConfig.apiVersion || '1.16.1';
+  return `u=${encodeURIComponent(user)}&p=${encodeURIComponent(pass)}&v=${encodeURIComponent(ver)}&c=TingLanMusic&f=json`;
 }
 
 // User & Database persistence paths
@@ -6654,7 +6662,9 @@ function sanitizeNavidromeConfig(cfg: typeof navidromeConfig) {
     username: cfg.username || '',
     password: cfg.password ? '••••••••' : '',
     hasPassword: Boolean(cfg.password),
-    isConnected: Boolean(cfg.isConnected)
+    isConnected: Boolean(cfg.isConnected),
+    apiVersion: cfg.apiVersion || '1.16.1',
+    serverVersion: cfg.serverVersion || ''
   };
 }
 
@@ -6671,7 +6681,9 @@ app.post('/api/navidrome/config', (req: Request, res: Response) => {
     serverUrl: String(serverUrl || '').trim().replace(/\/+$/, ''),
     username: String(username || '').trim(),
     password: isMaskedPassword ? navidromeConfig.password : String(password || ''),
-    isConnected: navidromeConfig.isConnected
+    isConnected: navidromeConfig.isConnected,
+    apiVersion: navidromeConfig.apiVersion || '1.16.1',
+    serverVersion: navidromeConfig.serverVersion || ''
   };
   saveJson(NAVIDROME_FILE, navidromeConfig);
   res.json({ success: true, config: sanitizeNavidromeConfig(navidromeConfig) });
@@ -6691,36 +6703,66 @@ app.post('/api/navidrome/test', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: '请提供完整的 Navidrome 服务器 URL 和用户名' });
     }
 
-    const authQuery = getSubsonicAuthQuery(username, password);
-    const targetUrl = `${serverUrl}/rest/ping.view?${authQuery}`;
+    const tokenQuery = getSubsonicAuthQuery(username, password);
+    const passQuery = getSubsonicPassAuthQuery(username, password);
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 6000);
+    const candidateUrls = [
+      `${serverUrl}/rest/ping?${passQuery}`,
+      `${serverUrl}/rest/ping.view?${passQuery}`,
+      `${serverUrl}/rest/ping?${tokenQuery}`,
+      `${serverUrl}/rest/ping.view?${tokenQuery}`
+    ];
 
-    const response = await fetch(targetUrl, { signal: controller.signal });
-    clearTimeout(timeout);
+    let subResp: any = null;
+    let lastErr = '';
 
-    if (!response.ok) {
-      return res.json({
-        success: false,
-        message: `HTTP 响应状态错误: ${response.status} ${response.statusText}`
-      });
+    for (const targetUrl of candidateUrls) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 6000);
+        const response = await fetch(targetUrl, { signal: controller.signal });
+        clearTimeout(timeout);
+
+        if (!response.ok) {
+          lastErr = `HTTP ${response.status} ${response.statusText}`;
+          continue;
+        }
+
+        const data = await response.json().catch(() => null);
+        const resp = data ? data['subsonic-response'] : null;
+        if (resp && resp.status === 'ok') {
+          subResp = resp;
+          break;
+        } else if (resp?.error?.message) {
+          lastErr = resp.error.message;
+        }
+      } catch (err: any) {
+        lastErr = err.message || '网络连接超时';
+      }
     }
 
-    const data = await response.json();
-    const subResp = data['subsonic-response'];
-
     if (subResp && subResp.status === 'ok') {
-      navidromeConfig = { serverUrl, username, password, isConnected: true };
+      const detectedApiVer = subResp.version || '1.16.1';
+      const detectedServerVer = subResp.serverVersion || subResp.version || 'Subsonic Engine';
+
+      navidromeConfig = { 
+        serverUrl, 
+        username, 
+        password, 
+        isConnected: true, 
+        apiVersion: detectedApiVer, 
+        serverVersion: detectedServerVer 
+      };
       saveJson(NAVIDROME_FILE, navidromeConfig);
 
       return res.json({
         success: true,
-        message: `成功连通 Navidrome 服务器！(Protocol: Subsonic v${subResp.version || '1.16.1'})`,
-        version: subResp.serverVersion || subResp.version || 'Subsonic Engine'
+        message: `成功连通 Navidrome 服务器！(检测到 API 协议版本: v${detectedApiVer})`,
+        version: detectedServerVer,
+        apiVersion: detectedApiVer
       });
     } else {
-      const errDetail = subResp?.error?.message || '身份鉴权失败，请核对用户名和密码';
+      const errDetail = lastErr || '身份鉴权失败，请核对用户名和密码';
       return res.json({ success: false, message: `Navidrome 拒绝连接: ${errDetail}` });
     }
   } catch (e: any) {
@@ -6749,18 +6791,24 @@ app.post('/api/navidrome/sync', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: '请重新在上方填入 Navidrome 登录密码并保存' });
     }
 
-    const authQuery = getSubsonicAuthQuery(username, password);
+    const tokenQuery = getSubsonicAuthQuery(username, password);
+    const passQuery = getSubsonicPassAuthQuery(username, password);
     
     // Multiple strategies to retrieve tracks from Navidrome
     const queryUrls = [
-      `${serverUrl}/rest/getRandomSongs.view?size=500&${authQuery}`,
-      `${serverUrl}/rest/search3.view?query=&songCount=500&${authQuery}`,
-      `${serverUrl}/rest/search3.view?query=%20&songCount=500&${authQuery}`,
-      `${serverUrl}/rest/search3.view?query=a&songCount=500&${authQuery}`
+      `${serverUrl}/rest/getRandomSongs?size=500&${passQuery}`,
+      `${serverUrl}/rest/getRandomSongs.view?size=500&${passQuery}`,
+      `${serverUrl}/rest/search3?query=&songCount=500&${passQuery}`,
+      `${serverUrl}/rest/search3.view?query=&songCount=500&${passQuery}`,
+      `${serverUrl}/rest/getRandomSongs?size=500&${tokenQuery}`,
+      `${serverUrl}/rest/getRandomSongs.view?size=500&${tokenQuery}`,
+      `${serverUrl}/rest/search3?query=&songCount=500&${tokenQuery}`,
+      `${serverUrl}/rest/search3.view?query=&songCount=500&${tokenQuery}`
     ];
 
     let songList: any[] = [];
     let lastError = '';
+    let activeAuthQuery = passQuery;
 
     for (const targetUrl of queryUrls) {
       try {
@@ -6778,10 +6826,16 @@ app.post('/api/navidrome/sync', async (req: Request, res: Response) => {
         const subResp = data ? data['subsonic-response'] : null;
 
         if (subResp && subResp.status === 'ok') {
-          const raw = subResp?.randomSongs?.song || subResp?.searchResult3?.song || subResp?.song || [];
+          if (subResp.version) navidromeConfig.apiVersion = subResp.version;
+          if (subResp.serverVersion) navidromeConfig.serverVersion = subResp.serverVersion;
+
+          const raw = subResp?.randomSongs?.song || subResp?.searchResult3?.song || subResp?.searchResult?.song || subResp?.songs?.song || subResp?.song || [];
           const items = Array.isArray(raw) ? raw : (raw ? [raw] : []);
           if (items.length > 0) {
             songList = items;
+            if (targetUrl.includes(tokenQuery)) {
+              activeAuthQuery = tokenQuery;
+            }
             break;
           }
         } else if (subResp?.error?.message) {
@@ -6799,34 +6853,36 @@ app.post('/api/navidrome/sync', async (req: Request, res: Response) => {
       });
     }
 
-    // Convert to TingLan Song objects
+    // Convert to TingLan Song objects dynamically
     let importedCount = 0;
     const defaultCover = 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=600&q=80';
 
     const newNavidromeSongs = songList.map((item: any) => {
-      const songId = `navidrome-${item.id}`;
-      const streamUrl = `${serverUrl}/rest/stream.view?id=${item.id}&${authQuery}`;
-      const coverUrl = item.coverArt 
-        ? `${serverUrl}/rest/getCoverArt.view?id=${item.coverArt}&${authQuery}`
+      const trackId = item.id || item.songId || item.key;
+      const songId = `navidrome-${trackId}`;
+      const streamUrl = `${serverUrl}/rest/stream?id=${encodeURIComponent(trackId)}&${activeAuthQuery}`;
+      const coverArtId = item.coverArt || item.coverArtId || item.cover || trackId;
+      const coverUrl = coverArtId 
+        ? `${serverUrl}/rest/getCoverArt?id=${encodeURIComponent(coverArtId)}&${activeAuthQuery}`
         : defaultCover;
 
       return {
         id: songId,
-        title: item.title || 'Navidrome Track',
-        artist: item.artist || '未知歌手',
-        album: item.album || 'Navidrome 音乐库',
-        duration: item.duration || 210,
+        title: item.title || item.name || 'Navidrome Track',
+        artist: item.artist || item.artistName || '未知歌手',
+        album: item.album || item.albumName || 'Navidrome 音乐库',
+        duration: Number(item.duration || 210),
         url: streamUrl,
         coverUrl: coverUrl,
         genre: item.genre || 'Navidrome',
         year: item.year || 2024,
-        bitrate: `${item.bitRate || 320}kbps ${item.suffix || 'mp3'}`,
+        bitrate: item.bitRate ? `${item.bitRate}kbps ${item.suffix || 'mp3'}` : '320kbps mp3',
         fileSize: item.size ? `${(item.size / (1024 * 1024)).toFixed(1)} MB` : '12 MB',
-        isFavorite: false,
+        isFavorite: Boolean(item.starred || item.isFavorite),
         source: 'uploaded',
-        lyrics: item.lyrics || `[00:00.00] ${item.title} - ${item.artist}\n[00:05.00] 来自 Navidrome 远程曲库\n[00:12.00] 小爱音箱高保真串流中...`
+        lyrics: item.lyrics || `[00:00.00] ${item.title || 'Track'} - ${item.artist || 'Artist'}\n[00:05.00] 来自 Navidrome 远程曲库\n[00:12.00] 小爱音箱高保真串流中...`
       };
-    });
+    }).filter((s: any) => Boolean(s.id));
 
     // Merge into storedSongs without duplicating
     newNavidromeSongs.forEach(newSong => {
@@ -6843,7 +6899,14 @@ app.post('/api/navidrome/sync', async (req: Request, res: Response) => {
 
     // Save active config securely
     if (password && password !== '••••••••' && password !== '********') {
-      navidromeConfig = { serverUrl, username, password, isConnected: true };
+      navidromeConfig = {
+        serverUrl,
+        username,
+        password,
+        isConnected: true,
+        apiVersion: navidromeConfig.apiVersion || '1.16.1',
+        serverVersion: navidromeConfig.serverVersion || ''
+      };
       saveJson(NAVIDROME_FILE, navidromeConfig);
     }
 
@@ -6877,16 +6940,32 @@ app.all('/api/navidrome/playlists', async (req: Request, res: Response) => {
 
     // Auto-persist active credentials if valid
     if (password && (serverUrl !== navidromeConfig.serverUrl || username !== navidromeConfig.username || password !== navidromeConfig.password)) {
-      navidromeConfig = { serverUrl, username, password, isConnected: true };
+      navidromeConfig = {
+        serverUrl,
+        username,
+        password,
+        isConnected: true,
+        apiVersion: navidromeConfig.apiVersion || '1.16.1',
+        serverVersion: navidromeConfig.serverVersion || ''
+      };
       saveJson(NAVIDROME_FILE, navidromeConfig);
     }
 
-    const authQuery = getSubsonicAuthQuery(username, password);
+    const tokenQuery = getSubsonicAuthQuery(username, password);
+    const passQuery = getSubsonicPassAuthQuery(username, password);
 
     // Try multiple query endpoints with short timeout for fast fallback
     const candidateUrls = [
-      `${serverUrl}/rest/getPlaylists.view?${authQuery}`,
-      `${serverUrl}/rest/getPlaylists.view?username=${encodeURIComponent(username)}&${authQuery}`
+      `${serverUrl}/rest/getPlaylists?${passQuery}`,
+      `${serverUrl}/rest/getPlaylists.view?${passQuery}`,
+      `${serverUrl}/rest/getPlaylists?${tokenQuery}`,
+      `${serverUrl}/rest/getPlaylists.view?${tokenQuery}`,
+      `${serverUrl}/rest/getPlaylists?u=${encodeURIComponent(username)}&p=${encodeURIComponent(password)}&v=1.16.1&c=TingLanMusic&f=json`,
+      `${serverUrl}/rest/getPlaylists.view?u=${encodeURIComponent(username)}&p=${encodeURIComponent(password)}&v=1.16.1&c=TingLanMusic&f=json`,
+      `${serverUrl}/rest/getPlaylists?username=${encodeURIComponent(username)}&${passQuery}`,
+      `${serverUrl}/rest/getPlaylists.view?username=${encodeURIComponent(username)}&${passQuery}`,
+      `${serverUrl}/rest/getPlaylists?username=${encodeURIComponent(username)}&${tokenQuery}`,
+      `${serverUrl}/rest/getPlaylists.view?username=${encodeURIComponent(username)}&${tokenQuery}`
     ];
 
     let subResp: any = null;
@@ -6910,17 +6989,16 @@ app.all('/api/navidrome/playlists', async (req: Request, res: Response) => {
 
         const resp = data['subsonic-response'];
 
-        if (resp) {
+        if (resp && resp.status === 'ok') {
           subResp = resp;
-          if (resp.status === 'ok') {
-            const extracted = extractSubsonicPlaylists(resp);
-            if (extracted.length > 0) {
-              rawItems = extracted;
-              break;
-            }
-          } else if (resp.error?.message) {
-            lastErrorMsg = resp.error.message;
-          }
+          if (resp.version) navidromeConfig.apiVersion = resp.version;
+          if (resp.serverVersion) navidromeConfig.serverVersion = resp.serverVersion;
+
+          const extracted = extractSubsonicPlaylists(resp);
+          rawItems = extracted;
+          break;
+        } else if (resp?.error?.message) {
+          lastErrorMsg = resp.error.message;
         }
       } catch (err: any) {
         lastErrorMsg = err.message || '网络连接超时';
@@ -6940,7 +7018,7 @@ app.all('/api/navidrome/playlists', async (req: Request, res: Response) => {
     const formattedPlaylists = rawItems.map((p: any) => {
       const coverArtId = p.coverArt || p.coverArtId || p.cover;
       const coverUrl = coverArtId 
-        ? `${serverUrl}/rest/getCoverArt.view?id=${coverArtId}&${authQuery}`
+        ? `${serverUrl}/rest/getCoverArt?id=${coverArtId}&${passQuery}`
         : defaultCover;
 
       return {
@@ -7029,25 +7107,48 @@ app.post('/api/navidrome/import-playlists', async (req: Request, res: Response) 
       return res.status(400).json({ success: false, message: 'Navidrome 连接未配置' });
     }
 
-    const authQuery = getSubsonicAuthQuery(username, password);
+    const tokenQuery = getSubsonicAuthQuery(username, password);
+    const passQuery = getSubsonicPassAuthQuery(username, password);
     const defaultCover = 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=600&q=80';
 
     let totalSongsImported = 0;
     let totalPlaylistsImported = 0;
 
     for (const plId of playlistIds) {
-      const targetUrl = `${serverUrl}/rest/getPlaylist.view?id=${encodeURIComponent(plId)}&${authQuery}`;
       try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 12000);
-        const response = await fetch(targetUrl, { signal: controller.signal });
-        clearTimeout(timeout);
+        const candidateUrls = [
+          `${serverUrl}/rest/getPlaylist?id=${encodeURIComponent(plId)}&${passQuery}`,
+          `${serverUrl}/rest/getPlaylist.view?id=${encodeURIComponent(plId)}&${passQuery}`,
+          `${serverUrl}/rest/getPlaylist?id=${encodeURIComponent(plId)}&${tokenQuery}`,
+          `${serverUrl}/rest/getPlaylist.view?id=${encodeURIComponent(plId)}&${tokenQuery}`
+        ];
 
-        if (!response.ok) continue;
+        let naviPl: any = null;
+        let activeAuthQuery = passQuery;
 
-        const data = await response.json();
-        const subResp = data['subsonic-response'];
-        const naviPl = subResp?.playlist;
+        for (const targetUrl of candidateUrls) {
+          try {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 8000);
+            const response = await fetch(targetUrl, { signal: controller.signal });
+            clearTimeout(timeout);
+
+            if (!response.ok) continue;
+
+            const data = await response.json().catch(() => null);
+            const subResp = data ? data['subsonic-response'] : null;
+            if (subResp && subResp.status === 'ok' && subResp.playlist) {
+              naviPl = subResp.playlist;
+              if (targetUrl.includes(tokenQuery)) {
+                activeAuthQuery = tokenQuery;
+              }
+              break;
+            }
+          } catch (e) {
+            // Continue to next candidate
+          }
+        }
+
         if (!naviPl) continue;
 
         const rawEntries = naviPl.entry || [];
@@ -7059,9 +7160,9 @@ app.post('/api/navidrome/import-playlists', async (req: Request, res: Response) 
           const songId = `navidrome-${item.id}`;
           songIdList.push(songId);
 
-          const streamUrl = `${serverUrl}/rest/stream.view?id=${item.id}&${authQuery}`;
+          const streamUrl = `${serverUrl}/rest/stream?id=${item.id}&${activeAuthQuery}`;
           const coverUrl = item.coverArt 
-            ? `${serverUrl}/rest/getCoverArt.view?id=${item.coverArt}&${authQuery}`
+            ? `${serverUrl}/rest/getCoverArt?id=${item.coverArt}&${activeAuthQuery}`
             : defaultCover;
 
           const songObj = {
@@ -7091,9 +7192,9 @@ app.post('/api/navidrome/import-playlists', async (req: Request, res: Response) 
         }
 
         const plCoverUrl = naviPl.coverArt 
-          ? `${serverUrl}/rest/getCoverArt.view?id=${naviPl.coverArt}&${authQuery}`
+          ? `${serverUrl}/rest/getCoverArt?id=${naviPl.coverArt}&${activeAuthQuery}`
           : (entryArray[0]?.coverArt 
-              ? `${serverUrl}/rest/getCoverArt.view?id=${entryArray[0].coverArt}&${authQuery}` 
+              ? `${serverUrl}/rest/getCoverArt?id=${entryArray[0].coverArt}&${activeAuthQuery}` 
               : defaultCover);
 
         const targetPlId = `navidrome-pl-${naviPl.id}`;
@@ -7124,7 +7225,14 @@ app.post('/api/navidrome/import-playlists', async (req: Request, res: Response) 
     saveJson(PLAYLISTS_FILE, storedPlaylists);
 
     // Save active config
-    navidromeConfig = { serverUrl, username, password, isConnected: true };
+    navidromeConfig = {
+      serverUrl,
+      username,
+      password,
+      isConnected: true,
+      apiVersion: navidromeConfig.apiVersion || '1.16.1',
+      serverVersion: navidromeConfig.serverVersion || ''
+    };
     saveJson(NAVIDROME_FILE, navidromeConfig);
 
     return res.json({
