@@ -55,16 +55,24 @@ export class QueueEngine extends EventEmitter {
   }
 
   /**
-   * Synchronize active playing track and queue context from single cast / voice search
+   * Synchronize active playing track and queue context from single cast / voice search / API
    */
-  public syncCurrentSong(song: Song, targetDid: string = '', allSongs?: Song[], deviceName?: string) {
+  public syncCurrentSong(song: Song, targetDid: string = '', allSongs?: Song[], deviceName?: string, mode?: QueueLoopMode) {
     if (targetDid) this.targetDid = targetDid;
     if (deviceName) this.targetDeviceName = deviceName;
+    if (mode) this.loopMode = mode;
+
+    this.clearTimer();
+    this.isTransitioning = false;
 
     const songs = allSongs && allSongs.length > 0 ? allSongs : (this.songProvider ? this.songProvider() : []);
     if (songs.length > 0) {
       this.queue = [...songs];
-      const matchIdx = this.queue.findIndex(s => s.id === song.id || s.title === song.title);
+      const cleanSongId = (song.id || '').replace(/\.(mp3|flac|wav|m4a|aac|ogg|opus)$/i, '');
+      const matchIdx = this.queue.findIndex(s => {
+        const cleanS = (s.id || '').replace(/\.(mp3|flac|wav|m4a|aac|ogg|opus)$/i, '');
+        return cleanS === cleanSongId || s.id === song.id || s.title === song.title;
+      });
       this.currentIndex = matchIdx >= 0 ? matchIdx : 0;
     } else {
       this.queue = [song];
@@ -72,9 +80,12 @@ export class QueueEngine extends EventEmitter {
     }
 
     this.isPlaying = true;
-    this.currentSongStarted = true;
+    this.currentSongStarted = false;
     this.songStartTime = Date.now();
     this.currentDuration = (song.duration && song.duration > 5) ? song.duration : 180;
+
+    console.log(`[QueueEngine] 🔄 同步当前曲目: 第 ${this.currentIndex + 1}/${this.queue.length} 首《${this.queue[this.currentIndex]?.title}》, 模式: ${this.loopMode}, 时长: ${this.currentDuration}s`);
+
     this.scheduleAutoAdvance(this.currentDuration);
     this.startHeartbeat();
     this.emit('change', this.getStatus());
@@ -212,19 +223,53 @@ export class QueueEngine extends EventEmitter {
   ) {
     // Ignore browser audio requests — QueueEngine governs the hardware speaker playback
     if (options?.isBrowser) return;
-    if (!this.isPlaying || this.queue.length === 0) return;
+
+    const rawCleanSongId = decodeURIComponent(songId).replace(/\.(mp3|flac|wav|m4a|aac|ogg|opus)$/i, '').trim();
+
+    // If queue is empty or not playing, auto-adopt stream from provider
+    if (!this.isPlaying || this.queue.length === 0) {
+      this.ensureQueueContext();
+      if (this.queue.length > 0) {
+        const matchIdx = this.queue.findIndex(s => {
+          const sClean = decodeURIComponent(s.id || '').replace(/\.(mp3|flac|wav|m4a|aac|ogg|opus)$/i, '').trim();
+          return sClean === rawCleanSongId || s.id === songId || rawCleanSongId.includes(sClean) || sClean.includes(rawCleanSongId);
+        });
+        if (matchIdx >= 0) {
+          this.currentIndex = matchIdx;
+          this.isPlaying = true;
+          this.currentSongStarted = false;
+          console.log(`[QueueEngine] 🔄 监听到音箱硬件拉流事件，自动接管并同步当前曲目: 第 ${this.currentIndex + 1}/${this.queue.length} 首《${this.queue[this.currentIndex]?.title}》`);
+        }
+      }
+    }
+
+    if (this.queue.length === 0) return;
 
     const currentSong = this.queue[this.currentIndex];
     if (!currentSong) return;
 
-    const cleanSongId = songId.replace(/\.(mp3|flac|wav|m4a|aac|ogg|opus)$/i, '');
-    const cleanCurrentId = (currentSong.id || '').replace(/\.(mp3|flac|wav|m4a|aac|ogg|opus)$/i, '');
+    const cleanCurrentId = decodeURIComponent(currentSong.id || '').replace(/\.(mp3|flac|wav|m4a|aac|ogg|opus)$/i, '').trim();
 
-    if (cleanSongId !== cleanCurrentId && !songId.includes(cleanCurrentId) && !cleanCurrentId.includes(cleanSongId)) {
-      // Stream request does not match current song in queue
-      return;
+    const matchesCurrent = (rawCleanSongId === cleanCurrentId) || 
+      songId.includes(cleanCurrentId) || 
+      cleanCurrentId.includes(rawCleanSongId);
+
+    if (!matchesCurrent) {
+      // Check if it matches another song in the queue (e.g. user or speaker switched track)
+      const otherIdx = this.queue.findIndex(s => {
+        const sClean = decodeURIComponent(s.id || '').replace(/\.(mp3|flac|wav|m4a|aac|ogg|opus)$/i, '').trim();
+        return sClean === rawCleanSongId || s.id === songId;
+      });
+      if (otherIdx >= 0) {
+        this.currentIndex = otherIdx;
+        this.currentSongStarted = false;
+        console.log(`[QueueEngine] 🔄 音箱拉流曲目匹配队列第 ${this.currentIndex + 1} 首《${this.queue[this.currentIndex]?.title}》`);
+      } else {
+        return;
+      }
     }
 
+    const activeSong = this.queue[this.currentIndex];
     const now = Date.now();
 
     // 1. First time speaker pulls stream for this song
@@ -233,14 +278,15 @@ export class QueueEngine extends EventEmitter {
       this.songStartTime = now;
       if (options?.duration && options.duration > 5) {
         this.currentDuration = options.duration;
-      } else if (currentSong.duration && currentSong.duration > 5) {
-        this.currentDuration = currentSong.duration;
+      } else if (activeSong?.duration && activeSong.duration > 5) {
+        this.currentDuration = activeSong.duration;
       } else {
         this.currentDuration = 180;
       }
 
-      console.log(`[QueueEngine] 🎧 音箱硬件已成功拉取流媒体《${currentSong.title}》，开始播放计时 (时长: ${this.currentDuration}s)`);
+      console.log(`[QueueEngine] 🎧 音箱硬件已成功拉取流媒体《${activeSong?.title}》，启动精准切歌倒计时 (时长: ${this.currentDuration}s, 模式: ${this.loopMode})`);
       this.scheduleAutoAdvance(this.currentDuration);
+      this.startHeartbeat();
       this.emit('change', this.getStatus());
       return;
     }
@@ -249,11 +295,16 @@ export class QueueEngine extends EventEmitter {
     const elapsed = Math.floor((now - this.songStartTime) / 1000);
     const startByte = options?.startByte ?? (options?.range ? parseInt(options.range.replace(/^bytes=/, '').split('-')[0], 10) : undefined);
 
-    // ANTI-LOOP GUARD: If the speaker re-requests byte 0 of the current song after playing for > 12s,
-    // it means the speaker's internal media player hit EOF and is attempting to loop the track!
-    if (startByte === 0 && elapsed > Math.min(15, this.currentDuration * 0.4)) {
-      if (!this.isTransitioning) {
-        console.log(`[QueueEngine] 🔄 监测到音箱硬件尝试单曲循环回绕 (已播放 ${elapsed}s / 总时长 ${this.currentDuration}s)，立即拦截单曲循环，强制自动切播下一首！`);
+    // ANTI-LOOP GUARD: If the speaker re-requests byte 0 of the current song after playing for > 10s or 35% of song duration,
+    // it means the speaker's internal media player finished playback and is trying to repeat the same URL!
+    const minElapsedThreshold = Math.min(10, Math.max(5, this.currentDuration * 0.35));
+    if (startByte === 0 && elapsed >= minElapsedThreshold) {
+      if (this.loopMode === 'one') {
+        console.log(`[QueueEngine] 🔂 单曲循环模式：音箱重新从头播放《${activeSong?.title}》`);
+        this.songStartTime = now;
+        this.scheduleAutoAdvance(this.currentDuration);
+      } else if (!this.isTransitioning) {
+        console.log(`[QueueEngine] 🔄 监测到音箱硬件尝试单曲循环回绕 (已播放 ${elapsed}s / 总时长 ${this.currentDuration}s)，立即拦截单曲循环，自动切播队列下一首！`);
         this.next(false).catch(err => console.warn('[QueueEngine] 循环拦截切歌异常:', err));
       }
       return;

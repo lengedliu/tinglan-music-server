@@ -448,7 +448,7 @@ export default function App() {
           }
         })
         .catch(() => {});
-    }, isCasting ? 2000 : (isQueueDrawerOpen ? 3000 : 8000));
+    }, isCasting ? 1000 : (isQueueDrawerOpen ? 2500 : 6000));
 
     return () => {
       isMounted = false;
@@ -499,24 +499,21 @@ export default function App() {
   const handlePlaySong = (song: Song, targetQueue?: Song[]) => {
     setCurrentSong(song);
     setCurrentTime(0);
-    setDuration(song.duration);
+    setDuration(song.duration || 200);
 
-    if (targetQueue && targetQueue.length > 0) {
-      setPlayQueue(targetQueue);
-    } else {
-      setPlayQueue(prev => {
-        if (prev.some(s => s.id === song.id)) return prev;
-        return [...prev, song];
-      });
-    }
+    const newQueue = (targetQueue && targetQueue.length > 0)
+      ? targetQueue
+      : (playQueue.length > 0 ? playQueue : songs);
+
+    setPlayQueue(newQueue);
 
     if (isCasting) {
-      // In Speaker Cast Mode: pause local audio completely and cast to Xiaomi Speaker
+      // In Speaker Cast Mode: pause local audio completely and cast to Xiaomi Speaker with active queue context
       if (audioRef.current) {
         audioRef.current.pause();
       }
       setIsPlaying(true);
-      castSongToDevice(song, activeDevice);
+      castSongToDevice(song, activeDevice, newQueue);
     } else {
       // In Local Playback Mode: load and play HTML5 audio directly
       const playSrc = (song.url && !song.url.includes('pixabay')) ? song.url : `/api/stream/${song.id}`;
@@ -532,7 +529,7 @@ export default function App() {
       if (miotConfig.autoCast) {
         setIsCasting(true);
         if (audioRef.current) audioRef.current.pause();
-        castSongToDevice(song, activeDevice);
+        castSongToDevice(song, activeDevice, newQueue);
       }
     }
   };
@@ -610,14 +607,13 @@ export default function App() {
     const nextSong = queue[nextIndex];
 
     if (isCasting) {
-      // Route 'Next' directly to Speaker Queue Engine
+      // Route 'Next' directly to Speaker Queue Engine with active queue context
       setCurrentSong(nextSong);
       setCurrentTime(0);
       setDuration(nextSong.duration || 200);
       setIsPlaying(true);
       if (audioRef.current) audioRef.current.pause();
-      apiFetch('/api/queue/next', { method: 'POST' }).catch(() => {});
-      castSongToDevice(nextSong, activeDevice);
+      castSongToDevice(nextSong, activeDevice, queue);
     } else {
       // Route 'Next' to local browser audio
       handlePlaySong(nextSong, queue);
@@ -652,14 +648,13 @@ export default function App() {
     const prevSong = queue[prevIndex];
 
     if (isCasting) {
-      // Route 'Prev' directly to Speaker Queue Engine
+      // Route 'Prev' directly to Speaker Queue Engine with active queue context
       setCurrentSong(prevSong);
       setCurrentTime(0);
       setDuration(prevSong.duration || 200);
       setIsPlaying(true);
       if (audioRef.current) audioRef.current.pause();
-      apiFetch('/api/queue/prev', { method: 'POST' }).catch(() => {});
-      castSongToDevice(prevSong, activeDevice);
+      castSongToDevice(prevSong, activeDevice, queue);
     } else {
       // Route 'Prev' to local browser audio
       handlePlaySong(prevSong, queue);
@@ -697,7 +692,7 @@ export default function App() {
   };
 
   // Casting Logic to Xiaomi Speaker
-  const castSongToDevice = (song: Song, targetDev: XiaomiDevice | undefined) => {
+  const castSongToDevice = (song: Song, targetDev: XiaomiDevice | undefined, customQueue?: Song[]) => {
     const dev = targetDev || activeDevice;
     if (!dev) {
       showToast('未找到可用小米音箱', '请先配置或扫描局域网音箱设备', 'error');
@@ -728,6 +723,9 @@ export default function App() {
       : window.location.origin;
     const streamUrl = `${streamBase}/api/stream/${encodeURIComponent(cleanId)}.mp3`;
 
+    const queueToSend = (customQueue && customQueue.length > 0) ? customQueue : (playQueue.length > 0 ? playQueue : songs);
+    const queueMode = isShuffle ? 'shuffle' : repeatMode === 'one' ? 'one' : 'all';
+
     // 25-second timeout controller to allow full DLNA/miIO/Cloud multi-track fallback
     const controller = new AbortController();
     const timeoutTimer = setTimeout(() => controller.abort(), 25000);
@@ -741,7 +739,9 @@ export default function App() {
         songTitle: song.title,
         songArtist: song.artist,
         duration: song.duration,
-        streamUrl
+        streamUrl,
+        queue: queueToSend,
+        mode: queueMode
       }),
       signal: controller.signal
     })
@@ -1509,7 +1509,8 @@ export default function App() {
                 setIsPlaying(true);
                 setIsCasting(true);
                 if (audioRef.current) audioRef.current.pause();
-                castSongToDevice(song, activeDevice);
+                const queueToUse = playQueue.length > 0 ? playQueue : songs;
+                castSongToDevice(song, activeDevice, queueToUse);
               }}
               onCastAllToXiaomi={handleCastAllToXiaomi}
               onToggleFavorite={handleToggleFavorite}

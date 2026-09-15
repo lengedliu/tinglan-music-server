@@ -4636,6 +4636,23 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
       updatedAt: new Date().toISOString()
     };
     saveJson(DEVICES_FILE, xiaomiDevices);
+
+    // Synchronize active track and full playlist context into QueueEngine for continuous queue playback
+    try {
+      const matchedSong = storedSongs.find(s => s.id === cleanSongId || s.title === songTitle);
+      const activeSongObj = {
+        id: cleanSongId,
+        title: songTitle || matchedSong?.title || '未知曲目',
+        artist: songArtist || matchedSong?.artist || '未知歌手',
+        duration: duration || matchedSong?.duration || 180,
+        url: resolvedStreamUrl
+      };
+      const incomingQueue = (Array.isArray(req.body.queue) && req.body.queue.length > 0) ? req.body.queue : storedSongs;
+      const queueMode = req.body.mode || 'all';
+      queueEngine.syncCurrentSong(activeSongObj as any, targetDevice.did, incomingQueue, targetDevice.name, queueMode);
+    } catch (qErr: any) {
+      console.warn('[Cast] QueueEngine sync failed:', qErr.message);
+    }
   } else {
     if (targetDevice.status) {
       targetDevice.status.playing = false;
