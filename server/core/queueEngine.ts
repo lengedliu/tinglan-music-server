@@ -97,6 +97,28 @@ export class QueueEngine extends EventEmitter {
     }
   }
 
+  /**
+   * Restore persistent queue state from disk/database
+   */
+  public restoreState(state: { queue?: Song[]; currentIndex?: number; loopMode?: QueueLoopMode; targetDid?: string; targetDeviceName?: string }) {
+    if (Array.isArray(state.queue)) {
+      this.queue = [...state.queue];
+    }
+    if (typeof state.currentIndex === 'number') {
+      this.currentIndex = Math.max(0, Math.min(state.currentIndex, Math.max(0, this.queue.length - 1)));
+    }
+    if (state.loopMode) {
+      this.loopMode = state.loopMode;
+    }
+    if (state.targetDid) {
+      this.targetDid = state.targetDid;
+    }
+    if (state.targetDeviceName) {
+      this.targetDeviceName = state.targetDeviceName;
+    }
+    this.isPlaying = false;
+  }
+
   public getStatus(): QueueStatus {
     const currentSong = this.queue[this.currentIndex] || null;
     const now = Date.now();

@@ -14,7 +14,8 @@ import {
   ListMusic,
   Sliders,
   Server,
-  Check
+  Check,
+  Disc
 } from 'lucide-react';
 import { Song, XiaomiDevice, DeviceCommandState } from '../types';
 import { formatTime } from '../utils/lyricParser';
@@ -96,11 +97,7 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({
     onSeek(percentage * duration);
   };
 
-  const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0;
-
-  if (!currentSong) {
-    return null;
-  }
+  const progressPercent = (currentSong && duration > 0) ? (currentTime / duration) * 100 : 0;
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-50 h-24 bg-black/80 backdrop-blur-2xl border-t border-white/10 text-zinc-100 flex flex-col justify-between shadow-[0_-8px_32px_rgba(0,0,0,0.7)]">
@@ -108,60 +105,96 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({
       <div 
         ref={progressBarRef}
         onClick={handleSeekClick}
-        onMouseEnter={() => setIsHoveringProgress(true)}
+        onMouseEnter={() => currentSong && setIsHoveringProgress(true)}
         onMouseLeave={() => setIsHoveringProgress(false)}
-        className="w-full h-1 bg-zinc-800/60 cursor-pointer relative group transition-all hover:h-2"
+        className={`w-full h-1 bg-zinc-800/60 relative group transition-all ${
+          currentSong ? 'cursor-pointer hover:h-2' : 'cursor-default opacity-40'
+        }`}
       >
         <div 
           className="h-full bg-[#FF6700] transition-all duration-75 relative shadow-[0_0_10px_rgba(255,103,0,0.7)]"
           style={{ width: `${progressPercent}%` }}
         >
-          <div className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full shadow-md scale-0 group-hover:scale-100 transition-transform" />
+          {currentSong && (
+            <div className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full shadow-md scale-0 group-hover:scale-100 transition-transform" />
+          )}
         </div>
       </div>
 
       <div className="max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-2 flex items-center justify-between gap-4 flex-1">
         
         {/* Left: Song Info */}
-        <div className="flex items-center gap-3.5 min-w-0 w-1/4 sm:w-1/3">
-          <div 
-            onClick={onOpenLyrics}
-            className="relative w-14 h-14 rounded-lg overflow-hidden flex-shrink-0 cursor-pointer group shadow-lg border border-white/10"
-          >
-            <img 
-              src={currentSong.coverUrl} 
-              alt={currentSong.title}
-              className={`w-full h-full object-cover transition duration-300 ${isPlaying ? 'scale-105' : 'group-hover:scale-105'}`}
-            />
-            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-              <Mic2 className="w-5 h-5 text-white" />
-            </div>
-          </div>
-
-          <div className="min-w-0 pr-2">
-            <h4 
+        {currentSong ? (
+          <div className="flex items-center gap-3.5 min-w-0 w-1/4 sm:w-1/3">
+            <div 
               onClick={onOpenLyrics}
-              className="text-sm font-bold text-white truncate cursor-pointer hover:text-[#FF6700] transition"
-              title={currentSong.title}
+              className="relative w-14 h-14 rounded-lg overflow-hidden flex-shrink-0 cursor-pointer group shadow-lg border border-white/10"
             >
-              {currentSong.title}
-            </h4>
-            <p className="text-xs text-zinc-400 truncate">
-              {currentSong.artist}
-            </p>
-            <div className="flex items-center gap-1.5 mt-1">
-              <span className="text-[10px] font-bold border border-zinc-700 bg-zinc-800/80 rounded px-1.5 py-0.5 leading-none text-zinc-300 font-mono">
-                {currentSong.bitrate?.includes('FLAC') ? 'Lossless' : currentSong.bitrate || 'Hi-Fi'}
-              </span>
-              {isCasting && (
-                <span className="text-[10px] px-2 py-0.5 rounded bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/30 flex items-center gap-1 font-medium">
-                  <Radio className="w-2.5 h-2.5 animate-pulse" />
-                  已投向音箱
+              <img 
+                src={currentSong.coverUrl} 
+                alt={currentSong.title}
+                className={`w-full h-full object-cover transition duration-300 ${isPlaying ? 'scale-105' : 'group-hover:scale-105'}`}
+              />
+              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                <Mic2 className="w-5 h-5 text-white" />
+              </div>
+            </div>
+
+            <div className="min-w-0 pr-2">
+              <h4 
+                onClick={onOpenLyrics}
+                className="text-sm font-bold text-white truncate cursor-pointer hover:text-[#FF6700] transition"
+                title={currentSong.title}
+              >
+                {currentSong.title}
+              </h4>
+              <p className="text-xs text-zinc-400 truncate">
+                {currentSong.artist}
+              </p>
+              <div className="flex items-center gap-1.5 mt-1">
+                <span className="text-[10px] font-bold border border-zinc-700 bg-zinc-800/80 rounded px-1.5 py-0.5 leading-none text-zinc-300 font-mono">
+                  {currentSong.bitrate?.includes('FLAC') ? 'Lossless' : currentSong.bitrate || 'Hi-Fi'}
                 </span>
-              )}
+                {isCasting && (
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/30 flex items-center gap-1 font-medium">
+                    <Radio className="w-2.5 h-2.5 animate-pulse" />
+                    已投向音箱
+                  </span>
+                )}
+              </div>
             </div>
           </div>
-        </div>
+        ) : (
+          <div className="flex items-center gap-3.5 min-w-0 w-1/4 sm:w-1/3">
+            <div 
+              onClick={onOpenQueue}
+              className="relative w-14 h-14 rounded-lg overflow-hidden flex-shrink-0 bg-zinc-900/90 border border-white/10 flex items-center justify-center text-zinc-600 shadow-inner cursor-pointer hover:border-[#FF6700]/40 transition group"
+              title="点击打开播放队列"
+            >
+              <Disc className="w-7 h-7 opacity-40 group-hover:text-[#FF6700] group-hover:opacity-80 transition" />
+            </div>
+
+            <div className="min-w-0 pr-2">
+              <h4 className="text-sm font-medium text-zinc-400 truncate flex items-center gap-1.5">
+                暂无播放曲目
+              </h4>
+              <p className="text-xs text-zinc-600 truncate">
+                队列已清空，点击从曲库播放
+              </p>
+              <div className="flex items-center gap-1.5 mt-1">
+                <span className="text-[10px] font-bold border border-zinc-800 bg-zinc-900/80 rounded px-1.5 py-0.5 leading-none text-zinc-500 font-mono">
+                  待命
+                </span>
+                {isCasting && (
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-zinc-900 text-zinc-400 border border-white/5 flex items-center gap-1 font-medium">
+                    <Radio className="w-2.5 h-2.5 text-[#FF6700]" />
+                    {activeDevice?.name || '音箱'} 就绪
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Center: Playback Controls */}
         <div className="flex flex-col items-center gap-1 flex-1 max-w-md">
@@ -169,8 +202,13 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({
             <button
               id="btn-shuffle"
               onClick={onToggleShuffle}
+              disabled={!currentSong}
               title={isShuffle ? '随机播放开启' : '随机播放关闭'}
-              className={`p-1.5 rounded-full transition ${isShuffle ? 'text-[#FF6700] bg-[#FF6700]/15' : 'text-zinc-400 hover:text-white'}`}
+              className={`p-1.5 rounded-full transition ${
+                !currentSong
+                  ? 'text-zinc-600 cursor-not-allowed opacity-40'
+                  : (isShuffle ? 'text-[#FF6700] bg-[#FF6700]/15' : 'text-zinc-400 hover:text-white')
+              }`}
             >
               <Shuffle className="w-4 h-4" />
             </button>
@@ -178,8 +216,11 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({
             <button
               id="btn-prev-song"
               onClick={onPrev}
+              disabled={!currentSong}
               title="上一首"
-              className="p-2 text-zinc-400 hover:text-white transition active:scale-95"
+              className={`p-2 transition active:scale-95 ${
+                !currentSong ? 'text-zinc-600 cursor-not-allowed opacity-40' : 'text-zinc-400 hover:text-white'
+              }`}
             >
               <SkipBack className="w-5 h-5 fill-current" />
             </button>
@@ -187,8 +228,12 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({
             <button
               id="btn-play-pause-song"
               onClick={onPlayPause}
-              title={isPlaying ? '暂停' : '播放'}
-              className="w-10 h-10 rounded-full bg-white text-black flex items-center justify-center shadow-[0_0_20px_rgba(255,255,255,0.3)] hover:scale-105 active:scale-95 transition-transform"
+              title={!currentSong ? '从曲库开始播放' : (isPlaying ? '暂停' : '播放')}
+              className={`w-10 h-10 rounded-full flex items-center justify-center transition-transform ${
+                !currentSong
+                  ? 'bg-zinc-800 text-zinc-400 hover:bg-[#FF6700] hover:text-white hover:scale-105 active:scale-95 shadow-md cursor-pointer'
+                  : 'bg-white text-black shadow-[0_0_20px_rgba(255,255,255,0.3)] hover:scale-105 active:scale-95'
+              }`}
             >
               {isPlaying ? (
                 <Pause className="w-5 h-5 fill-current" />
@@ -200,8 +245,11 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({
             <button
               id="btn-next-song"
               onClick={onNext}
+              disabled={!currentSong}
               title="下一首"
-              className="p-2 text-zinc-400 hover:text-white transition active:scale-95"
+              className={`p-2 transition active:scale-95 ${
+                !currentSong ? 'text-zinc-600 cursor-not-allowed opacity-40' : 'text-zinc-400 hover:text-white'
+              }`}
             >
               <SkipForward className="w-5 h-5 fill-current" />
             </button>
@@ -209,8 +257,13 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({
             <button
               id="btn-repeat"
               onClick={onCycleRepeat}
+              disabled={!currentSong}
               title={`循环模式: ${repeatMode === 'one' ? '单曲循环' : repeatMode === 'all' ? '列表循环' : '关闭'}`}
-              className={`p-1.5 rounded-full transition relative ${repeatMode !== 'off' ? 'text-[#FF6700] bg-[#FF6700]/15' : 'text-zinc-400 hover:text-white'}`}
+              className={`p-1.5 rounded-full transition relative ${
+                !currentSong 
+                  ? 'text-zinc-600 cursor-not-allowed opacity-40'
+                  : (repeatMode !== 'off' ? 'text-[#FF6700] bg-[#FF6700]/15' : 'text-zinc-400 hover:text-white')
+              }`}
             >
               <Repeat className="w-4 h-4" />
               {repeatMode === 'one' && (
@@ -220,9 +273,9 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({
           </div>
 
           <div className="flex items-center gap-3 text-[10px] font-mono text-zinc-500">
-            <span>{formatTime(currentTime)}</span>
+            <span>{formatTime(currentSong ? currentTime : 0)}</span>
             <span>/</span>
-            <span>{formatTime(duration)}</span>
+            <span>{formatTime(currentSong ? duration : 0)}</span>
           </div>
         </div>
 
@@ -233,37 +286,43 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({
           <button
             id="btn-cast-xiaomi-speaker"
             onClick={onToggleCast}
-            disabled={commandState?.status === 'pending'}
+            disabled={!currentSong || commandState?.status === 'pending'}
             title={
-              commandState?.status === 'pending'
-                ? `正在向 ${activeDevice?.name || '小米音箱'} 下发指令...`
-                : commandState?.status === 'failed' || commandState?.status === 'timeout'
-                  ? `投放未完成: ${commandState.error || '未响应'} (点击重试)`
-                  : (isCasting ? `点击断开与 ${activeDevice?.name} 投放` : `点击推送到 ${activeDevice?.name || '小米音箱'}`)
+              !currentSong
+                ? '暂无歌曲可投放，请先选择歌曲'
+                : commandState?.status === 'pending'
+                  ? `正在向 ${activeDevice?.name || '小米音箱'} 下发指令...`
+                  : commandState?.status === 'failed' || commandState?.status === 'timeout'
+                    ? `投放未完成: ${commandState.error || '未响应'} (点击重试)`
+                    : (isCasting ? `点击断开与 ${activeDevice?.name} 投放` : `点击推送到 ${activeDevice?.name || '小米音箱'}`)
             }
             className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold transition shadow-sm ${
-              commandState?.status === 'pending'
-                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 cursor-wait animate-pulse'
-                : isCasting 
-                  ? 'bg-[#FF6700] text-white shadow-[0_0_15px_rgba(255,103,0,0.5)] hover:bg-[#e55c00]' 
-                  : commandState?.status === 'failed' || commandState?.status === 'timeout'
-                    ? 'bg-red-500/15 text-red-300 border border-red-500/30 hover:bg-red-500/25'
-                    : 'bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 border border-white/10 hover:border-white/20'
+              !currentSong
+                ? 'bg-zinc-900 text-zinc-600 border border-white/5 cursor-not-allowed'
+                : commandState?.status === 'pending'
+                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40 cursor-wait animate-pulse'
+                  : isCasting 
+                    ? 'bg-[#FF6700] text-white shadow-[0_0_15px_rgba(255,103,0,0.5)] hover:bg-[#e55c00]' 
+                    : commandState?.status === 'failed' || commandState?.status === 'timeout'
+                      ? 'bg-red-500/15 text-red-300 border border-red-500/30 hover:bg-red-500/25'
+                      : 'bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 border border-white/10 hover:border-white/20'
             }`}
           >
             {commandState?.status === 'pending' ? (
               <div className="w-3.5 h-3.5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
             ) : (
-              <Cast className={`w-3.5 h-3.5 ${isCasting ? 'animate-pulse' : (commandState?.status === 'failed' ? 'text-red-400' : 'text-[#FF6700]')}`} />
+              <Cast className={`w-3.5 h-3.5 ${!currentSong ? 'text-zinc-600' : isCasting ? 'animate-pulse' : (commandState?.status === 'failed' ? 'text-red-400' : 'text-[#FF6700]')}`} />
             )}
             <span className="hidden sm:inline">
-              {commandState?.status === 'pending'
-                ? '指令下发中...'
-                : isCasting
-                  ? '音箱串流中'
-                  : commandState?.status === 'failed' || commandState?.status === 'timeout'
-                    ? '投放失败'
-                    : '投放小米音箱'}
+              {!currentSong
+                ? '音箱待命'
+                : commandState?.status === 'pending'
+                  ? '指令下发中...'
+                  : isCasting
+                    ? '音箱串流中'
+                    : commandState?.status === 'failed' || commandState?.status === 'timeout'
+                      ? '投放失败'
+                      : '投放小米音箱'}
             </span>
           </button>
 

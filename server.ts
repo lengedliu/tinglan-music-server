@@ -185,6 +185,7 @@ const SONGS_FILE = path.join(DATA_DIR, 'songs.json');
 const PLAYLISTS_FILE = path.join(DATA_DIR, 'playlists.json');
 const DEVICES_FILE = path.join(DATA_DIR, 'devices.json');
 const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
+const QUEUE_FILE = path.join(DATA_DIR, 'queue.json');
 
 function loadJson<T>(filePath: string, defaultValue: T): T {
   try {
@@ -4836,6 +4837,31 @@ async function dispatchCastSongDirectly(song: any, targetDid: string): Promise<{
 
 queueEngine.setCastDispatcher(dispatchCastSongDirectly);
 queueEngine.setSongProvider(() => storedSongs);
+
+// Restore persistent queue state if exists on disk
+try {
+  const savedQueue = loadJson<any>(QUEUE_FILE, null);
+  if (savedQueue && Array.isArray(savedQueue.queue) && savedQueue.queue.length > 0) {
+    queueEngine.restoreState(savedQueue);
+    console.log(`[QueueEngine] 🔄 成功从 ${QUEUE_FILE} 恢复上次播放队列 (${savedQueue.queue.length} 首)`);
+  }
+} catch (err) {
+  console.warn('[QueueEngine] 恢复 queue.json 失败:', err);
+}
+
+// Auto-save queue state on any mutation
+queueEngine.on('change', (status) => {
+  try {
+    saveJson(QUEUE_FILE, {
+      queue: status.queue,
+      currentIndex: status.currentIndex,
+      loopMode: status.loopMode,
+      targetDid: status.targetDid,
+      targetDeviceName: status.targetDeviceName,
+      updatedAt: new Date().toISOString()
+    });
+  } catch {}
+});
 
 // --- Queue Engine REST Endpoints ---
 

@@ -53,20 +53,79 @@ export default function App() {
 
   // Music state
   const [songs, setSongs] = useState<Song[]>(INITIAL_SONGS);
-  const [playQueue, setPlayQueue] = useState<Song[]>(INITIAL_SONGS);
+  const [playQueue, setPlayQueue] = useState<Song[]>(() => {
+    try {
+      const saved = localStorage.getItem('tinglan_play_queue');
+      if (saved !== null) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {
+      console.warn('Failed to parse tinglan_play_queue from localStorage', e);
+    }
+    return INITIAL_SONGS;
+  });
   const [playlists, setPlaylists] = useState<Playlist[]>(INITIAL_PLAYLISTS);
-  const [currentSong, setCurrentSong] = useState<Song | null>(INITIAL_SONGS[0]);
+  const [currentSong, setCurrentSong] = useState<Song | null>(() => {
+    try {
+      const savedSong = localStorage.getItem('tinglan_current_song');
+      if (savedSong !== null) {
+        return JSON.parse(savedSong);
+      }
+      const savedQueue = localStorage.getItem('tinglan_play_queue');
+      if (savedQueue !== null) {
+        const q = JSON.parse(savedQueue);
+        if (Array.isArray(q)) {
+          return q.length > 0 ? q[0] : null;
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to parse tinglan_current_song from localStorage', e);
+    }
+    return INITIAL_SONGS[0] || null;
+  });
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(INITIAL_SONGS[0]?.duration || 234);
-  const [volume, setVolume] = useState(0.75);
-  const [isShuffle, setIsShuffle] = useState(false);
-  const [repeatMode, setRepeatMode] = useState<'off' | 'all' | 'one'>('all');
+  const [duration, setDuration] = useState(() => {
+    try {
+      const savedSong = localStorage.getItem('tinglan_current_song');
+      if (savedSong) {
+        const s = JSON.parse(savedSong);
+        if (s?.duration) return s.duration;
+      }
+    } catch {}
+    return INITIAL_SONGS[0]?.duration || 234;
+  });
+  const [volume, setVolume] = useState(() => {
+    try {
+      const v = localStorage.getItem('tinglan_volume');
+      if (v !== null) return Number(v);
+    } catch {}
+    return 0.75;
+  });
+  const [isShuffle, setIsShuffle] = useState(() => {
+    try {
+      return localStorage.getItem('tinglan_is_shuffle') === 'true';
+    } catch {}
+    return false;
+  });
+  const [repeatMode, setRepeatMode] = useState<'off' | 'all' | 'one'>(() => {
+    try {
+      const m = localStorage.getItem('tinglan_repeat_mode');
+      if (m === 'all' || m === 'one' || m === 'off') return m;
+    } catch {}
+    return 'all';
+  });
 
   // Xiaomi Speaker & MIoT state
   const [devices, setDevices] = useState<XiaomiDevice[]>([]);
   const [activeDeviceId, setActiveDeviceId] = useState<string>('');
-  const [isCasting, setIsCasting] = useState<boolean>(false);
+  const [isCasting, setIsCasting] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('tinglan_is_casting') === 'true';
+    } catch {}
+    return false;
+  });
 
   // UI Command State: strictly decoupled from physical Device State
   const [commandState, setCommandState] = useState<DeviceCommandState>({
@@ -185,6 +244,45 @@ export default function App() {
         }
       })
       .catch(() => {});
+
+    // 6. Fetch active Queue from backend queueEngine & hydrate state
+    apiFetch('/api/queue')
+      .then(res => res.ok ? res.json() : null)
+      .then(resData => {
+        if (!resData) return;
+        const status = resData.data || resData;
+        if (status) {
+          if (status.isPlaying) {
+            setIsCasting(true);
+            setIsPlaying(true);
+            if (status.currentSong) {
+              setCurrentSong(status.currentSong);
+              setDuration(status.currentSong.duration || 200);
+            }
+            if (typeof status.elapsedSeconds === 'number' && status.elapsedSeconds >= 0) {
+              setCurrentTime(status.elapsedSeconds);
+            }
+            if (status.queue && status.queue.length > 0) {
+              setPlayQueue(status.queue);
+            }
+            if (status.targetDid) {
+              setActiveDeviceId(status.targetDid);
+            }
+            if (status.loopMode) {
+              if (status.loopMode === 'shuffle') setIsShuffle(true);
+              else if (status.loopMode === 'one' || status.loopMode === 'all') setRepeatMode(status.loopMode);
+            }
+          } else if (status.queue && status.queue.length > 0) {
+            // Even if paused, if backend has a casted queue and client had no custom queue saved:
+            const localSaved = localStorage.getItem('tinglan_play_queue');
+            if (localSaved === null) {
+              setPlayQueue(status.queue);
+              if (status.currentSong) setCurrentSong(status.currentSong);
+            }
+          }
+        }
+      })
+      .catch(() => {});
   };
 
   const checkSecurityStatus = async () => {
@@ -267,6 +365,47 @@ export default function App() {
   };
 
 
+  // Persist play queue & playback preferences to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('tinglan_play_queue', JSON.stringify(playQueue));
+    } catch {}
+  }, [playQueue]);
+
+  useEffect(() => {
+    try {
+      if (currentSong) {
+        localStorage.setItem('tinglan_current_song', JSON.stringify(currentSong));
+      } else {
+        localStorage.removeItem('tinglan_current_song');
+      }
+    } catch {}
+  }, [currentSong]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('tinglan_is_casting', String(isCasting));
+    } catch {}
+  }, [isCasting]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('tinglan_volume', String(volume));
+    } catch {}
+  }, [volume]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('tinglan_is_shuffle', String(isShuffle));
+    } catch {}
+  }, [isShuffle]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('tinglan_repeat_mode', repeatMode);
+    } catch {}
+  }, [repeatMode]);
+
   // Sync audio element volume
   useEffect(() => {
     if (audioRef.current) {
@@ -276,8 +415,6 @@ export default function App() {
 
   // Active synchronization with speaker queueEngine
   useEffect(() => {
-    if (!isCasting && !isQueueDrawerOpen) return;
-
     let isMounted = true;
     const interval = setInterval(() => {
       if (typeof document !== 'undefined' && document.hidden) return;
@@ -287,6 +424,12 @@ export default function App() {
           if (!isMounted || !resData) return;
           const status = resData.data || resData;
           if (status && status.isPlaying) {
+            if (!isCasting) {
+              setIsCasting(true);
+            }
+            if (!isPlaying) {
+              setIsPlaying(true);
+            }
             if (status.currentSong && status.currentSong.id !== currentSong?.id) {
               setCurrentSong(status.currentSong);
               setDuration(status.currentSong.duration || 200);
@@ -295,22 +438,36 @@ export default function App() {
               setCurrentTime(status.elapsedSeconds);
             }
             if (status.queue && status.queue.length > 0) {
-              setPlayQueue(status.queue);
+              setPlayQueue(prev => {
+                if (prev.length === status.queue.length && prev.every((s, i) => s.id === status.queue[i]?.id)) {
+                  return prev;
+                }
+                return status.queue;
+              });
             }
           }
         })
         .catch(() => {});
-    }, 2000);
+    }, isCasting ? 2000 : (isQueueDrawerOpen ? 3000 : 8000));
 
     return () => {
       isMounted = false;
       clearInterval(interval);
     };
-  }, [isCasting, isQueueDrawerOpen, currentSong?.id]);
+  }, [isCasting, isPlaying, isQueueDrawerOpen, currentSong?.id]);
 
   // Audio event handlers
   const handlePlayPause = () => {
-    if (!currentSong) return;
+    if (!currentSong) {
+      if (playQueue.length > 0) {
+        handlePlaySong(playQueue[0]);
+      } else if (songs.length > 0) {
+        handlePlaySong(songs[0]);
+      } else {
+        showToast('曲库为空', '请先在曲库中导入或添加歌曲', 'info');
+      }
+      return;
+    }
 
     if (isPlaying) {
       audioRef.current?.pause();
@@ -1438,15 +1595,43 @@ export default function App() {
           isCasting={isCasting}
           activeDevice={activeDevice}
           onSelectSong={handlePlaySong}
-          onRemoveFromQueue={(songId) => setPlayQueue(prev => prev.filter(s => s.id !== songId))}
+          onRemoveFromQueue={(songId) => {
+            setPlayQueue(prev => {
+              const nextQueue = prev.filter(s => s.id !== songId);
+              if (currentSong?.id === songId) {
+                if (nextQueue.length > 0) {
+                  handlePlaySong(nextQueue[0], nextQueue);
+                } else {
+                  if (audioRef.current) {
+                    audioRef.current.pause();
+                    audioRef.current.currentTime = 0;
+                  }
+                  setCurrentTime(0);
+                  setIsPlaying(false);
+                  setCurrentSong(null);
+                }
+              }
+              return nextQueue;
+            });
+          }}
           onClearQueue={() => {
             setPlayQueue([]);
             setCurrentSong(null);
             setIsPlaying(false);
-            if (isCasting && activeDevice) {
-              apiFetch('/api/queue/clear', { method: 'POST' }).catch(() => {});
+            if (audioRef.current) {
+              audioRef.current.pause();
+              audioRef.current.currentTime = 0;
             }
-            setIsQueueDrawerOpen(false);
+            setCurrentTime(0);
+            try {
+              localStorage.setItem('tinglan_play_queue', '[]');
+              localStorage.removeItem('tinglan_current_song');
+            } catch {}
+            apiFetch('/api/queue/clear', { method: 'POST' }).catch(() => {});
+            if (isCasting && activeDevice) {
+              handleControlDevice(activeDevice.did, 'pause');
+            }
+            showToast('播放队列已清空', '本地播放器已重置为待命状态，曲目暂停', 'info');
           }}
           isShuffle={isShuffle}
           onToggleShuffle={() => setIsShuffle(prev => !prev)}
