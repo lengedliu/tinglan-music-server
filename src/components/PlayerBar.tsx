@@ -84,7 +84,29 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({
   const [prevVolume, setPrevVolume] = useState(volume);
   const [isHoveringProgress, setIsHoveringProgress] = useState(false);
   const [draggingSpeakerVol, setDraggingSpeakerVol] = useState<number | null>(null);
+  const draggingSpeakerVolRef = useRef<number | null>(null);
+  draggingSpeakerVolRef.current = draggingSpeakerVol;
   const progressBarRef = useRef<HTMLDivElement>(null);
+
+  // Release commit listener across window so releasing outside the slider bounds still commits cleanly
+  useEffect(() => {
+    const handleGlobalRelease = () => {
+      if (draggingSpeakerVolRef.current !== null) {
+        const finalVal = draggingSpeakerVolRef.current;
+        setDraggingSpeakerVol(null);
+        if (onSpeakerVolumeChange) {
+          onSpeakerVolumeChange(finalVal);
+        }
+      }
+    };
+
+    window.addEventListener('mouseup', handleGlobalRelease);
+    window.addEventListener('touchend', handleGlobalRelease);
+    return () => {
+      window.removeEventListener('mouseup', handleGlobalRelease);
+      window.removeEventListener('touchend', handleGlobalRelease);
+    };
+  }, [onSpeakerVolumeChange]);
 
   const toggleMute = () => {
     if (isCasting) {
@@ -452,29 +474,49 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({
             <div className="w-24 flex items-center relative group/vol">
               {isCasting ? (
                 // Speaker hardware volume slider with drag commit
-                <input 
-                  id="input-speaker-hardware-volume-slider"
-                  type="range" 
-                  min="0" 
-                  max="100" 
-                  step="1"
-                  value={draggingSpeakerVol !== null ? draggingSpeakerVol : speakerVolume}
-                  onChange={(e) => {
-                    setDraggingSpeakerVol(Number(e.target.value));
-                  }}
-                  onMouseUp={(e) => {
-                    const targetVal = Number((e.target as HTMLInputElement).value);
-                    setDraggingSpeakerVol(null);
-                    if (onSpeakerVolumeChange) onSpeakerVolumeChange(targetVal);
-                  }}
-                  onTouchEnd={(e) => {
-                    const targetVal = Number((e.target as HTMLInputElement).value);
-                    setDraggingSpeakerVol(null);
-                    if (onSpeakerVolumeChange) onSpeakerVolumeChange(targetVal);
-                  }}
-                  title={`音箱硬件音量: ${draggingSpeakerVol !== null ? draggingSpeakerVol : speakerVolume}% (松开下发)`}
-                  className={`w-full h-1.5 ${isLight ? 'bg-zinc-200' : 'bg-zinc-800'} accent-[#FF6700] rounded-full cursor-pointer`}
-                />
+                <>
+                  {draggingSpeakerVol !== null && (
+                    <div className="absolute -top-7 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-md bg-[#FF6700] text-white text-[10px] font-mono font-bold whitespace-nowrap shadow-lg pointer-events-none z-20 animate-in fade-in zoom-in-95 duration-100">
+                      {draggingSpeakerVol}% 松开下发
+                    </div>
+                  )}
+                  <input 
+                    id="input-speaker-hardware-volume-slider"
+                    type="range" 
+                    min="0" 
+                    max="100" 
+                    step="1"
+                    value={draggingSpeakerVol !== null ? draggingSpeakerVol : speakerVolume}
+                    onMouseDown={(e) => {
+                      setDraggingSpeakerVol(Number((e.target as HTMLInputElement).value));
+                    }}
+                    onTouchStart={(e) => {
+                      setDraggingSpeakerVol(Number((e.target as HTMLInputElement).value));
+                    }}
+                    onChange={(e) => {
+                      setDraggingSpeakerVol(Number(e.target.value));
+                    }}
+                    onMouseUp={(e) => {
+                      const targetVal = Number((e.target as HTMLInputElement).value);
+                      setDraggingSpeakerVol(null);
+                      if (onSpeakerVolumeChange) onSpeakerVolumeChange(targetVal);
+                    }}
+                    onTouchEnd={(e) => {
+                      const targetVal = Number((e.target as HTMLInputElement).value);
+                      setDraggingSpeakerVol(null);
+                      if (onSpeakerVolumeChange) onSpeakerVolumeChange(targetVal);
+                    }}
+                    onKeyUp={(e) => {
+                      if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'].includes(e.key)) {
+                        const targetVal = Number((e.target as HTMLInputElement).value);
+                        setDraggingSpeakerVol(null);
+                        if (onSpeakerVolumeChange) onSpeakerVolumeChange(targetVal);
+                      }
+                    }}
+                    title={`音箱硬件音量: ${draggingSpeakerVol !== null ? draggingSpeakerVol : speakerVolume}% (拖动中实时预览，松开下发)`}
+                    className={`w-full h-1.5 ${isLight ? 'bg-zinc-200' : 'bg-zinc-800'} accent-[#FF6700] rounded-full cursor-pointer`}
+                  />
+                </>
               ) : (
                 // Local browser audio volume slider
                 <input 
