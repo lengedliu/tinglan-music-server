@@ -363,6 +363,7 @@ export const THEMES: ThemeConfig[] = [
 interface ThemeContextType {
   theme: ThemeId;
   themeConfig: ThemeConfig;
+  isLight: boolean;
   setTheme: (themeId: ThemeId) => void;
   themesList: ThemeConfig[];
   isThemeModalOpen: boolean;
@@ -386,6 +387,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [isThemeModalOpen, setIsThemeModalOpen] = useState(false);
 
   const themeConfig = THEMES.find(t => t.id === theme) || THEMES[0];
+  const isLight = Boolean(themeConfig.isLight);
 
   const setTheme = (newTheme: ThemeId) => {
     setThemeState(newTheme);
@@ -438,6 +440,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     <ThemeContext.Provider value={{
       theme,
       themeConfig,
+      isLight,
       setTheme,
       themesList: THEMES,
       isThemeModalOpen,
