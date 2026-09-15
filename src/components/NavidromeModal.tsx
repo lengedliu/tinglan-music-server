@@ -96,7 +96,23 @@ export const NavidromeModal: React.FC<NavidromeModalProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ serverUrl: sUrl, username: uName, password: pwd }),
       });
-      const data = await res.json();
+
+      let data: any = null;
+      try {
+        const text = await res.text();
+        if (text) {
+          data = JSON.parse(text);
+        }
+      } catch (e) {
+        console.warn('JSON parse failed for playlists response:', e);
+      }
+
+      if (!res.ok || !data) {
+        setRemotePlaylists([]);
+        setFetchMessage(data?.message || `服务器响应异常 (HTTP ${res.status})，请检查 Navidrome 地址与内网穿透可达性`);
+        return;
+      }
+
       if (data.success && Array.isArray(data.playlists) && data.playlists.length > 0) {
         setRemotePlaylists(data.playlists);
         // Default: select all discovered playlists for convenience
@@ -108,7 +124,7 @@ export const NavidromeModal: React.FC<NavidromeModalProps> = ({
       }
     } catch (err: any) {
       console.warn('Fetch Navidrome playlists error:', err);
-      setFetchMessage(`获取歌单出错: ${err.message || '网络无法访问'}`);
+      setFetchMessage(`获取歌单出错: ${err.message || '网络连接超时'}`);
     } finally {
       setIsLoadingPlaylists(false);
     }

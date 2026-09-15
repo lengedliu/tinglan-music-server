@@ -6855,46 +6855,56 @@ app.all('/api/navidrome/playlists', async (req: Request, res: Response) => {
 
     const authQuery = getSubsonicAuthQuery(username, password);
 
-    // Try multiple query endpoints for max compatibility across Navidrome / Subsonic versions
+    // Try multiple query endpoints with short timeout for fast fallback
     const candidateUrls = [
       `${serverUrl}/rest/getPlaylists.view?${authQuery}`,
-      `${serverUrl}/rest/getPlaylists.view?username=${encodeURIComponent(username)}&${authQuery}`,
-      `${serverUrl}/rest/getPlaylists.view?u=${encodeURIComponent(username)}&${authQuery}`
+      `${serverUrl}/rest/getPlaylists.view?username=${encodeURIComponent(username)}&${authQuery}`
     ];
 
     let subResp: any = null;
     let rawItems: any[] = [];
+    let lastErrorMsg = '';
 
     for (const targetUrl of candidateUrls) {
       try {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 10000);
+        const timeout = setTimeout(() => controller.abort(), 4500);
         const response = await fetch(targetUrl, { signal: controller.signal });
         clearTimeout(timeout);
 
-        if (!response.ok) continue;
+        if (!response.ok) {
+          lastErrorMsg = `HTTP ${response.status} ${response.statusText}`;
+          continue;
+        }
 
-        const data = await response.json();
+        const data = await response.json().catch(() => null);
+        if (!data) continue;
+
         const resp = data['subsonic-response'];
 
-        if (resp && resp.status === 'ok') {
+        if (resp) {
           subResp = resp;
-          const extracted = extractSubsonicPlaylists(resp);
-          if (extracted.length > 0) {
-            rawItems = extracted;
-            break;
+          if (resp.status === 'ok') {
+            const extracted = extractSubsonicPlaylists(resp);
+            if (extracted.length > 0) {
+              rawItems = extracted;
+              break;
+            }
+          } else if (resp.error?.message) {
+            lastErrorMsg = resp.error.message;
           }
         }
-      } catch (err) {
+      } catch (err: any) {
+        lastErrorMsg = err.message || '网络连接超时';
         console.warn(`[Navidrome Playlists] fetch error for ${targetUrl}:`, err);
       }
     }
 
     if (!subResp && rawItems.length === 0) {
-      // If none of the attempts returned status ok with items, try taking the first response if any
-      if (!subResp) {
-        return res.json({ success: false, message: 'Navidrome 拒绝了获取歌单请求，请检查连接与认证凭据' });
-      }
+      return res.json({
+        success: false,
+        message: `无法拉取 Navidrome 歌单: ${lastErrorMsg || '网络连接超时或服务器无响应'}`
+      });
     }
 
     const defaultCover = 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=600&q=80';
