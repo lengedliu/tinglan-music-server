@@ -10,7 +10,9 @@ import {
   Palette,
   Sun,
   Moon,
-  Heart
+  Heart,
+  Speaker,
+  Laptop
 } from 'lucide-react';
 import { XiaomiDevice, MiotConfig, User } from '../types';
 import { UserHeader } from './UserHeader';
@@ -125,22 +127,36 @@ export const Navbar: React.FC<NavbarProps> = ({
             title="点击管理播放协议与音频设备路由"
             className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-zinc-900/90 hover:bg-zinc-800/90 border border-white/10 transition text-left backdrop-blur-sm shadow-sm cursor-pointer"
             style={{
-              borderColor: `rgba(${themeConfig.primaryRgb}, 0.2)`
+              borderColor: isCasting ? '#FF6700' : `rgba(${themeConfig.primaryRgb}, 0.2)`
             }}
           >
             <span 
               className="w-2 h-2 rounded-full"
               style={{ 
-                backgroundColor: activeDevice?.isOnline ? themeConfig.primaryColor : '#34d399',
-                boxShadow: `0 0 8px rgba(${themeConfig.primaryRgb}, 0.7)` 
+                backgroundColor: isCasting ? '#FF6700' : (activeDevice?.isOnline ? themeConfig.primaryColor : '#34d399'),
+                boxShadow: isCasting ? '0 0 10px rgba(255,103,0,0.8)' : `0 0 8px rgba(${themeConfig.primaryRgb}, 0.7)` 
               }} 
             />
             <div className="hidden sm:block text-xs">
-              <span className="text-zinc-100 font-semibold block truncate max-w-[120px] leading-tight">
-                {activeDevice?.name || '小爱智能音箱Pro'}
+              <span className="text-zinc-100 font-semibold flex items-center gap-1 leading-tight">
+                {isCasting ? (
+                  <>
+                    <Speaker className="w-3 h-3 text-[#FF6700]" />
+                    <span className="truncate max-w-[110px] text-[#FF6700]">
+                      {activeDevice?.name || '小爱音箱'}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Laptop className="w-3 h-3 text-zinc-400" />
+                    <span className="truncate max-w-[110px] text-zinc-300">
+                      本地设备
+                    </span>
+                  </>
+                )}
               </span>
-              <span className="text-zinc-400 text-[10px] block leading-none pt-0.5">
-                {isCasting ? '协议串流中' : `音量: ${activeDevice?.status?.volume ?? 45}%`}
+              <span className="text-zinc-400 text-[10px] block leading-none pt-0.5 font-medium">
+                {isCasting ? `音箱音量: ${activeDevice?.status?.volume ?? 40}%` : `待命: ${activeDevice?.name || '小爱音箱'}`}
               </span>
             </div>
             <ChevronRight className="w-3.5 h-3.5 text-zinc-400" />

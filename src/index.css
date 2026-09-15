@@ -216,9 +216,59 @@ html.theme-light .text-zinc-300 {
 }
 
 html.theme-light .text-zinc-200,
-html.theme-light .text-zinc-100,
-html.theme-light .text-white {
+html.theme-light .text-zinc-100 {
   color: var(--theme-text-title) !important;
+}
+
+/* Base text-white override for general light backgrounds, but strictly exclude buttons/badges with accent backgrounds */
+html.theme-light .text-white:not(button *):not(button):not(.bg-\[\#FF6700\] *):not(.bg-gradient-to-r *):not(.bg-orange-500 *):not(.bg-emerald-500 *):not(.bg-rose-500 *) {
+  color: var(--theme-text-title) !important;
+}
+
+/* Force pure white text on solid/gradient colored action buttons in Light Mode */
+html.theme-light .text-white-force,
+html.theme-light button.bg-\[\#FF6700\],
+html.theme-light button.bg-\[\#FF6700\] *,
+html.theme-light button.bg-gradient-to-r,
+html.theme-light button.bg-gradient-to-r *,
+html.theme-light .bg-orange-500,
+html.theme-light .bg-orange-500 *,
+html.theme-light .bg-orange-600,
+html.theme-light .bg-orange-600 *,
+html.theme-light .bg-emerald-500,
+html.theme-light .bg-emerald-500 *,
+html.theme-light .bg-rose-500,
+html.theme-light .bg-rose-500 * {
+  color: #ffffff !important;
+}
+
+/* Bottom Player Bar in Light Mode */
+html.theme-light .playerbar-container {
+  background-color: var(--theme-card-bg) !important;
+  border-top-color: var(--theme-card-border) !important;
+  box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.07) !important;
+}
+
+/* Cast Target Switcher in Light Mode */
+html.theme-light #btn-cast-xiaomi-speaker {
+  background-color: var(--theme-card-hover) !important;
+  color: var(--theme-text-title) !important;
+  border-color: var(--theme-card-border) !important;
+}
+
+html.theme-light #btn-cast-xiaomi-speaker:hover {
+  background-color: var(--theme-card-subtle) !important;
+  border-color: var(--theme-primary) !important;
+}
+
+html.theme-light #btn-cast-xiaomi-speaker.is-casting {
+  background: linear-gradient(135deg, #FF6700, #ea580c) !important;
+  color: #ffffff !important;
+  border-color: rgba(255, 103, 0, 0.5) !important;
+}
+
+html.theme-light #btn-cast-xiaomi-speaker.is-casting * {
+  color: #ffffff !important;
 }
 
 /* Header & Navigation for Light Mode */

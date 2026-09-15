@@ -174,20 +174,25 @@ export class DlnaEngine {
     const cached = dlnaEndpointCache.get(cleanIp);
     if (cached) return cached;
 
-    // Standard XiaoAi ports: 1420 (primary XiaoAi DLNA), 49152/49153/49154 (secondary UPnP), 8008 (Cast)
-    const portsToTry = preferredPort ? [preferredPort, 1420, 49152, 49153, 49154, 8008] : [1420, 49152, 49153, 49154, 8008];
+    // Comprehensive XiaoAi and UPnP DLNA ports:
+    // 1420 (primary XiaoAi DLNA/UPnP)
+    // 49152, 49153, 49154, 49155, 49156 (secondary UPnP MediaRenderer standard dynamic ports)
+    // 8080, 8008 (standard MediaRenderer / Google Cast web servers)
+    // 6095, 5000 (standard UPnP alternate)
+    const standardPorts = [1420, 49152, 49153, 49154, 49155, 49156, 8080, 8008, 6095, 5000];
+    const portsToTry = preferredPort ? [preferredPort, ...standardPorts] : standardPorts;
     const uniquePorts = Array.from(new Set(portsToTry));
 
     console.log(`[DLNA Probe] 正在探测音箱 ${cleanIp} 候选端口 [${uniquePorts.join(', ')}]...`);
 
-    const xmlPaths = ['/description.xml', '/rootDesc.xml', '/upnp/description.xml'];
+    const xmlPaths = ['/description.xml', '/rootDesc.xml', '/upnp/description.xml', '/dd.xml'];
     const probeTasks: Promise<DlnaEndpoint | null>[] = [];
 
     for (const port of uniquePorts) {
       // 1. Try XML descriptor endpoints
       for (const xmlPath of xmlPaths) {
         probeTasks.push(
-          httpGet(`http://${cleanIp}:${port}${xmlPath}`, 1500).then(res => {
+          httpGet(`http://${cleanIp}:${port}${xmlPath}`, 1200).then(res => {
             if (res.ok && (res.text.includes('AVTransport') || res.text.includes('MediaRenderer') || res.text.includes('RenderingControl'))) {
               const ep = this.parseDeviceXml(cleanIp, port, res.text);
               if (ep) {
@@ -209,7 +214,7 @@ export class DlnaEngine {
           'urn:schemas-upnp-org:service:AVTransport:1',
           'GetTransportInfo',
           '<InstanceID>0</InstanceID>',
-          1500
+          1200
         ).then(soapRes => {
           if (soapRes.statusCode === 200 || (soapRes.responseText && (soapRes.responseText.includes('UPnPError') || soapRes.responseText.includes('TransportInfo') || soapRes.responseText.includes('CurrentTransportState')))) {
             console.log(`[DLNA Probe] ✅ 发现活动 AVTransport SOAP 端口: ${cleanIp}:${port}`);

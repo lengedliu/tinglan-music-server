@@ -26,10 +26,13 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
-  ChevronsRight
+  ChevronsRight,
+  Speaker,
+  Laptop
 } from 'lucide-react';
 import { Song, Playlist, XiaomiDevice } from '../types';
 import { formatTime } from '../utils/lyricParser';
+import { useTheme } from '../context/ThemeContext';
 
 interface MusicLibraryProps {
   songs: Song[];
@@ -72,6 +75,9 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
   onDeletePlaylist,
   onOpenNavidromeModal
 }) => {
+  const { themeConfig } = useTheme();
+  const isLight = !!themeConfig?.isLight;
+
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string>('all');
   const [selectedGenre, setSelectedGenre] = useState<string>('all');
@@ -486,29 +492,42 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
               </div>
 
               <div className="flex flex-wrap items-center gap-2.5">
+                {/* Unified Dynamic Play All Button (Mode-aware: Local vs Speaker) */}
                 <button
                   id="btn-play-all-playlist"
-                  onClick={() => onPlayAll ? onPlayAll(filteredSongs, 0) : (filteredSongs[0] && onPlaySong(filteredSongs[0]))}
+                  onClick={() => {
+                    if (isCasting && onCastAllToXiaomi && activeDevice) {
+                      onCastAllToXiaomi(filteredSongs);
+                    } else if (onPlayAll) {
+                      onPlayAll(filteredSongs, 0);
+                    } else if (filteredSongs[0]) {
+                      onPlaySong(filteredSongs[0]);
+                    }
+                  }}
                   disabled={filteredSongs.length === 0}
-                  className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-[#FF6700] to-orange-500 hover:from-[#e55c00] hover:to-orange-600 text-white text-xs font-bold shadow-[0_2px_12px_rgba(255,103,0,0.4)] transition active:scale-95 disabled:opacity-50"
-                  title="播放当前歌单全部歌曲"
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 disabled:opacity-50 shadow-md ${
+                    isCasting 
+                      ? 'bg-[#FF6700] hover:bg-[#e55c00] text-white shadow-[0_2px_14px_rgba(255,103,0,0.5)] border border-[#FF6700]' 
+                      : 'bg-white hover:bg-zinc-100 text-zinc-950 shadow-[0_2px_10px_rgba(255,255,255,0.2)]'
+                  }`}
+                  title={
+                    isCasting 
+                      ? `【音箱模式】一键将歌单全部 (${filteredSongs.length} 首) 投播至【${activeDevice?.name || '小爱音箱'}】连续播放` 
+                      : `【本地模式】在当前设备/浏览器播放当前歌单全部歌曲 (${filteredSongs.length} 首)`
+                  }
                 >
-                  <Play className="w-3.5 h-3.5 fill-current" />
-                  <span>播放全部</span>
+                  {isCasting ? (
+                    <>
+                      <Speaker className="w-3.5 h-3.5 animate-pulse text-white" />
+                      <span>投播歌单至【{activeDevice?.name ? (activeDevice.name.length > 6 ? activeDevice.name.slice(0, 6) + '…' : activeDevice.name) : '小爱音箱'}】({filteredSongs.length} 首)</span>
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-3.5 h-3.5 fill-current text-zinc-950" />
+                      <span>播放全部 ({filteredSongs.length} 首)</span>
+                    </>
+                  )}
                 </button>
-
-                {onCastAllToXiaomi && activeDevice && (
-                  <button
-                    id="btn-cast-all-playlist"
-                    onClick={() => onCastAllToXiaomi(filteredSongs)}
-                    disabled={filteredSongs.length === 0}
-                    className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#FF6700]/15 hover:bg-[#FF6700]/25 border border-[#FF6700]/30 text-[#FF6700] text-xs font-semibold transition active:scale-95 disabled:opacity-50"
-                    title={`投播全部歌曲到【${activeDevice.name}】`}
-                  >
-                    <Cast className="w-3.5 h-3.5" />
-                    <span>投播歌单至音箱</span>
-                  </button>
-                )}
 
                 <button
                   id="btn-batch-add-songs"
@@ -545,27 +564,43 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
       {filteredSongs.length > 0 && (
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-5 py-3 rounded-2xl bg-zinc-900/60 border border-white/5 backdrop-blur-md">
           <div className="flex items-center gap-3 flex-wrap">
+            {/* Unified Dynamic Master Play All Button (Plan B) */}
             <button
               id="btn-play-all-current-view"
-              onClick={() => onPlayAll ? onPlayAll(filteredSongs, 0) : (filteredSongs[0] && onPlaySong(filteredSongs[0]))}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#FF6700] hover:bg-[#e55c00] text-white text-xs font-bold shadow-[0_2px_12px_rgba(255,103,0,0.35)] transition active:scale-95"
-              title="按当前列表顺序播放所有歌曲"
+              onClick={() => {
+                if (isCasting && onCastAllToXiaomi && activeDevice) {
+                  onCastAllToXiaomi(filteredSongs);
+                } else if (onPlayAll) {
+                  onPlayAll(filteredSongs, 0);
+                } else if (filteredSongs[0]) {
+                  onPlaySong(filteredSongs[0]);
+                }
+              }}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 shadow-md ${
+                isCasting
+                  ? 'bg-[#FF6700] hover:bg-[#e55c00] text-white shadow-[0_2px_14px_rgba(255,103,0,0.45)] border border-[#FF6700]'
+                  : isLight
+                    ? 'bg-zinc-900 hover:bg-zinc-800 text-white shadow-md'
+                    : 'bg-white hover:bg-zinc-100 text-zinc-950 shadow-[0_2px_10px_rgba(255,255,255,0.2)]'
+              }`}
+              title={
+                isCasting
+                  ? `【音箱模式】一键将当前 ${filteredSongs.length} 首歌曲投播到【${activeDevice?.name || '小爱音箱'}】进行连续播放`
+                  : `【本地模式】按当前列表顺序在本地设备播放所有歌曲 (${filteredSongs.length} 首)`
+              }
             >
-              <Play className="w-3.5 h-3.5 fill-current" />
-              <span>播放全部 ({filteredSongs.length} 首)</span>
+              {isCasting ? (
+                <>
+                  <Speaker className="w-3.5 h-3.5 animate-pulse text-white" />
+                  <span>投播全部至【{activeDevice?.name ? (activeDevice.name.length > 7 ? activeDevice.name.slice(0, 7) + '…' : activeDevice.name) : '小爱音箱'}】({filteredSongs.length} 首)</span>
+                </>
+              ) : (
+                <>
+                  <Play className={`w-3.5 h-3.5 fill-current ${isLight ? 'text-white' : 'text-zinc-950'}`} />
+                  <span>播放全部 ({filteredSongs.length} 首)</span>
+                </>
+              )}
             </button>
-
-            {onCastAllToXiaomi && activeDevice && (
-              <button
-                id="btn-cast-all-current-view"
-                onClick={() => onCastAllToXiaomi(filteredSongs)}
-                className="flex items-center gap-2 px-3.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-[#FF6700] border border-[#FF6700]/30 text-xs font-semibold transition active:scale-95"
-                title={`一键将当前 ${filteredSongs.length} 首歌曲投播到【${activeDevice.name}】进行连续播放`}
-              >
-                <Radio className="w-3.5 h-3.5 animate-pulse" />
-                <span>投播全列表至【{activeDevice.name}】</span>
-              </button>
-            )}
           </div>
 
           <div className="text-xs text-zinc-400 flex items-center gap-2">
@@ -765,13 +800,15 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                       }}
                       className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold transition ${
                         isSongCasting
-                          ? 'bg-[#FF6700] text-white shadow-[0_0_12px_rgba(255,103,0,0.5)]'
-                          : 'bg-zinc-800/80 hover:bg-[#FF6700]/20 text-zinc-300 hover:text-[#FF6700] border border-white/5 hover:border-[#FF6700]/30'
+                          ? 'bg-[#FF6700] !text-white shadow-[0_0_12px_rgba(255,103,0,0.5)]'
+                          : isLight
+                            ? 'bg-zinc-100/90 hover:bg-[#FF6700]/15 text-zinc-800 hover:text-[#FF6700] border border-zinc-200 hover:border-[#FF6700]/30'
+                            : 'bg-zinc-800/80 hover:bg-[#FF6700]/20 text-zinc-300 hover:text-[#FF6700] border border-white/5 hover:border-[#FF6700]/30'
                       }`}
                       title={`推送到【${activeDevice?.name || '小米音箱'}】播放`}
                     >
-                      <Radio className={`w-3.5 h-3.5 ${isSongCasting ? 'animate-pulse' : 'text-[#FF6700]'}`} />
-                      <span className="hidden sm:inline">
+                      <Radio className={`w-3.5 h-3.5 ${isSongCasting ? 'animate-pulse text-white' : 'text-[#FF6700]'}`} />
+                      <span className={`hidden sm:inline ${isSongCasting ? '!text-white' : ''}`}>
                         {isSongCasting ? '音箱播音中' : '投放到音箱'}
                       </span>
                     </button>

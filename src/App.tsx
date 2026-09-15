@@ -469,19 +469,28 @@ export default function App() {
       return;
     }
 
-    if (isPlaying) {
-      audioRef.current?.pause();
-      setIsPlaying(false);
-      if (isCasting && activeDevice) {
-        handleControlDevice(activeDevice.did, 'pause');
-        apiFetch('/api/queue/pause', { method: 'POST' }).catch(() => {});
+    if (isCasting) {
+      // Clean Speaker Output Logic: route commands exclusively to Xiaomi Speaker
+      if (isPlaying) {
+        setIsPlaying(false);
+        if (activeDevice) {
+          handleControlDevice(activeDevice.did, 'pause');
+          apiFetch('/api/queue/pause', { method: 'POST' }).catch(() => {});
+        }
+      } else {
+        setIsPlaying(true);
+        if (activeDevice) {
+          apiFetch('/api/queue/resume', { method: 'POST' }).catch(() => {});
+          handleControlDevice(activeDevice.did, 'play');
+        }
       }
     } else {
-      setIsPlaying(true);
-      if (isCasting && activeDevice && currentSong) {
-        apiFetch('/api/queue/resume', { method: 'POST' }).catch(() => {});
-        handleControlDevice(activeDevice.did, 'play');
+      // Clean Local Playback Logic: route exclusively to browser HTML5 Audio
+      if (isPlaying) {
+        audioRef.current?.pause();
+        setIsPlaying(false);
       } else {
+        setIsPlaying(true);
         audioRef.current?.play().catch(() => {});
       }
     }
@@ -501,18 +510,30 @@ export default function App() {
       });
     }
 
-    const playSrc = (song.url && !song.url.includes('pixabay')) ? song.url : `/api/stream/${song.id}`;
-    if (audioRef.current) {
-      audioRef.current.src = playSrc;
-      audioRef.current.play().catch(e => {
-        console.warn('Audio play request error:', e);
-      });
-    }
-    setIsPlaying(true);
-
-    // If autoCast is on or currently in casting mode
-    if (isCasting || miotConfig.autoCast) {
+    if (isCasting) {
+      // In Speaker Cast Mode: pause local audio completely and cast to Xiaomi Speaker
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
+      setIsPlaying(true);
       castSongToDevice(song, activeDevice);
+    } else {
+      // In Local Playback Mode: load and play HTML5 audio directly
+      const playSrc = (song.url && !song.url.includes('pixabay')) ? song.url : `/api/stream/${song.id}`;
+      if (audioRef.current) {
+        audioRef.current.src = playSrc;
+        audioRef.current.play().catch(e => {
+          console.warn('Audio play request error:', e);
+        });
+      }
+      setIsPlaying(true);
+
+      // If user enabled autoCast, switch to casting
+      if (miotConfig.autoCast) {
+        setIsCasting(true);
+        if (audioRef.current) audioRef.current.pause();
+        castSongToDevice(song, activeDevice);
+      }
     }
   };
 
@@ -588,13 +609,17 @@ export default function App() {
 
     const nextSong = queue[nextIndex];
 
-    if (isCasting && activeDevice) {
+    if (isCasting) {
+      // Route 'Next' directly to Speaker Queue Engine
       setCurrentSong(nextSong);
       setCurrentTime(0);
       setDuration(nextSong.duration || 200);
-      apiFetch('/api/queue/next', { method: 'POST' }).catch(() => {});
+      setIsPlaying(true);
       if (audioRef.current) audioRef.current.pause();
+      apiFetch('/api/queue/next', { method: 'POST' }).catch(() => {});
+      castSongToDevice(nextSong, activeDevice);
     } else {
+      // Route 'Next' to local browser audio
       handlePlaySong(nextSong, queue);
     }
   };
@@ -607,10 +632,13 @@ export default function App() {
 
     if (currentTime > 3) {
       // If played for more than 3 seconds, restart current track
-      if (audioRef.current) audioRef.current.currentTime = 0;
       setCurrentTime(0);
-      if (isCasting && activeDevice) {
-        handleControlDevice(activeDevice.did, 'seek', 0);
+      if (isCasting) {
+        if (activeDevice) {
+          handleControlDevice(activeDevice.did, 'seek', 0);
+        }
+      } else {
+        if (audioRef.current) audioRef.current.currentTime = 0;
       }
       return;
     }
@@ -623,24 +651,33 @@ export default function App() {
 
     const prevSong = queue[prevIndex];
 
-    if (isCasting && activeDevice) {
+    if (isCasting) {
+      // Route 'Prev' directly to Speaker Queue Engine
       setCurrentSong(prevSong);
       setCurrentTime(0);
       setDuration(prevSong.duration || 200);
-      apiFetch('/api/queue/prev', { method: 'POST' }).catch(() => {});
+      setIsPlaying(true);
       if (audioRef.current) audioRef.current.pause();
+      apiFetch('/api/queue/prev', { method: 'POST' }).catch(() => {});
+      castSongToDevice(prevSong, activeDevice);
     } else {
+      // Route 'Prev' to local browser audio
       handlePlaySong(prevSong, queue);
     }
   };
 
   const handleSeek = (time: number) => {
     setCurrentTime(time);
-    if (audioRef.current) {
-      audioRef.current.currentTime = time;
-    }
-    if (isCasting && activeDevice) {
-      handleControlDevice(activeDevice.did, 'seek', Math.floor(time));
+    if (isCasting) {
+      // Route Seek exclusively to Xiaomi Speaker
+      if (activeDevice) {
+        handleControlDevice(activeDevice.did, 'seek', Math.floor(time));
+      }
+    } else {
+      // Route Seek to local HTML5 Audio
+      if (audioRef.current) {
+        audioRef.current.currentTime = time;
+      }
     }
   };
 
@@ -947,16 +984,41 @@ export default function App() {
 
   const handleToggleCast = () => {
     if (isCasting) {
+      // Toggle OFF: Turn off speaker casting, hand over to Local Browser Playback
       setIsCasting(false);
+      setCommandState(null);
       if (activeDevice) {
         handleControlDevice(activeDevice.did, 'pause');
+        apiFetch('/api/queue/pause', { method: 'POST' }).catch(() => {});
       }
-      showToast(`已断开与【${activeDevice?.name}】的投放`, '恢复为当前浏览器本地播放', 'info');
+
+      // If playback was active, seamlessly resume on local browser audio
+      if (currentSong && isPlaying) {
+        const playSrc = (currentSong.url && !currentSong.url.includes('pixabay')) ? currentSong.url : `/api/stream/${currentSong.id}`;
+        if (audioRef.current) {
+          audioRef.current.src = playSrc;
+          audioRef.current.currentTime = currentTime;
+          audioRef.current.play().catch(e => {
+            console.warn('Local handoff play error:', e);
+          });
+        }
+      }
+
+      showToast('已切换至本地设备播放', `已退出【${activeDevice?.name || '小爱音箱'}】串流模式，控制按钮已切回本地播放器`, 'info');
     } else {
+      // Toggle ON: Turn on Xiaomi Speaker Casting, hand over from Local Playback
+      setIsCasting(true);
+
+      // Pause local browser audio immediately so it doesn't collide
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
+
       if (currentSong) {
         castSongToDevice(currentSong, activeDevice);
+        showToast('已开启小米音箱控制模式', `播放器按钮操作已全权接管至【${activeDevice?.name || '小爱音箱'}】`, 'success');
       } else {
-        showToast('请先选择一首歌曲', '', 'info');
+        showToast('小米音箱控制模式已开启', `接下来在曲库或播放列表中点击播放，将直接推流至【${activeDevice?.name || '小爱音箱'}】`, 'success');
       }
     }
   };
@@ -1568,6 +1630,12 @@ export default function App() {
           onOpenQueue={() => setIsQueueDrawerOpen(true)}
           onOpenSubsonic={() => setIsSubsonicModalOpen(true)}
           queueCount={playQueue.length}
+          speakerVolume={activeDevice?.status?.volume ?? 40}
+          onSpeakerVolumeChange={(targetVol) => {
+            if (activeDevice) {
+              handleControlDevice(activeDevice.did, 'volume', targetVol);
+            }
+          }}
         />
 
         {/* Upload Song Modal */}
