@@ -257,6 +257,12 @@ let navidromeConfig = loadJson(NAVIDROME_FILE, {
   isConnected: false
 });
 
+// Reset if config file previously stored masked placeholder string
+if (navidromeConfig.password === '••••••••' || navidromeConfig.password === '********') {
+  navidromeConfig.password = '';
+  navidromeConfig.isConnected = false;
+}
+
 function getSubsonicAuthQuery(user: string, pass: string): string {
   const salt = crypto.randomBytes(6).toString('hex');
   const token = crypto.createHash('md5').update(pass + salt).digest('hex');
@@ -6730,47 +6736,67 @@ app.post('/api/navidrome/sync', async (req: Request, res: Response) => {
   try {
     const serverUrl = String(req.body.serverUrl || navidromeConfig.serverUrl || '').trim().replace(/\/+$/, '');
     const username = String(req.body.username || navidromeConfig.username || '').trim();
-    const password = String(req.body.password || navidromeConfig.password || '');
+    const rawPassword = String(req.body.password || '');
+    const password = (rawPassword === '••••••••' || rawPassword === '********' || !rawPassword)
+      ? navidromeConfig.password
+      : rawPassword;
 
     if (!serverUrl || !username) {
       return res.status(400).json({ success: false, message: 'Navidrome 连接未配置' });
     }
 
-    const authQuery = getSubsonicAuthQuery(username, password);
-    
-    // Fetch up to 500 songs from Navidrome
-    let targetUrl = `${serverUrl}/rest/getRandomSongs.view?size=500&${authQuery}`;
-
-    let controller = new AbortController();
-    let timeout = setTimeout(() => controller.abort(), 15000);
-
-    let response = await fetch(targetUrl, { signal: controller.signal });
-    clearTimeout(timeout);
-
-    if (!response.ok) {
-      return res.json({ success: false, message: `拉取失败 HTTP ${response.status}` });
+    if (!password) {
+      return res.status(400).json({ success: false, message: '请重新在上方填入 Navidrome 登录密码并保存' });
     }
 
-    let data = await response.json();
-    let subResp = data['subsonic-response'];
-    let songList = subResp?.randomSongs?.song || subResp?.searchResult3?.song || [];
+    const authQuery = getSubsonicAuthQuery(username, password);
+    
+    // Multiple strategies to retrieve tracks from Navidrome
+    const queryUrls = [
+      `${serverUrl}/rest/getRandomSongs.view?size=500&${authQuery}`,
+      `${serverUrl}/rest/search3.view?query=&songCount=500&${authQuery}`,
+      `${serverUrl}/rest/search3.view?query=%20&songCount=500&${authQuery}`,
+      `${serverUrl}/rest/search3.view?query=a&songCount=500&${authQuery}`
+    ];
 
-    // Fallback to search3 if randomSongs is empty
-    if (!Array.isArray(songList) || songList.length === 0) {
-      targetUrl = `${serverUrl}/rest/search3.view?query=&songCount=500&${authQuery}`;
-      controller = new AbortController();
-      timeout = setTimeout(() => controller.abort(), 15000);
-      response = await fetch(targetUrl, { signal: controller.signal });
-      clearTimeout(timeout);
-      if (response.ok) {
-        data = await response.json();
-        subResp = data['subsonic-response'];
-        songList = subResp?.searchResult3?.song || subResp?.randomSongs?.song || [];
+    let songList: any[] = [];
+    let lastError = '';
+
+    for (const targetUrl of queryUrls) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000);
+        const response = await fetch(targetUrl, { signal: controller.signal });
+        clearTimeout(timeout);
+
+        if (!response.ok) {
+          lastError = `HTTP ${response.status}`;
+          continue;
+        }
+
+        const data = await response.json().catch(() => null);
+        const subResp = data ? data['subsonic-response'] : null;
+
+        if (subResp && subResp.status === 'ok') {
+          const raw = subResp?.randomSongs?.song || subResp?.searchResult3?.song || subResp?.song || [];
+          const items = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+          if (items.length > 0) {
+            songList = items;
+            break;
+          }
+        } else if (subResp?.error?.message) {
+          lastError = subResp.error.message;
+        }
+      } catch (err: any) {
+        lastError = err.message || '超时';
       }
     }
 
     if (!Array.isArray(songList) || songList.length === 0) {
-      return res.json({ success: false, message: 'Navidrome 返回的歌曲列表为空，请确认 Navidrome 中已扫描音乐库' });
+      return res.json({ 
+        success: false, 
+        message: `Navidrome 未返回有效歌曲 (${lastError || '列表为空'})。请确认服务器中已扫描音乐文件，且账号具备访问权限。` 
+      });
     }
 
     // Convert to TingLan Song objects
@@ -6815,9 +6841,11 @@ app.post('/api/navidrome/sync', async (req: Request, res: Response) => {
 
     saveJson(SONGS_FILE, storedSongs);
 
-    // Save active config
-    navidromeConfig = { serverUrl, username, password, isConnected: true };
-    saveJson(NAVIDROME_FILE, navidromeConfig);
+    // Save active config securely
+    if (password && password !== '••••••••' && password !== '********') {
+      navidromeConfig = { serverUrl, username, password, isConnected: true };
+      saveJson(NAVIDROME_FILE, navidromeConfig);
+    }
 
     return res.json({
       success: true,
