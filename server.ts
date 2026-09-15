@@ -6847,55 +6847,84 @@ app.all('/api/navidrome/playlists', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, message: '请先配置或提供 Navidrome 服务器地址与用户名' });
     }
 
+    // Auto-persist active credentials if valid
+    if (password && (serverUrl !== navidromeConfig.serverUrl || username !== navidromeConfig.username || password !== navidromeConfig.password)) {
+      navidromeConfig = { serverUrl, username, password, isConnected: true };
+      saveJson(NAVIDROME_FILE, navidromeConfig);
+    }
+
     const authQuery = getSubsonicAuthQuery(username, password);
-    const targetUrl = `${serverUrl}/rest/getPlaylists.view?${authQuery}`;
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 12000);
+    // Try multiple query endpoints for max compatibility across Navidrome / Subsonic versions
+    const candidateUrls = [
+      `${serverUrl}/rest/getPlaylists.view?${authQuery}`,
+      `${serverUrl}/rest/getPlaylists.view?username=${encodeURIComponent(username)}&${authQuery}`,
+      `${serverUrl}/rest/getPlaylists.view?u=${encodeURIComponent(username)}&${authQuery}`
+    ];
 
-    const response = await fetch(targetUrl, { signal: controller.signal });
-    clearTimeout(timeout);
+    let subResp: any = null;
+    let rawItems: any[] = [];
 
-    if (!response.ok) {
-      return res.json({ success: false, message: `获取歌单失败 (HTTP ${response.status})` });
+    for (const targetUrl of candidateUrls) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000);
+        const response = await fetch(targetUrl, { signal: controller.signal });
+        clearTimeout(timeout);
+
+        if (!response.ok) continue;
+
+        const data = await response.json();
+        const resp = data['subsonic-response'];
+
+        if (resp && resp.status === 'ok') {
+          subResp = resp;
+          const extracted = extractSubsonicPlaylists(resp);
+          if (extracted.length > 0) {
+            rawItems = extracted;
+            break;
+          }
+        }
+      } catch (err) {
+        console.warn(`[Navidrome Playlists] fetch error for ${targetUrl}:`, err);
+      }
     }
 
-    const data = await response.json();
-    const subResp = data['subsonic-response'];
-
-    if (!subResp || subResp.status !== 'ok') {
-      const errMsg = subResp?.error?.message || 'Navidrome 拒绝了获取歌单请求，请核对权限与凭据';
-      return res.json({ success: false, message: errMsg });
+    if (!subResp && rawItems.length === 0) {
+      // If none of the attempts returned status ok with items, try taking the first response if any
+      if (!subResp) {
+        return res.json({ success: false, message: 'Navidrome 拒绝了获取歌单请求，请检查连接与认证凭据' });
+      }
     }
-
-    const rawList = subResp?.playlists?.playlist || [];
-    const playlistArray = Array.isArray(rawList) ? rawList : (rawList ? [rawList] : []);
 
     const defaultCover = 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=600&q=80';
 
-    const formattedPlaylists = playlistArray.map((p: any) => {
-      const coverUrl = p.coverArt 
-        ? `${serverUrl}/rest/getCoverArt.view?id=${p.coverArt}&${authQuery}`
+    const formattedPlaylists = rawItems.map((p: any) => {
+      const coverArtId = p.coverArt || p.coverArtId || p.cover;
+      const coverUrl = coverArtId 
+        ? `${serverUrl}/rest/getCoverArt.view?id=${coverArtId}&${authQuery}`
         : defaultCover;
 
       return {
-        id: String(p.id),
-        name: p.name || '未命名歌单',
-        comment: p.comment || '',
-        songCount: Number(p.songCount) || 0,
-        duration: Number(p.duration) || 0,
+        id: String(p.id || p.playlistId || p.key || ''),
+        name: p.name || p.title || '未命名歌单',
+        comment: p.comment || p.description || '',
+        songCount: Number(p.songCount || p.song_count || p.itemCount || (p.entry ? (Array.isArray(p.entry) ? p.entry.length : 1) : 0)),
+        duration: Number(p.duration || 0),
         coverUrl,
-        created: p.created,
-        changed: p.changed,
+        created: p.created || p.created_at,
+        changed: p.changed || p.updated_at,
         owner: p.owner || username
       };
-    });
+    }).filter((p: any) => Boolean(p.id));
 
     return res.json({
       success: true,
       count: formattedPlaylists.length,
       playlists: formattedPlaylists,
-      message: `成功获取到 ${formattedPlaylists.length} 个 Navidrome 歌单`
+      message: formattedPlaylists.length > 0 
+        ? `成功获取到 ${formattedPlaylists.length} 个 Navidrome 歌单` 
+        : '未能获取到歌单，请确认 Navidrome 中已建立歌单并对该账号开放权限'
     });
 
   } catch (e: any) {
@@ -6905,6 +6934,43 @@ app.all('/api/navidrome/playlists', async (req: Request, res: Response) => {
     });
   }
 });
+
+function extractSubsonicPlaylists(subResp: any): any[] {
+  if (!subResp) return [];
+  const list: any[] = [];
+
+  const addItems = (val: any) => {
+    if (!val) return;
+    if (Array.isArray(val)) {
+      list.push(...val);
+    } else if (typeof val === 'object') {
+      if (val.id || val.name) {
+        list.push(val);
+      } else {
+        Object.values(val).forEach(v => {
+          if (v && typeof v === 'object' && ((v as any).id || (v as any).name)) {
+            list.push(v);
+          }
+        });
+      }
+    }
+  };
+
+  if (subResp.playlists) addItems(subResp.playlists.playlist || subResp.playlists);
+  if (subResp.playlist) addItems(subResp.playlist);
+  if (subResp.publicPlaylists) addItems(subResp.publicPlaylists.playlist || subResp.publicPlaylists);
+  if (subResp.smartPlaylists) addItems(subResp.smartPlaylists.playlist || subResp.smartPlaylists);
+
+  const map = new Map<string, any>();
+  for (const item of list) {
+    const itemId = String(item.id || item.playlistId || item.name || '');
+    if (itemId && !map.has(itemId)) {
+      map.set(itemId, item);
+    }
+  }
+
+  return Array.from(map.values());
+}
 
 // Import Selected Playlists and their Songs from Navidrome
 app.post('/api/navidrome/import-playlists', async (req: Request, res: Response) => {

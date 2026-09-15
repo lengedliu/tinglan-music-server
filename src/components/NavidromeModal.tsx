@@ -53,6 +53,8 @@ export const NavidromeModal: React.FC<NavidromeModalProps> = ({
   const [selectedPlaylistIds, setSelectedPlaylistIds] = useState<string[]>([]);
   const [playlistSearchQuery, setPlaylistSearchQuery] = useState<string>('');
 
+  const [fetchMessage, setFetchMessage] = useState<string | null>(null);
+
   useEffect(() => {
     if (isOpen) {
       apiFetch('/api/navidrome/config')
@@ -87,6 +89,7 @@ export const NavidromeModal: React.FC<NavidromeModalProps> = ({
   const fetchRemotePlaylists = async (sUrl = serverUrl, uName = username, pwd = password) => {
     setIsLoadingPlaylists(true);
     setImportResult(null);
+    setFetchMessage(null);
     try {
       const res = await apiFetch('/api/navidrome/playlists', {
         method: 'POST',
@@ -94,15 +97,18 @@ export const NavidromeModal: React.FC<NavidromeModalProps> = ({
         body: JSON.stringify({ serverUrl: sUrl, username: uName, password: pwd }),
       });
       const data = await res.json();
-      if (data.success && Array.isArray(data.playlists)) {
+      if (data.success && Array.isArray(data.playlists) && data.playlists.length > 0) {
         setRemotePlaylists(data.playlists);
         // Default: select all discovered playlists for convenience
         setSelectedPlaylistIds(data.playlists.map((p: NavidromePlaylist) => p.id));
+        setFetchMessage(null);
       } else {
         setRemotePlaylists([]);
+        setFetchMessage(data.message || '暂未获取到歌单，请核对账号权限或歌单公开状态');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Fetch Navidrome playlists error:', err);
+      setFetchMessage(`获取歌单出错: ${err.message || '网络无法访问'}`);
     } finally {
       setIsLoadingPlaylists(false);
     }
@@ -120,8 +126,8 @@ export const NavidromeModal: React.FC<NavidromeModalProps> = ({
       const data = await res.json();
       setTestResult(data);
       if (data.success) {
-        // Automatically fetch playlist list upon successful ping
-        fetchRemotePlaylists();
+        // Automatically fetch playlist list upon successful ping using current form fields
+        fetchRemotePlaylists(serverUrl, username, password);
       }
     } catch (err: any) {
       setTestResult({ success: false, message: err.message || '网络连接失败，请检查 URL 或内网穿透设置' });
@@ -319,7 +325,7 @@ export const NavidromeModal: React.FC<NavidromeModalProps> = ({
             </button>
 
             <button
-              onClick={() => fetchRemotePlaylists()}
+              onClick={() => fetchRemotePlaylists(serverUrl, username, password)}
               disabled={isLoadingPlaylists || !serverUrl || !username}
               className={`flex-1 min-w-[140px] flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border text-xs font-bold transition disabled:opacity-50 ${
                 isLight 
@@ -457,10 +463,11 @@ export const NavidromeModal: React.FC<NavidromeModalProps> = ({
                 <span>正在获取远程 Navidrome 歌单列表...</span>
               </div>
             ) : remotePlaylists.length === 0 ? (
-              <div className={`py-6 text-center text-xs rounded-xl border border-dashed ${
-                isLight ? 'border-zinc-300 text-zinc-500' : 'border-zinc-800 text-zinc-500'
+              <div className={`py-6 px-4 text-center text-xs rounded-xl border border-dashed space-y-1 ${
+                isLight ? 'border-zinc-300 text-zinc-600 bg-zinc-100/50' : 'border-zinc-800 text-zinc-400 bg-zinc-950/40'
               }`}>
-                暂未获取到歌单。请确认已填写上方服务器配置并点击「测试并连接」或「获取 Navidrome 歌单」
+                <p className="font-semibold">{fetchMessage || '暂未获取到歌单'}</p>
+                <p className="text-[11px] opacity-80">请确认已填写上方服务器配置并点击「测试并连接」或「获取 Navidrome 歌单」</p>
               </div>
             ) : filteredPlaylists.length === 0 ? (
               <div className="py-4 text-center text-xs text-zinc-500">
