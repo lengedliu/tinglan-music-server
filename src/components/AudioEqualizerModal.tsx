@@ -49,6 +49,20 @@ export const AudioEqualizerModal: React.FC<AudioEqualizerModalProps> = ({
       if (!audioCtxRef.current) {
         const ctx = new AudioCtx();
         audioCtxRef.current = ctx;
+        (window as any).__tinglanAudioCtx = ctx;
+
+        // Auto-resume AudioContext on first user interaction or play
+        const unlockAudio = () => {
+          if (ctx.state === 'suspended') {
+            ctx.resume().catch(() => {});
+          }
+          window.removeEventListener('click', unlockAudio);
+          window.removeEventListener('keydown', unlockAudio);
+          window.removeEventListener('touchstart', unlockAudio);
+        };
+        window.addEventListener('click', unlockAudio, { passive: true });
+        window.addEventListener('keydown', unlockAudio, { passive: true });
+        window.addEventListener('touchstart', unlockAudio, { passive: true });
 
         // Create MediaElementSource
         const audioEl = audioRef.current;

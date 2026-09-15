@@ -423,12 +423,10 @@ export default function App() {
         .then(resData => {
           if (!isMounted || !resData) return;
           const status = resData.data || resData;
-          if (status && status.isPlaying) {
-            if (!isCasting) {
-              setIsCasting(true);
-            }
-            if (!isPlaying) {
-              setIsPlaying(true);
+          // Only synchronize playback position and active song if user is currently in casting mode
+          if (isCasting && status) {
+            if (status.isPlaying !== undefined && !status.isTransitioning) {
+              setIsPlaying(Boolean(status.isPlaying));
             }
             if (status.currentSong && status.currentSong.id !== currentSong?.id) {
               setCurrentSong(status.currentSong);
@@ -437,14 +435,15 @@ export default function App() {
             if (typeof status.elapsedSeconds === 'number' && status.elapsedSeconds >= 0) {
               setCurrentTime(status.elapsedSeconds);
             }
-            if (status.queue && status.queue.length > 0) {
-              setPlayQueue(prev => {
-                if (prev.length === status.queue.length && prev.every((s, i) => s.id === status.queue[i]?.id)) {
-                  return prev;
-                }
-                return status.queue;
-              });
-            }
+          }
+          // Queue list sync when drawer is open
+          if (isQueueDrawerOpen && status?.queue && Array.isArray(status.queue) && status.queue.length > 0) {
+            setPlayQueue(prev => {
+              if (prev.length === status.queue.length && prev.every((s, i) => s.id === status.queue[i]?.id)) {
+                return prev;
+              }
+              return status.queue;
+            });
           }
         })
         .catch(() => {});
@@ -454,10 +453,15 @@ export default function App() {
       isMounted = false;
       clearInterval(interval);
     };
-  }, [isCasting, isPlaying, isQueueDrawerOpen, currentSong?.id]);
+  }, [isCasting, isQueueDrawerOpen, currentSong?.id]);
 
   // Audio event handlers
   const handlePlayPause = () => {
+    // Unlock Web Audio API context if present
+    if ((window as any).__tinglanAudioCtx && (window as any).__tinglanAudioCtx.state === 'suspended') {
+      (window as any).__tinglanAudioCtx.resume().catch(() => {});
+    }
+
     if (!currentSong) {
       if (playQueue.length > 0) {
         handlePlaySong(playQueue[0]);
@@ -470,18 +474,26 @@ export default function App() {
     }
 
     if (isCasting) {
-      // Clean Speaker Output Logic: route commands exclusively to Xiaomi Speaker
+      // Clean Speaker Output Logic: route pause/play strictly to Xiaomi Speaker, KEEP casting mode active!
       if (isPlaying) {
         setIsPlaying(false);
         if (activeDevice) {
-          handleControlDevice(activeDevice.did, 'pause');
           apiFetch('/api/queue/pause', { method: 'POST' }).catch(() => {});
+          apiFetch('/api/miot/control', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ did: activeDevice.did, action: 'pause' })
+          }).catch(() => {});
         }
       } else {
         setIsPlaying(true);
         if (activeDevice) {
           apiFetch('/api/queue/resume', { method: 'POST' }).catch(() => {});
-          handleControlDevice(activeDevice.did, 'play');
+          apiFetch('/api/miot/control', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ did: activeDevice.did, action: 'play' })
+          }).catch(() => {});
         }
       }
     } else {
@@ -490,13 +502,29 @@ export default function App() {
         audioRef.current?.pause();
         setIsPlaying(false);
       } else {
-        setIsPlaying(true);
-        audioRef.current?.play().catch(() => {});
+        if (audioRef.current) {
+          audioRef.current.volume = volume;
+          const playSrc = (currentSong.url && !currentSong.url.includes('pixabay')) ? currentSong.url : `/api/stream/${encodeURIComponent(currentSong.id)}`;
+          if (!audioRef.current.src || !audioRef.current.src.includes(currentSong.id)) {
+            audioRef.current.src = playSrc;
+          }
+          audioRef.current.play().then(() => {
+            setIsPlaying(true);
+          }).catch(e => {
+            console.warn('Audio play request error:', e);
+            setIsPlaying(false);
+          });
+        }
       }
     }
   };
 
   const handlePlaySong = (song: Song, targetQueue?: Song[]) => {
+    // Unlock Web Audio API context if present
+    if ((window as any).__tinglanAudioCtx && (window as any).__tinglanAudioCtx.state === 'suspended') {
+      (window as any).__tinglanAudioCtx.resume().catch(() => {});
+    }
+
     setCurrentSong(song);
     setCurrentTime(0);
     setDuration(song.duration || 200);
@@ -515,11 +543,15 @@ export default function App() {
       setIsPlaying(true);
       castSongToDevice(song, activeDevice, newQueue);
     } else {
-      // In Local Playback Mode: load and play HTML5 audio directly
-      const playSrc = (song.url && !song.url.includes('pixabay')) ? song.url : `/api/stream/${song.id}`;
+      // In Local Playback Mode: load and play HTML5 audio directly through browser/computer speakers
+      const playSrc = (song.url && !song.url.includes('pixabay')) ? song.url : `/api/stream/${encodeURIComponent(song.id)}`;
       if (audioRef.current) {
+        audioRef.current.volume = volume;
         audioRef.current.src = playSrc;
-        audioRef.current.play().catch(e => {
+        audioRef.current.load();
+        audioRef.current.play().then(() => {
+          setIsPlaying(true);
+        }).catch(e => {
           console.warn('Audio play request error:', e);
         });
       }
@@ -775,10 +807,9 @@ export default function App() {
         // Device State: strictly updated based on verified server device response
         if (data.device) {
           setDevices(prev => prev.map(d => d.did === dev.did ? data.device : d));
-          setIsCasting(Boolean(data.device.status?.playing));
-        } else {
-          setIsCasting(true);
         }
+        setIsCasting(true);
+        setIsPlaying(true);
 
         if (data.warning) {
           showToast(
@@ -1062,9 +1093,9 @@ export default function App() {
         if (data.device) {
           setDevices(prev => prev.map(d => d.did === did ? data.device : d));
           if (action === 'pause' || action === 'stop') {
-            if (did === activeDeviceId) setIsCasting(false);
+            if (did === activeDeviceId) setIsPlaying(false);
           } else if (action === 'play') {
-            if (did === activeDeviceId) setIsCasting(Boolean(data.device.status?.playing));
+            if (did === activeDeviceId) setIsPlaying(true);
           }
         }
       })
@@ -1455,7 +1486,15 @@ export default function App() {
         {/* Hidden Audio Engine */}
         <audio
           ref={audioRef}
-          src={currentSong?.url}
+          src={currentSong?.url || (currentSong ? `/api/stream/${encodeURIComponent(currentSong.id)}` : undefined)}
+          crossOrigin="anonymous"
+          preload="auto"
+          playsInline
+          onPlay={() => {
+            if ((window as any).__tinglanAudioCtx && (window as any).__tinglanAudioCtx.state === 'suspended') {
+              (window as any).__tinglanAudioCtx.resume().catch(() => {});
+            }
+          }}
           onTimeUpdate={() => {
             if (audioRef.current) {
               setCurrentTime(audioRef.current.currentTime);
