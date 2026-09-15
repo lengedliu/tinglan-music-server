@@ -54,6 +54,7 @@ export const NavidromeModal: React.FC<NavidromeModalProps> = ({
   const [playlistSearchQuery, setPlaylistSearchQuery] = useState<string>('');
 
   const [fetchMessage, setFetchMessage] = useState<string | null>(null);
+  const [debugTrace, setDebugTrace] = useState<string[] | null>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -107,6 +108,10 @@ export const NavidromeModal: React.FC<NavidromeModalProps> = ({
         console.warn('JSON parse failed for playlists response:', e);
       }
 
+      if (data?.debugLogs && Array.isArray(data.debugLogs)) {
+        setDebugTrace(data.debugLogs);
+      }
+
       if (!res.ok || !data) {
         setRemotePlaylists([]);
         setFetchMessage(data?.message || `服务器响应异常 (HTTP ${res.status})，请检查 Navidrome 地址与内网穿透可达性`);
@@ -141,6 +146,9 @@ export const NavidromeModal: React.FC<NavidromeModalProps> = ({
       });
       const data = await res.json();
       setTestResult(data);
+      if (data?.debugLogs && Array.isArray(data.debugLogs)) {
+        setDebugTrace(data.debugLogs);
+      }
       if (data.success) {
         // Automatically fetch playlist list upon successful ping using current form fields
         fetchRemotePlaylists(serverUrl, username, password);
@@ -414,6 +422,38 @@ export const NavidromeModal: React.FC<NavidromeModalProps> = ({
                 <p className="opacity-90 text-[11px]">{syncResult.message}</p>
               </div>
             </div>
+          )}
+
+          {/* Debug Trace Log Panel */}
+          {debugTrace && debugTrace.length > 0 && (
+            <details className={`p-3.5 rounded-2xl border text-xs font-mono space-y-1.5 transition ${
+              isLight ? 'bg-zinc-100 border-zinc-300 text-zinc-900' : 'bg-zinc-950 border-amber-500/30 text-amber-200'
+            }`}>
+              <summary className="cursor-pointer font-bold flex items-center justify-between text-amber-600 dark:text-amber-400 hover:opacity-80 select-none">
+                <span className="flex items-center gap-1.5">
+                  <Database className="w-3.5 h-3.5" />
+                  接口请求跟踪调试日志 ({debugTrace.length} 条)
+                </span>
+                <span className="text-[10px] opacity-70">点击展开/收起</span>
+              </summary>
+              <div className="mt-2 space-y-1 max-h-48 overflow-y-auto whitespace-pre-wrap text-[11px] leading-relaxed break-all font-mono p-2.5 rounded-xl bg-black/80 text-zinc-200 border border-white/10">
+                {debugTrace.map((line, idx) => {
+                  let cls = 'text-zinc-300';
+                  if (line.includes('Error') || line.includes('Exception') || line.includes('HTTP 4') || line.includes('HTTP 5') || line.includes('Parse Error')) {
+                    cls = 'text-rose-400 font-bold';
+                  } else if (line.includes('Success') || line.includes('Extracted')) {
+                    cls = 'text-emerald-400 font-bold';
+                  } else if (line.startsWith('-->')) {
+                    cls = 'text-sky-300';
+                  }
+                  return (
+                    <div key={idx} className={cls}>
+                      {line}
+                    </div>
+                  );
+                })}
+              </div>
+            </details>
           )}
 
           {/* Remote Playlists Selection Panel */}

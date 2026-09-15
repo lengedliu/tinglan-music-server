@@ -6691,6 +6691,7 @@ app.post('/api/navidrome/config', (req: Request, res: Response) => {
 
 // Test Navidrome connection
 app.post('/api/navidrome/test', async (req: Request, res: Response) => {
+  const debugLogs: string[] = [];
   try {
     const serverUrl = String(req.body.serverUrl || navidromeConfig.serverUrl || '').trim().replace(/\/+$/, '');
     const username = String(req.body.username || navidromeConfig.username || '').trim();
@@ -6699,8 +6700,11 @@ app.post('/api/navidrome/test', async (req: Request, res: Response) => {
       ? navidromeConfig.password
       : rawPassword;
 
+    debugLogs.push(`[Navidrome Test Start] ServerUrl: "${serverUrl}", Username: "${username}", Password Provided: ${Boolean(password)}`);
+    console.log(debugLogs[debugLogs.length - 1]);
+
     if (!serverUrl || !username) {
-      return res.status(400).json({ success: false, message: '请提供完整的 Navidrome 服务器 URL 和用户名' });
+      return res.status(400).json({ success: false, message: '请提供完整的 Navidrome 服务器 URL 和用户名', debugLogs });
     }
 
     const tokenQuery = getSubsonicAuthQuery(username, password);
@@ -6717,27 +6721,46 @@ app.post('/api/navidrome/test', async (req: Request, res: Response) => {
     let lastErr = '';
 
     for (const targetUrl of candidateUrls) {
+      const sanitizedUrl = targetUrl.replace(/p=[^&]+/, 'p=******').replace(/t=[^&]+/, 't=******');
+      debugLogs.push(`--> Fetching: ${sanitizedUrl}`);
+      console.log(`[Navidrome Test] --> Fetching: ${sanitizedUrl}`);
+
       try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 6000);
         const response = await fetch(targetUrl, { signal: controller.signal });
         clearTimeout(timeout);
 
+        const textBody = await response.text().catch(() => '');
+        debugLogs.push(`    <-- Status: HTTP ${response.status} ${response.statusText} | Body length: ${textBody.length}`);
+        console.log(`[Navidrome Test] <-- Status: HTTP ${response.status} | Body preview: ${textBody.slice(0, 150)}`);
+
         if (!response.ok) {
           lastErr = `HTTP ${response.status} ${response.statusText}`;
           continue;
         }
 
-        const data = await response.json().catch(() => null);
+        let data: any = null;
+        try {
+          data = JSON.parse(textBody);
+        } catch (jsonErr: any) {
+          debugLogs.push(`    [JSON Parse Failed] ${jsonErr.message}`);
+          console.warn(`[Navidrome Test] JSON Parse Error:`, jsonErr.message);
+        }
+
         const resp = data ? data['subsonic-response'] : null;
         if (resp && resp.status === 'ok') {
           subResp = resp;
+          debugLogs.push(`    [Success] Received subsonic-response status: ok`);
           break;
         } else if (resp?.error?.message) {
           lastErr = resp.error.message;
+          debugLogs.push(`    [Subsonic Error] Code: ${resp.error.code}, Message: ${resp.error.message}`);
         }
       } catch (err: any) {
         lastErr = err.message || '网络连接超时';
+        debugLogs.push(`    [Exception] ${lastErr}`);
+        console.warn(`[Navidrome Test] Fetch Exception: ${lastErr}`);
       }
     }
 
@@ -6759,16 +6782,20 @@ app.post('/api/navidrome/test', async (req: Request, res: Response) => {
         success: true,
         message: `成功连通 Navidrome 服务器！(检测到 API 协议版本: v${detectedApiVer})`,
         version: detectedServerVer,
-        apiVersion: detectedApiVer
+        apiVersion: detectedApiVer,
+        debugLogs
       });
     } else {
       const errDetail = lastErr || '身份鉴权失败，请核对用户名和密码';
-      return res.json({ success: false, message: `Navidrome 拒绝连接: ${errDetail}` });
+      return res.json({ success: false, message: `Navidrome 拒绝连接: ${errDetail}`, debugLogs });
     }
   } catch (e: any) {
+    debugLogs.push(`[Fatal Exception] ${e.message}`);
+    console.error(`[Navidrome Test Fatal Error]`, e);
     return res.json({
       success: false,
-      message: `网络连接异常: ${e.message || '请检查服务器地址与网络可达性'}`
+      message: `网络连接异常: ${e.message || '请检查服务器地址与网络可达性'}`,
+      debugLogs
     });
   }
 });
@@ -6926,6 +6953,7 @@ app.post('/api/navidrome/sync', async (req: Request, res: Response) => {
 
 // Fetch all Playlists from Navidrome
 app.all('/api/navidrome/playlists', async (req: Request, res: Response) => {
+  const debugLogs: string[] = [];
   try {
     const serverUrl = String(req.body?.serverUrl || req.query?.serverUrl || navidromeConfig.serverUrl || '').trim().replace(/\/+$/, '');
     const username = String(req.body?.username || req.query?.username || navidromeConfig.username || '').trim();
@@ -6934,8 +6962,11 @@ app.all('/api/navidrome/playlists', async (req: Request, res: Response) => {
       ? navidromeConfig.password
       : rawPassword;
 
+    debugLogs.push(`[Navidrome Playlists Start] ServerUrl: "${serverUrl}", Username: "${username}", Password Provided: ${Boolean(password)}`);
+    console.log(debugLogs[debugLogs.length - 1]);
+
     if (!serverUrl || !username) {
-      return res.status(400).json({ success: false, message: '请先配置或提供 Navidrome 服务器地址与用户名' });
+      return res.status(400).json({ success: false, message: '请先配置或提供 Navidrome 服务器地址与用户名', debugLogs });
     }
 
     // Auto-persist active credentials if valid
@@ -6961,11 +6992,7 @@ app.all('/api/navidrome/playlists', async (req: Request, res: Response) => {
       `${serverUrl}/rest/getPlaylists?${tokenQuery}`,
       `${serverUrl}/rest/getPlaylists.view?${tokenQuery}`,
       `${serverUrl}/rest/getPlaylists?u=${encodeURIComponent(username)}&p=${encodeURIComponent(password)}&v=1.16.1&c=TingLanMusic&f=json`,
-      `${serverUrl}/rest/getPlaylists.view?u=${encodeURIComponent(username)}&p=${encodeURIComponent(password)}&v=1.16.1&c=TingLanMusic&f=json`,
-      `${serverUrl}/rest/getPlaylists?username=${encodeURIComponent(username)}&${passQuery}`,
-      `${serverUrl}/rest/getPlaylists.view?username=${encodeURIComponent(username)}&${passQuery}`,
-      `${serverUrl}/rest/getPlaylists?username=${encodeURIComponent(username)}&${tokenQuery}`,
-      `${serverUrl}/rest/getPlaylists.view?username=${encodeURIComponent(username)}&${tokenQuery}`
+      `${serverUrl}/rest/getPlaylists.view?u=${encodeURIComponent(username)}&p=${encodeURIComponent(password)}&v=1.16.1&c=TingLanMusic&f=json`
     ];
 
     let subResp: any = null;
@@ -6973,21 +7000,34 @@ app.all('/api/navidrome/playlists', async (req: Request, res: Response) => {
     let lastErrorMsg = '';
 
     for (const targetUrl of candidateUrls) {
+      const sanitizedUrl = targetUrl.replace(/p=[^&]+/, 'p=******').replace(/t=[^&]+/, 't=******');
+      debugLogs.push(`--> Fetching: ${sanitizedUrl}`);
+      console.log(`[Navidrome Playlists] --> Fetching: ${sanitizedUrl}`);
+
       try {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 4500);
+        const timeout = setTimeout(() => controller.abort(), 6000);
         const response = await fetch(targetUrl, { signal: controller.signal });
         clearTimeout(timeout);
+
+        const textBody = await response.text().catch(() => '');
+        debugLogs.push(`    <-- Status: HTTP ${response.status} ${response.statusText} | Body length: ${textBody.length}`);
+        console.log(`[Navidrome Playlists] <-- Status: HTTP ${response.status} | Body preview: ${textBody.slice(0, 150)}`);
 
         if (!response.ok) {
           lastErrorMsg = `HTTP ${response.status} ${response.statusText}`;
           continue;
         }
 
-        const data = await response.json().catch(() => null);
-        if (!data) continue;
+        let data: any = null;
+        try {
+          data = JSON.parse(textBody);
+        } catch (jsonErr: any) {
+          debugLogs.push(`    [JSON Parse Error] ${jsonErr.message}`);
+          console.warn(`[Navidrome Playlists] JSON Parse Error:`, jsonErr.message);
+        }
 
-        const resp = data['subsonic-response'];
+        const resp = data ? data['subsonic-response'] : null;
 
         if (resp && resp.status === 'ok') {
           subResp = resp;
@@ -6996,20 +7036,26 @@ app.all('/api/navidrome/playlists', async (req: Request, res: Response) => {
 
           const extracted = extractSubsonicPlaylists(resp);
           rawItems = extracted;
+          debugLogs.push(`    [Success] Extracted ${extracted.length} playlist items`);
           break;
         } else if (resp?.error?.message) {
           lastErrorMsg = resp.error.message;
+          debugLogs.push(`    [Subsonic Error] Code: ${resp.error.code}, Message: ${resp.error.message}`);
+        } else if (data) {
+          debugLogs.push(`    [Invalid Response] Response missing 'subsonic-response' key`);
         }
       } catch (err: any) {
         lastErrorMsg = err.message || '网络连接超时';
-        console.warn(`[Navidrome Playlists] fetch error for ${targetUrl}:`, err);
+        debugLogs.push(`    [Exception] ${lastErrorMsg}`);
+        console.warn(`[Navidrome Playlists] Fetch Exception: ${lastErrorMsg}`);
       }
     }
 
     if (!subResp && rawItems.length === 0) {
       return res.json({
         success: false,
-        message: `无法拉取 Navidrome 歌单: ${lastErrorMsg || '网络连接超时或服务器无响应'}`
+        message: `无法拉取 Navidrome 歌单: ${lastErrorMsg || '网络连接超时或服务器无响应'}`,
+        debugLogs
       });
     }
 
@@ -7040,13 +7086,17 @@ app.all('/api/navidrome/playlists', async (req: Request, res: Response) => {
       playlists: formattedPlaylists,
       message: formattedPlaylists.length > 0 
         ? `成功获取到 ${formattedPlaylists.length} 个 Navidrome 歌单` 
-        : '未能获取到歌单，请确认 Navidrome 中已建立歌单并对该账号开放权限'
+        : '未能获取到歌单，请确认 Navidrome 中已建立歌单并对该账号开放权限',
+      debugLogs
     });
 
   } catch (e: any) {
+    debugLogs.push(`[Fatal Exception] ${e.message}`);
+    console.error(`[Navidrome Playlists Fatal Error]`, e);
     return res.json({
       success: false,
-      message: `获取 Navidrome 歌单失败: ${e.message || '网络连接超时'}`
+      message: `获取 Navidrome 歌单失败: ${e.message || '网络连接超时'}`,
+      debugLogs
     });
   }
 });
