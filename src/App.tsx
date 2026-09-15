@@ -547,13 +547,30 @@ export default function App() {
       const playSrc = (song.url && !song.url.includes('pixabay')) ? song.url : `/api/stream/${encodeURIComponent(song.id)}`;
       if (audioRef.current) {
         audioRef.current.volume = volume;
-        audioRef.current.src = playSrc;
-        audioRef.current.load();
-        audioRef.current.play().then(() => {
-          setIsPlaying(true);
-        }).catch(e => {
-          console.warn('Audio play request error:', e);
-        });
+        // Check if src needs update without triggering redundant reload
+        if (!audioRef.current.src || !audioRef.current.src.includes(encodeURIComponent(song.id))) {
+          audioRef.current.src = playSrc;
+        }
+        audioRef.current.currentTime = 0;
+        const playPromise = audioRef.current.play();
+        if (playPromise !== undefined) {
+          playPromise
+            .then(() => {
+              setIsPlaying(true);
+            })
+            .catch((e: any) => {
+              if (e && e.name === 'AbortError') {
+                // Recover immediately once buffer is ready
+                const handleCanPlay = () => {
+                  audioRef.current?.play().then(() => setIsPlaying(true)).catch(() => {});
+                  audioRef.current?.removeEventListener('canplay', handleCanPlay);
+                };
+                audioRef.current?.addEventListener('canplay', handleCanPlay);
+              } else {
+                console.warn('Audio play request error:', e);
+              }
+            });
+        }
       }
       setIsPlaying(true);
     }
