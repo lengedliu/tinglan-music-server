@@ -178,6 +178,17 @@ export default function App() {
       .catch(() => {});
   };
 
+  const fetchPlaylistsFromBackend = () => {
+    apiFetch('/api/playlists')
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (Array.isArray(data) && data.length > 0) {
+          setPlaylists(data);
+        }
+      })
+      .catch(() => {});
+  };
+
   // Audio Reference
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -226,14 +237,7 @@ export default function App() {
       .catch(() => {});
 
     // 4. Fetch Playlists from backend storage
-    apiFetch('/api/playlists')
-      .then(res => res.ok ? res.json() : null)
-      .then(data => {
-        if (Array.isArray(data) && data.length > 0) {
-          setPlaylists(data);
-        }
-      })
-      .catch(() => {});
+    fetchPlaylistsFromBackend();
 
     // 5. Fetch Logs
     apiFetch('/api/miot/logs')
@@ -1772,6 +1776,7 @@ export default function App() {
           isOpen={isNavidromeModalOpen}
           onClose={() => setIsNavidromeModalOpen(false)}
           onSongsSynced={fetchSongsFromBackend}
+          onPlaylistsSynced={fetchPlaylistsFromBackend}
         />
       </div>
 

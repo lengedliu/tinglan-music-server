@@ -6833,6 +6833,212 @@ app.post('/api/navidrome/sync', async (req: Request, res: Response) => {
   }
 });
 
+// Fetch all Playlists from Navidrome
+app.all('/api/navidrome/playlists', async (req: Request, res: Response) => {
+  try {
+    const serverUrl = String(req.body?.serverUrl || req.query?.serverUrl || navidromeConfig.serverUrl || '').trim().replace(/\/+$/, '');
+    const username = String(req.body?.username || req.query?.username || navidromeConfig.username || '').trim();
+    const rawPassword = String(req.body?.password || req.query?.password || '');
+    const password = (rawPassword === '••••••••' || rawPassword === '********' || !rawPassword)
+      ? navidromeConfig.password
+      : rawPassword;
+
+    if (!serverUrl || !username) {
+      return res.status(400).json({ success: false, message: '请先配置或提供 Navidrome 服务器地址与用户名' });
+    }
+
+    const authQuery = getSubsonicAuthQuery(username, password);
+    const targetUrl = `${serverUrl}/rest/getPlaylists.view?${authQuery}`;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+
+    const response = await fetch(targetUrl, { signal: controller.signal });
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      return res.json({ success: false, message: `获取歌单失败 (HTTP ${response.status})` });
+    }
+
+    const data = await response.json();
+    const subResp = data['subsonic-response'];
+
+    if (!subResp || subResp.status !== 'ok') {
+      const errMsg = subResp?.error?.message || 'Navidrome 拒绝了获取歌单请求，请核对权限与凭据';
+      return res.json({ success: false, message: errMsg });
+    }
+
+    const rawList = subResp?.playlists?.playlist || [];
+    const playlistArray = Array.isArray(rawList) ? rawList : (rawList ? [rawList] : []);
+
+    const defaultCover = 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=600&q=80';
+
+    const formattedPlaylists = playlistArray.map((p: any) => {
+      const coverUrl = p.coverArt 
+        ? `${serverUrl}/rest/getCoverArt.view?id=${p.coverArt}&${authQuery}`
+        : defaultCover;
+
+      return {
+        id: String(p.id),
+        name: p.name || '未命名歌单',
+        comment: p.comment || '',
+        songCount: Number(p.songCount) || 0,
+        duration: Number(p.duration) || 0,
+        coverUrl,
+        created: p.created,
+        changed: p.changed,
+        owner: p.owner || username
+      };
+    });
+
+    return res.json({
+      success: true,
+      count: formattedPlaylists.length,
+      playlists: formattedPlaylists,
+      message: `成功获取到 ${formattedPlaylists.length} 个 Navidrome 歌单`
+    });
+
+  } catch (e: any) {
+    return res.json({
+      success: false,
+      message: `获取 Navidrome 歌单失败: ${e.message || '网络连接超时'}`
+    });
+  }
+});
+
+// Import Selected Playlists and their Songs from Navidrome
+app.post('/api/navidrome/import-playlists', async (req: Request, res: Response) => {
+  try {
+    const { playlistIds } = req.body;
+    const serverUrl = String(req.body?.serverUrl || navidromeConfig.serverUrl || '').trim().replace(/\/+$/, '');
+    const username = String(req.body?.username || navidromeConfig.username || '').trim();
+    const rawPassword = String(req.body?.password || '');
+    const password = (rawPassword === '••••••••' || rawPassword === '********' || !rawPassword)
+      ? navidromeConfig.password
+      : rawPassword;
+
+    if (!Array.isArray(playlistIds) || playlistIds.length === 0) {
+      return res.status(400).json({ success: false, message: '请选择至少一个要导入的歌单' });
+    }
+
+    if (!serverUrl || !username) {
+      return res.status(400).json({ success: false, message: 'Navidrome 连接未配置' });
+    }
+
+    const authQuery = getSubsonicAuthQuery(username, password);
+    const defaultCover = 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=600&q=80';
+
+    let totalSongsImported = 0;
+    let totalPlaylistsImported = 0;
+
+    for (const plId of playlistIds) {
+      const targetUrl = `${serverUrl}/rest/getPlaylist.view?id=${encodeURIComponent(plId)}&${authQuery}`;
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 12000);
+        const response = await fetch(targetUrl, { signal: controller.signal });
+        clearTimeout(timeout);
+
+        if (!response.ok) continue;
+
+        const data = await response.json();
+        const subResp = data['subsonic-response'];
+        const naviPl = subResp?.playlist;
+        if (!naviPl) continue;
+
+        const rawEntries = naviPl.entry || [];
+        const entryArray = Array.isArray(rawEntries) ? rawEntries : (rawEntries ? [rawEntries] : []);
+
+        const songIdList: string[] = [];
+
+        for (const item of entryArray) {
+          const songId = `navidrome-${item.id}`;
+          songIdList.push(songId);
+
+          const streamUrl = `${serverUrl}/rest/stream.view?id=${item.id}&${authQuery}`;
+          const coverUrl = item.coverArt 
+            ? `${serverUrl}/rest/getCoverArt.view?id=${item.coverArt}&${authQuery}`
+            : defaultCover;
+
+          const songObj = {
+            id: songId,
+            title: item.title || 'Navidrome Track',
+            artist: item.artist || '未知歌手',
+            album: item.album || naviPl.name || 'Navidrome 音乐库',
+            duration: item.duration || 210,
+            url: streamUrl,
+            coverUrl: coverUrl,
+            genre: item.genre || 'Navidrome',
+            year: item.year || 2024,
+            bitrate: `${item.bitRate || 320}kbps ${item.suffix || 'mp3'}`,
+            fileSize: item.size ? `${(item.size / (1024 * 1024)).toFixed(1)} MB` : '12 MB',
+            isFavorite: false,
+            source: 'uploaded',
+            lyrics: item.lyrics || `[00:00.00] ${item.title} - ${item.artist}\n[00:05.00] 来自 Navidrome 歌单《${naviPl.name}》\n[00:12.00] 小爱音箱高保真串流中...`
+          };
+
+          const existSongIdx = storedSongs.findIndex(s => s.id === songId);
+          if (existSongIdx >= 0) {
+            storedSongs[existSongIdx] = songObj;
+          } else {
+            storedSongs.unshift(songObj);
+            totalSongsImported++;
+          }
+        }
+
+        const plCoverUrl = naviPl.coverArt 
+          ? `${serverUrl}/rest/getCoverArt.view?id=${naviPl.coverArt}&${authQuery}`
+          : (entryArray[0]?.coverArt 
+              ? `${serverUrl}/rest/getCoverArt.view?id=${entryArray[0].coverArt}&${authQuery}` 
+              : defaultCover);
+
+        const targetPlId = `navidrome-pl-${naviPl.id}`;
+        const existingPlIdx = storedPlaylists.findIndex(p => p.id === targetPlId || p.name === naviPl.name);
+
+        const playlistRecord = {
+          id: targetPlId,
+          name: naviPl.name || 'Navidrome 歌单',
+          description: naviPl.comment || `从 Navidrome 导入 (${entryArray.length} 首)`,
+          coverUrl: plCoverUrl,
+          songIds: songIdList,
+          createdAt: new Date().toISOString().split('T')[0]
+        };
+
+        if (existingPlIdx >= 0) {
+          storedPlaylists[existingPlIdx] = playlistRecord;
+        } else {
+          storedPlaylists.push(playlistRecord);
+        }
+        totalPlaylistsImported++;
+
+      } catch (err) {
+        console.warn(`[Navidrome Import] Failed to import playlist ${plId}:`, err);
+      }
+    }
+
+    saveJson(SONGS_FILE, storedSongs);
+    saveJson(PLAYLISTS_FILE, storedPlaylists);
+
+    // Save active config
+    navidromeConfig = { serverUrl, username, password, isConnected: true };
+    saveJson(NAVIDROME_FILE, navidromeConfig);
+
+    return res.json({
+      success: true,
+      importedPlaylistsCount: totalPlaylistsImported,
+      importedSongsCount: totalSongsImported,
+      playlists: storedPlaylists,
+      message: `成功导入 ${totalPlaylistsImported} 个 Navidrome 歌单（共关联 ${totalSongsImported} 首歌曲）！`
+    });
+
+  } catch (e: any) {
+    return res.json({
+      success: false,
+      message: `导入歌单异常: ${e.message || '网络连接超时'}`
+    });
+  }
+});
+
 // AI Music Insight & Recommendation (server-side Gemini)
 app.post('/api/ai/music-insight', async (req: Request, res: Response) => {
   try {
