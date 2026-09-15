@@ -556,13 +556,6 @@ export default function App() {
         });
       }
       setIsPlaying(true);
-
-      // If user enabled autoCast, switch to casting
-      if (miotConfig.autoCast) {
-        setIsCasting(true);
-        if (audioRef.current) audioRef.current.pause();
-        castSongToDevice(song, activeDevice, newQueue);
-      }
     }
   };
 
@@ -575,7 +568,8 @@ export default function App() {
     setPlayQueue(targetSongs);
     const startSong = targetSongs[startIndex] || targetSongs[0];
 
-    const shouldCast = autoCastToSpeaker || isCasting || miotConfig.autoCast;
+    // Follow isCasting switch strictly unless user explicitly clicked dedicated cast button (autoCastToSpeaker=true)
+    const shouldCast = autoCastToSpeaker !== undefined ? autoCastToSpeaker : isCasting;
 
     if (shouldCast) {
       setIsCasting(true);
