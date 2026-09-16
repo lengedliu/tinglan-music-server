@@ -59,6 +59,7 @@ import {
 import { XiaomiDevice, MiotConfig, CastLog, Song, DeviceCommandState, Playlist } from '../types';
 import { apiFetch, getAuthToken } from '../utils/api';
 import { VoiceCommandSection } from './VoiceCommandSection';
+import { useTheme } from '../context/ThemeContext';
 import QRCode from 'qrcode';
 
 interface XiaomiSpeakerPanelProps {
@@ -116,6 +117,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
   onSwitchToBrowserAudio,
   playlists = [],
 }) => {
+  const { isLight } = useTheme();
   const [activeSubTab, setActiveSubTab] = useState<'devices' | 'control' | 'tts' | 'voice' | 'rpc' | 'settings' | 'logs'>('devices');
   const [ttsInput, setTtsInput] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -1189,7 +1191,9 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
     <div className="space-y-6 pb-28">
       
       {/* Top Banner: Xiaomi & Audio Protocol Hub (Referencing Subsonic Server Card Architecture) */}
-      <div className="p-6 sm:p-8 rounded-3xl bg-zinc-900/60 backdrop-blur-xl border border-white/10 relative overflow-hidden shadow-2xl">
+      <div className={`p-6 sm:p-8 rounded-3xl backdrop-blur-xl border relative overflow-hidden shadow-2xl transition-colors ${
+        isLight ? 'bg-white/90 border-zinc-200 shadow-zinc-200/50' : 'bg-zinc-900/60 border-white/10'
+      }`}>
         <div className="absolute top-0 right-0 w-96 h-96 bg-[#FF6700]/10 blur-[120px] pointer-events-none" />
 
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
@@ -1199,11 +1203,15 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
               <span>智能音箱与多协议控制中枢 · MIoT / Mina / DLNA / AirPlay</span>
             </div>
 
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
+            <h1 className={`text-2xl sm:text-3xl font-extrabold tracking-tight ${
+              isLight ? 'text-zinc-900' : 'text-white'
+            }`}>
               播放协议控制中枢
             </h1>
 
-            <p className="text-sm text-zinc-300 leading-relaxed">
+            <p className={`text-sm leading-relaxed ${
+              isLight ? 'text-zinc-600' : 'text-zinc-300'
+            }`}>
               Tinglan 家庭音乐控制层：支持 XiaoAi MIoT / Mina 智能音箱、DLNA / UPnP 局域网影音设备、AirPlay 音频路由及 Web Audio 本地高保真 DAC 声卡输出。
             </p>
           </div>
@@ -1213,9 +1221,13 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
               id="btn-scan-xiaomi-devices"
               onClick={onScanDevices}
               disabled={isScanning}
-              className="flex items-center justify-center gap-2 px-4 py-3 rounded-2xl bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-semibold border border-white/10 transition active:scale-95 disabled:opacity-50 shadow-sm"
+              className={`flex items-center justify-center gap-2 px-4 py-3 rounded-2xl text-xs font-semibold border transition active:scale-95 disabled:opacity-50 shadow-sm cursor-pointer ${
+                isLight 
+                  ? 'bg-zinc-100 hover:bg-zinc-200 text-zinc-800 border-zinc-200' 
+                  : 'bg-zinc-800 hover:bg-zinc-700 text-white border-white/10'
+              }`}
             >
-              <RefreshCw className={`w-4 h-4 ${isScanning ? 'animate-spin text-[#FF6700]' : 'text-zinc-400'}`} />
+              <RefreshCw className={`w-4 h-4 ${isScanning ? 'animate-spin text-[#FF6700]' : isLight ? 'text-zinc-500' : 'text-zinc-400'}`} />
               <span>{isScanning ? '扫描设备中...' : '重新扫描设备'}</span>
             </button>
 
@@ -1223,7 +1235,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
               <button
                 id="btn-cast-now-banner"
                 onClick={onCastCurrentSong}
-                className="flex items-center justify-center gap-2 px-5 py-3 rounded-2xl bg-[#FF6700] hover:bg-[#e55c00] text-white text-xs font-bold shadow-[0_4px_20px_rgba(255,103,0,0.3)] transition active:scale-95"
+                className="flex items-center justify-center gap-2 px-5 py-3 rounded-2xl bg-[#FF6700] hover:bg-[#e55c00] text-white text-xs font-bold shadow-[0_4px_20px_rgba(255,103,0,0.3)] transition active:scale-95 cursor-pointer"
               >
                 <Cast className="w-4 h-4" />
                 <span>投放到【{cleanDeviceName(activeDevice?.name)}】</span>
@@ -1233,26 +1245,36 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
         </div>
 
         {/* Protocol & Device Metrics Cards (Identical Subsonic Style) */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-8 pt-6 border-t border-white/10 relative z-10">
-          <div className="p-4 rounded-2xl bg-zinc-950/60 border border-white/5 space-y-1">
-            <span className="text-[10px] text-zinc-500 font-medium uppercase tracking-wider block">音箱设备</span>
-            <span className="text-base font-bold text-emerald-400 font-mono">{devices.length} 台已发现</span>
+        <div className={`grid grid-cols-2 sm:grid-cols-4 gap-3 mt-8 pt-6 border-t relative z-10 ${
+          isLight ? 'border-zinc-200' : 'border-white/10'
+        }`}>
+          <div className={`p-4 rounded-2xl border space-y-1 ${
+            isLight ? 'bg-zinc-50/90 border-zinc-200' : 'bg-zinc-950/60 border-white/5'
+          }`}>
+            <span className={`text-[10px] font-medium uppercase tracking-wider block ${isLight ? 'text-zinc-500' : 'text-zinc-400'}`}>音箱设备</span>
+            <span className={`text-base font-bold font-mono ${isLight ? 'text-emerald-700' : 'text-emerald-400'}`}>{devices.length} 台已发现</span>
           </div>
-          <div className="p-4 rounded-2xl bg-zinc-950/60 border border-white/5 space-y-1">
-            <span className="text-[10px] text-zinc-500 font-medium uppercase tracking-wider block">Mina WS 监听</span>
-            <span className={`text-base font-bold font-mono ${minaWsStatus.connected ? 'text-blue-400' : 'text-zinc-400'}`}>
+          <div className={`p-4 rounded-2xl border space-y-1 ${
+            isLight ? 'bg-zinc-50/90 border-zinc-200' : 'bg-zinc-950/60 border-white/5'
+          }`}>
+            <span className={`text-[10px] font-medium uppercase tracking-wider block ${isLight ? 'text-zinc-500' : 'text-zinc-400'}`}>Mina WS 监听</span>
+            <span className={`text-base font-bold font-mono ${minaWsStatus.connected ? (isLight ? 'text-blue-700' : 'text-blue-400') : (isLight ? 'text-zinc-500' : 'text-zinc-400')}`}>
               {minaWsStatus.connected ? '长连已握手' : '长连离线'}
             </span>
           </div>
-          <div className="p-4 rounded-2xl bg-zinc-950/60 border border-white/5 space-y-1">
-            <span className="text-[10px] text-zinc-500 font-medium uppercase tracking-wider block">当前目标设备</span>
-            <span className="text-base font-bold text-amber-400 font-mono truncate block" title={cleanDeviceName(activeDevice?.name)}>
+          <div className={`p-4 rounded-2xl border space-y-1 ${
+            isLight ? 'bg-zinc-50/90 border-zinc-200' : 'bg-zinc-950/60 border-white/5'
+          }`}>
+            <span className={`text-[10px] font-medium uppercase tracking-wider block ${isLight ? 'text-zinc-500' : 'text-zinc-400'}`}>当前目标设备</span>
+            <span className={`text-base font-bold font-mono truncate block ${isLight ? 'text-amber-700' : 'text-amber-400'}`} title={cleanDeviceName(activeDevice?.name)}>
               {cleanDeviceName(activeDevice?.name)}
             </span>
           </div>
-          <div className="p-4 rounded-2xl bg-zinc-950/60 border border-white/5 space-y-1">
-            <span className="text-[10px] text-zinc-500 font-medium uppercase tracking-wider block">协议网关</span>
-            <span className="text-base font-bold text-white font-mono">MIoT + DLNA</span>
+          <div className={`p-4 rounded-2xl border space-y-1 ${
+            isLight ? 'bg-zinc-50/90 border-zinc-200' : 'bg-zinc-950/60 border-white/5'
+          }`}>
+            <span className={`text-[10px] font-medium uppercase tracking-wider block ${isLight ? 'text-zinc-500' : 'text-zinc-400'}`}>协议网关</span>
+            <span className={`text-base font-bold font-mono ${isLight ? 'text-zinc-900' : 'text-white'}`}>MIoT + DLNA</span>
           </div>
         </div>
 
@@ -1260,21 +1282,21 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
         {commandState && commandState.action === 'cast' && (
           <div className={`mt-6 p-4.5 rounded-2xl border backdrop-blur-md transition-all ${
             commandState.status === 'success'
-              ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-200'
+              ? isLight ? 'bg-emerald-50 border-emerald-300 text-emerald-900' : 'bg-emerald-950/40 border-emerald-500/30 text-emerald-200'
               : commandState.status === 'pending'
-              ? 'bg-blue-950/40 border-blue-500/30 text-blue-200'
-              : 'bg-rose-950/40 border-rose-500/30 text-rose-200'
+              ? isLight ? 'bg-blue-50 border-blue-300 text-blue-900' : 'bg-blue-950/40 border-blue-500/30 text-blue-200'
+              : isLight ? 'bg-rose-50 border-rose-300 text-rose-900' : 'bg-rose-950/40 border-rose-500/30 text-rose-200'
           }`}>
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
-                <Cast className={`w-4 h-4 ${commandState.status === 'pending' ? 'animate-bounce text-blue-400' : commandState.status === 'success' ? 'text-emerald-400' : 'text-rose-400'}`} />
+                <Cast className={`w-4 h-4 ${commandState.status === 'pending' ? 'animate-bounce text-blue-400' : commandState.status === 'success' ? 'text-emerald-500' : 'text-rose-500'}`} />
                 <span className="text-xs font-bold uppercase tracking-wider">
                   投播指令全生命周期追踪 ({commandState.status === 'pending' ? '下发推进中...' : commandState.status === 'success' ? '✓ 全链路通畅' : '✕ 下发失败'})
                 </span>
               </div>
               <div className="flex items-center gap-3">
                 {commandState.timestamp && (
-                  <span className="text-[11px] font-mono text-zinc-400">
+                  <span className={`text-[11px] font-mono ${isLight ? 'text-zinc-500' : 'text-zinc-400'}`}>
                     {new Date(commandState.timestamp).toLocaleTimeString()}
                   </span>
                 )}
@@ -1283,7 +1305,9 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                     type="button"
                     onClick={onDismissCommandState}
                     title="关闭状态追踪提示"
-                    className="p-1 rounded-md text-zinc-400 hover:text-zinc-200 hover:bg-white/10 transition cursor-pointer"
+                    className={`p-1 rounded-md transition cursor-pointer ${
+                      isLight ? 'text-zinc-500 hover:text-zinc-900 hover:bg-zinc-200' : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/10'
+                    }`}
                   >
                     <X className="w-3.5 h-3.5" />
                   </button>
@@ -1301,34 +1325,38 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
               ]).map((step, idx) => (
                 <div key={idx} className={`p-2.5 rounded-xl border flex items-center gap-2 text-xs font-semibold ${
                   step.success
-                    ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
+                    ? isLight ? 'bg-emerald-100/90 border-emerald-300 text-emerald-900' : 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
                     : commandState.status === 'pending' && idx === 1
-                    ? 'bg-blue-500/15 border-blue-500/30 text-blue-300 animate-pulse'
-                    : 'bg-zinc-900/60 border-white/5 text-zinc-500'
+                    ? isLight ? 'bg-blue-100/90 border-blue-300 text-blue-900 animate-pulse' : 'bg-blue-500/15 border-blue-500/30 text-blue-300 animate-pulse'
+                    : isLight ? 'bg-zinc-100 border-zinc-200 text-zinc-400' : 'bg-zinc-900/60 border-white/5 text-zinc-500'
                 }`}>
                   {step.success ? (
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                    <CheckCircle2 className={`w-4 h-4 flex-shrink-0 ${isLight ? 'text-emerald-700' : 'text-emerald-400'}`} />
                   ) : commandState.status === 'pending' && idx === 1 ? (
-                    <RefreshCw className="w-4 h-4 text-blue-400 animate-spin flex-shrink-0" />
+                    <RefreshCw className={`w-4 h-4 animate-spin flex-shrink-0 ${isLight ? 'text-blue-700' : 'text-blue-400'}`} />
                   ) : (
-                    <XCircle className="w-4 h-4 text-rose-400/60 flex-shrink-0" />
+                    <XCircle className={`w-4 h-4 flex-shrink-0 ${isLight ? 'text-rose-400' : 'text-rose-400/60'}`} />
                   )}
                   <span className="truncate">{step.label}</span>
                 </div>
               ))}
             </div>
             {commandState.error && (
-              <div className="mt-3 text-xs text-rose-300 bg-rose-500/10 border border-rose-500/20 p-3 rounded-xl font-medium space-y-2">
+              <div className={`mt-3 text-xs p-3 rounded-xl font-medium space-y-2 border ${
+                isLight ? 'text-rose-900 bg-rose-50 border-rose-200' : 'text-rose-300 bg-rose-500/10 border-rose-500/20'
+              }`}>
                 <div className="flex items-start gap-2">
-                  <XCircle className="w-4 h-4 text-rose-400 flex-shrink-0 mt-0.5" />
+                  <XCircle className="w-4 h-4 text-rose-500 flex-shrink-0 mt-0.5" />
                   <div className="flex-1 leading-relaxed">
-                    <strong className="text-rose-200">投播未生效：</strong>
+                    <strong className={isLight ? 'text-rose-950' : 'text-rose-200'}>投播未生效：</strong>
                     {commandState.error.includes('<!doctype html') || commandState.error.includes('HTTP 401')
                       ? '小米云端服务令牌 (serviceToken) 已过期或无此设备控制权限 (HTTP 401 Unauthorized)。请重新登录小米账号或使用局域网直连。'
                       : commandState.error}
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-2 pt-1.5 border-t border-rose-500/15">
+                <div className={`flex flex-wrap gap-2 pt-1.5 border-t ${
+                  isLight ? 'border-rose-200' : 'border-rose-500/15'
+                }`}>
                   {!miotConfig.isLoggedIn ? (
                     <button
                       type="button"
@@ -1357,7 +1385,9 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                     <button
                       type="button"
                       onClick={onSwitchToBrowserAudio}
-                      className="px-3 py-1.5 rounded-lg bg-emerald-800/80 hover:bg-emerald-700 text-emerald-100 text-xs font-semibold border border-emerald-500/30 transition cursor-pointer flex items-center gap-1.5"
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer flex items-center gap-1.5 ${
+                        isLight ? 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600 shadow-sm' : 'bg-emerald-800/80 hover:bg-emerald-700 text-emerald-100 border-emerald-500/30'
+                      }`}
                     >
                       <span>🎧 切换为浏览器本地播放</span>
                     </button>
@@ -1366,7 +1396,9 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                     <button
                       type="button"
                       onClick={() => onUpdateConfig({ autoCast: false })}
-                      className="px-3 py-1.5 rounded-lg bg-amber-900/40 hover:bg-amber-800/60 text-amber-200 text-xs font-medium border border-amber-500/30 transition cursor-pointer"
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer ${
+                        isLight ? 'bg-amber-100 hover:bg-amber-200 text-amber-900 border-amber-300' : 'bg-amber-900/40 hover:bg-amber-800/60 text-amber-200 border-amber-500/30'
+                      }`}
                     >
                       关闭自动投播
                     </button>
@@ -1374,7 +1406,9 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                   <button
                     type="button"
                     onClick={() => setActiveSubTab('control')}
-                    className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold border border-white/10 transition cursor-pointer"
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition cursor-pointer ${
+                      isLight ? 'bg-zinc-100 hover:bg-zinc-200 text-zinc-800 border-zinc-200' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-white/10'
+                    }`}
                   >
                     ➔ 检查音箱控制与属性
                   </button>
@@ -1382,7 +1416,9 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                     <button
                       type="button"
                       onClick={onDismissCommandState}
-                      className="px-2.5 py-1.5 rounded-lg bg-zinc-900/80 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 text-xs border border-white/5 transition cursor-pointer"
+                      className={`px-2.5 py-1.5 rounded-lg text-xs border transition cursor-pointer ${
+                        isLight ? 'bg-zinc-100 hover:bg-zinc-200 text-zinc-600 border-zinc-200' : 'bg-zinc-900/80 hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border-white/5'
+                      }`}
                     >
                       ✕ 忽略
                     </button>
@@ -1394,95 +1430,125 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
         )}
 
         {/* Sub-tabs with Immersive UI Pills */}
-        <div className="relative z-10 flex items-center gap-2 pt-6 border-t border-white/10 mt-6 overflow-x-auto scrollbar-none">
+        <div className={`relative z-10 flex items-center gap-2 pt-6 border-t mt-6 overflow-x-auto scrollbar-none ${
+          isLight ? 'border-zinc-200' : 'border-white/10'
+        }`}>
           <button
             id="subtab-devices"
             onClick={() => setActiveSubTab('devices')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition whitespace-nowrap ${
+            className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition whitespace-nowrap cursor-pointer ${
               activeSubTab === 'devices'
-                ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40 font-semibold shadow-[0_0_12px_rgba(255,103,0,0.2)]'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-white/5'
+                ? isLight 
+                  ? 'bg-[#FF6700] text-white font-bold shadow-[0_2px_10px_rgba(255,103,0,0.3)]' 
+                  : 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40 font-semibold shadow-[0_0_12px_rgba(255,103,0,0.2)]'
+                : isLight
+                  ? 'text-zinc-600 hover:text-zinc-950 hover:bg-zinc-100 border border-zinc-200'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-white/5'
             }`}
           >
-            <Radio className="w-4 h-4 text-[#FF6700]" />
+            <Radio className={`w-4 h-4 ${activeSubTab === 'devices' && isLight ? 'text-white' : 'text-[#FF6700]'}`} />
             <span>设备列表 ({devices.length})</span>
           </button>
 
           <button
             id="subtab-control"
             onClick={() => setActiveSubTab('control')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition whitespace-nowrap ${
+            className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition whitespace-nowrap cursor-pointer ${
               activeSubTab === 'control'
-                ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40 font-semibold shadow-[0_0_12px_rgba(255,103,0,0.2)]'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-white/5'
+                ? isLight 
+                  ? 'bg-[#FF6700] text-white font-bold shadow-[0_2px_10px_rgba(255,103,0,0.3)]' 
+                  : 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40 font-semibold shadow-[0_0_12px_rgba(255,103,0,0.2)]'
+                : isLight
+                  ? 'text-zinc-600 hover:text-zinc-950 hover:bg-zinc-100 border border-zinc-200'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-white/5'
             }`}
           >
-            <Volume2 className="w-4 h-4 text-emerald-400" />
+            <Volume2 className={`w-4 h-4 ${activeSubTab === 'control' && isLight ? 'text-white' : 'text-emerald-500'}`} />
             <span>音箱播控台</span>
           </button>
 
           <button
             id="subtab-tts"
             onClick={() => setActiveSubTab('tts')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition whitespace-nowrap ${
+            className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition whitespace-nowrap cursor-pointer ${
               activeSubTab === 'tts'
-                ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40 font-semibold shadow-[0_0_12px_rgba(255,103,0,0.2)]'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-white/5'
+                ? isLight 
+                  ? 'bg-[#FF6700] text-white font-bold shadow-[0_2px_10px_rgba(255,103,0,0.3)]' 
+                  : 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40 font-semibold shadow-[0_0_12px_rgba(255,103,0,0.2)]'
+                : isLight
+                  ? 'text-zinc-600 hover:text-zinc-950 hover:bg-zinc-100 border border-zinc-200'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-white/5'
             }`}
           >
-            <MessageSquare className="w-4 h-4 text-amber-400" />
+            <MessageSquare className={`w-4 h-4 ${activeSubTab === 'tts' && isLight ? 'text-white' : 'text-amber-500'}`} />
             <span>语音播报 (TTS)</span>
           </button>
 
           <button
             id="subtab-voice"
             onClick={() => setActiveSubTab('voice')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition whitespace-nowrap ${
+            className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition whitespace-nowrap cursor-pointer ${
               activeSubTab === 'voice'
-                ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40 font-semibold shadow-[0_0_12px_rgba(255,103,0,0.2)]'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-white/5'
+                ? isLight 
+                  ? 'bg-[#FF6700] text-white font-bold shadow-[0_2px_10px_rgba(255,103,0,0.3)]' 
+                  : 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40 font-semibold shadow-[0_0_12px_rgba(255,103,0,0.2)]'
+                : isLight
+                  ? 'text-zinc-600 hover:text-zinc-950 hover:bg-zinc-100 border border-zinc-200'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-white/5'
             }`}
           >
-            <Mic2 className="w-4 h-4 text-rose-400" />
+            <Mic2 className={`w-4 h-4 ${activeSubTab === 'voice' && isLight ? 'text-white' : 'text-rose-500'}`} />
             <span>语音口令与点歌</span>
           </button>
 
           <button
             id="subtab-rpc"
             onClick={() => setActiveSubTab('rpc')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition whitespace-nowrap ${
+            className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition whitespace-nowrap cursor-pointer ${
               activeSubTab === 'rpc'
-                ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40 font-semibold shadow-[0_0_12px_rgba(255,103,0,0.2)]'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-white/5'
+                ? isLight 
+                  ? 'bg-[#FF6700] text-white font-bold shadow-[0_2px_10px_rgba(255,103,0,0.3)]' 
+                  : 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40 font-semibold shadow-[0_0_12px_rgba(255,103,0,0.2)]'
+                : isLight
+                  ? 'text-zinc-600 hover:text-zinc-950 hover:bg-zinc-100 border border-zinc-200'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-white/5'
             }`}
           >
-            <Code className="w-4 h-4 text-purple-400" />
+            <Code className={`w-4 h-4 ${activeSubTab === 'rpc' && isLight ? 'text-white' : 'text-purple-500'}`} />
             <span>MIoT RPC 控制台</span>
           </button>
 
           <button
             id="subtab-settings"
             onClick={() => setActiveSubTab('settings')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition whitespace-nowrap ${
+            className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition whitespace-nowrap cursor-pointer ${
               activeSubTab === 'settings'
-                ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40 font-semibold shadow-[0_0_12px_rgba(255,103,0,0.2)]'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-white/5'
+                ? isLight 
+                  ? 'bg-[#FF6700] text-white font-bold shadow-[0_2px_10px_rgba(255,103,0,0.3)]' 
+                  : 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40 font-semibold shadow-[0_0_12px_rgba(255,103,0,0.2)]'
+                : isLight
+                  ? 'text-zinc-600 hover:text-zinc-950 hover:bg-zinc-100 border border-zinc-200'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-white/5'
             }`}
           >
-            <Settings className="w-4 h-4 text-blue-400" />
+            <Settings className={`w-4 h-4 ${activeSubTab === 'settings' && isLight ? 'text-white' : 'text-blue-500'}`} />
             <span>协议与串流配置</span>
           </button>
 
           <button
             id="subtab-logs"
             onClick={() => setActiveSubTab('logs')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition whitespace-nowrap ${
+            className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition whitespace-nowrap cursor-pointer ${
               activeSubTab === 'logs'
-                ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40 font-semibold shadow-[0_0_12px_rgba(255,103,0,0.2)]'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-white/5'
+                ? isLight 
+                  ? 'bg-[#FF6700] text-white font-bold shadow-[0_2px_10px_rgba(255,103,0,0.3)]' 
+                  : 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40 font-semibold shadow-[0_0_12px_rgba(255,103,0,0.2)]'
+                : isLight
+                  ? 'text-zinc-600 hover:text-zinc-950 hover:bg-zinc-100 border border-zinc-200'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-white/5'
             }`}
           >
-            <Terminal className="w-4 h-4 text-zinc-400" />
+            <Terminal className={`w-4 h-4 ${activeSubTab === 'logs' && isLight ? 'text-white' : 'text-zinc-400'}`} />
             <span>MIoT 指令日志 ({castLogs.length})</span>
           </button>
         </div>
@@ -1493,13 +1559,19 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
         <div className="space-y-6">
 
           {/* Device List Header Toolbar */}
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-5 rounded-3xl bg-zinc-900/40 border border-white/10 backdrop-blur-md">
+          <div className={`flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-5 rounded-3xl backdrop-blur-md border transition-colors ${
+            isLight ? 'bg-white/90 border-zinc-200 shadow-sm' : 'bg-zinc-900/40 border-white/10'
+          }`}>
             <div>
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <h3 className={`text-base font-bold flex items-center gap-2 ${
+                isLight ? 'text-zinc-900' : 'text-white'
+              }`}>
                 <Radio className="w-5 h-5 text-[#FF6700]" />
                 小米智能音箱列表 ({devices.length} 台设备就绪)
               </h3>
-              <p className="text-xs text-zinc-400 mt-0.5">
+              <p className={`text-xs mt-0.5 ${
+                isLight ? 'text-zinc-500' : 'text-zinc-400'
+              }`}>
                 支持 mDNS/UPnP 广播自动发现、米家云端同步与手动指定内网静态 IP / Token 直连
               </p>
             </div>
@@ -1515,10 +1587,14 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                       onClearDevices();
                     }
                   }}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-full bg-zinc-800/60 hover:bg-rose-950/40 hover:text-rose-300 text-xs font-medium text-zinc-400 border border-white/5 transition active:scale-95 cursor-pointer"
+                  className={`flex items-center gap-1.5 px-3 py-2 rounded-full text-xs font-medium border transition active:scale-95 cursor-pointer ${
+                    isLight 
+                      ? 'bg-zinc-100 hover:bg-rose-50 hover:text-rose-600 text-zinc-600 border-zinc-200' 
+                      : 'bg-zinc-800/60 hover:bg-rose-950/40 hover:text-rose-300 text-zinc-400 border-white/5'
+                  }`}
                   title="清空当前列表所有设备"
                 >
-                  <Trash2 className="w-3.5 h-3.5 text-zinc-400" />
+                  <Trash2 className="w-3.5 h-3.5" />
                   清空列表
                 </button>
               )}
@@ -1526,7 +1602,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
               <button
                 onClick={handleFullResolve}
                 disabled={isResolving}
-                className="flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-xs font-semibold text-white shadow-[0_0_15px_rgba(147,51,234,0.3)] transition active:scale-95 disabled:opacity-50"
+                className="flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-xs font-semibold text-white shadow-[0_0_15px_rgba(147,51,234,0.3)] transition active:scale-95 disabled:opacity-50 cursor-pointer"
                 title="并行执行 Cloud 查询与 LAN miIO Hello 探测，通过 MIoT Spec 自动甄别音箱"
               >
                 <Zap className={`w-3.5 h-3.5 ${isResolving ? 'animate-spin' : ''}`} />
@@ -1536,7 +1612,11 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
               <button
                 onClick={onScanDevices}
                 disabled={isScanning}
-                className="flex items-center gap-2 px-4 py-2 rounded-full bg-zinc-800/80 hover:bg-zinc-700 text-xs font-semibold text-zinc-200 border border-white/5 transition active:scale-95 disabled:opacity-50"
+                className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold border transition active:scale-95 disabled:opacity-50 cursor-pointer ${
+                  isLight 
+                    ? 'bg-zinc-100 hover:bg-zinc-200 text-zinc-800 border-zinc-200' 
+                    : 'bg-zinc-800/80 hover:bg-zinc-700 text-zinc-200 border-white/5'
+                }`}
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${isScanning ? 'animate-spin text-[#FF6700]' : ''}`} />
                 {isScanning ? '正在扫描/同步中...' : '重新扫描与同步'}
@@ -1544,7 +1624,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
 
               <button
                 onClick={() => setIsAddModalOpen(true)}
-                className="flex items-center gap-2 px-4 py-2 rounded-full bg-[#FF6700] hover:bg-[#e55c00] text-xs font-semibold text-white shadow-[0_0_15px_rgba(255,103,0,0.3)] transition active:scale-95"
+                className="flex items-center gap-2 px-4 py-2 rounded-full bg-[#FF6700] hover:bg-[#e55c00] text-xs font-semibold text-white shadow-[0_0_15px_rgba(255,103,0,0.3)] transition active:scale-95 cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
                 手动添加音箱
@@ -1553,7 +1633,9 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
           </div>
 
           {/* XiaoAi Discovery Architecture & MIoT Spec Pipeline Banner */}
-          <div className="p-4 sm:p-5 rounded-2xl bg-zinc-900/50 border border-white/10 space-y-4">
+          <div className={`p-4 sm:p-5 rounded-2xl border space-y-4 ${
+            isLight ? 'bg-white/80 border-zinc-200 shadow-sm' : 'bg-zinc-900/50 border-white/10'
+          }`}>
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <div className="p-2.5 rounded-xl bg-[#FF6700]/10 text-[#FF6700] border border-[#FF6700]/20">
@@ -1561,14 +1643,14 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <h4 className="text-sm font-bold text-white">
+                    <h4 className={`text-sm font-bold ${isLight ? 'text-zinc-900' : 'text-white'}`}>
                       小米设备双轨发现与 MIoT Spec 规范解析架构
                     </h4>
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
                       双轨融合引擎就绪
                     </span>
                   </div>
-                  <p className="text-xs text-zinc-400 mt-0.5">
+                  <p className={`text-xs mt-0.5 ${isLight ? 'text-zinc-500' : 'text-zinc-400'}`}>
                     Cloud 契约与 LAN miIO Hello 并行探测，DID 归一合并，基于 MIoT 规范自动研判与过滤音箱
                   </p>
                 </div>
@@ -1578,7 +1660,11 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowArchitectureGuide(!showArchitectureGuide)}
-                  className="px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-medium border border-white/5 transition flex items-center gap-1.5"
+                  className={`px-3 py-1.5 rounded-xl text-xs font-medium border transition flex items-center gap-1.5 cursor-pointer ${
+                    isLight 
+                      ? 'bg-zinc-100 hover:bg-zinc-200 text-zinc-700 border-zinc-200' 
+                      : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-white/5'
+                  }`}
                 >
                   <Eye className="w-3.5 h-3.5 text-zinc-400" />
                   <span>{showArchitectureGuide ? '收起架构图' : '查看发现架构'}</span>
@@ -1588,7 +1674,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                   type="button"
                   onClick={handleFullResolve}
                   disabled={isResolving}
-                  className="px-3.5 py-1.5 rounded-xl bg-[#FF6700] hover:bg-[#e55c00] text-white text-xs font-semibold shadow-[0_0_12px_rgba(255,103,0,0.3)] transition active:scale-95 disabled:opacity-50 flex items-center gap-1.5"
+                  className="px-3.5 py-1.5 rounded-xl bg-[#FF6700] hover:bg-[#e55c00] text-white text-xs font-semibold shadow-[0_0_12px_rgba(255,103,0,0.3)] transition active:scale-95 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
                 >
                   <Zap className={`w-3.5 h-3.5 ${isResolving ? 'animate-spin' : ''}`} />
                   <span>{isResolving ? '解析中...' : '一键双轨解析'}</span>
@@ -1598,33 +1684,45 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
 
             {/* Metrics Strip */}
             {resolveMetrics && (
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-2 border-t border-white/5">
-                <div className="p-2.5 rounded-xl bg-zinc-950/60 border border-white/5">
+              <div className={`grid grid-cols-2 sm:grid-cols-5 gap-2 pt-2 border-t ${
+                isLight ? 'border-zinc-200' : 'border-white/5'
+              }`}>
+                <div className={`p-2.5 rounded-xl border ${
+                  isLight ? 'bg-zinc-50 border-zinc-200' : 'bg-zinc-950/60 border-white/5'
+                }`}>
                   <span className="text-[10px] text-zinc-500 block">云端检索 (Cloud)</span>
-                  <span className="text-sm font-bold font-mono text-sky-400">{resolveMetrics.cloudFound} 台</span>
+                  <span className={`text-sm font-bold font-mono ${isLight ? 'text-sky-600' : 'text-sky-400'}`}>{resolveMetrics.cloudFound} 台</span>
                 </div>
-                <div className="p-2.5 rounded-xl bg-zinc-950/60 border border-white/5">
+                <div className={`p-2.5 rounded-xl border ${
+                  isLight ? 'bg-zinc-50 border-zinc-200' : 'bg-zinc-950/60 border-white/5'
+                }`}>
                   <span className="text-[10px] text-zinc-500 block">局域网探测 (LAN miIO)</span>
-                  <span className="text-sm font-bold font-mono text-amber-400">{resolveMetrics.lanFound} 台</span>
+                  <span className={`text-sm font-bold font-mono ${isLight ? 'text-amber-600' : 'text-amber-400'}`}>{resolveMetrics.lanFound} 台</span>
                 </div>
-                <div className="p-2.5 rounded-xl bg-zinc-950/60 border border-white/5">
+                <div className={`p-2.5 rounded-xl border ${
+                  isLight ? 'bg-zinc-50 border-zinc-200' : 'bg-zinc-950/60 border-white/5'
+                }`}>
                   <span className="text-[10px] text-zinc-500 block">双轨合并 (DID 归一)</span>
-                  <span className="text-sm font-bold font-mono text-indigo-400">{resolveMetrics.hybridMerged} 台</span>
+                  <span className={`text-sm font-bold font-mono ${isLight ? 'text-indigo-600' : 'text-indigo-400'}`}>{resolveMetrics.hybridMerged} 台</span>
                 </div>
-                <div className="p-2.5 rounded-xl bg-zinc-950/60 border border-white/5">
+                <div className={`p-2.5 rounded-xl border ${
+                  isLight ? 'bg-zinc-50 border-zinc-200' : 'bg-zinc-950/60 border-white/5'
+                }`}>
                   <span className="text-[10px] text-zinc-500 block">小爱音箱 (MIoT 确认)</span>
-                  <span className="text-sm font-bold font-mono text-emerald-400">{resolveMetrics.speakerConfirmed} 台</span>
+                  <span className={`text-sm font-bold font-mono ${isLight ? 'text-emerald-600' : 'text-emerald-400'}`}>{resolveMetrics.speakerConfirmed} 台</span>
                 </div>
-                <div className="p-2.5 rounded-xl bg-zinc-950/60 border border-white/5 flex items-center justify-between">
+                <div className={`p-2.5 rounded-xl border flex items-center justify-between ${
+                  isLight ? 'bg-zinc-50 border-zinc-200' : 'bg-zinc-950/60 border-white/5'
+                }`}>
                   <div>
                     <span className="text-[10px] text-zinc-500 block">非音箱设备 (已过滤)</span>
-                    <span className="text-sm font-bold font-mono text-rose-400">{resolveMetrics.nonSpeakerIgnored} 台</span>
+                    <span className={`text-sm font-bold font-mono ${isLight ? 'text-rose-600' : 'text-rose-400'}`}>{resolveMetrics.nonSpeakerIgnored} 台</span>
                   </div>
                   {ignoredDevices.length > 0 && (
                     <button
                       type="button"
                       onClick={() => setShowIgnoredModal(true)}
-                      className="text-[10px] px-2 py-1 rounded bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 transition"
+                      className="text-[10px] px-2 py-1 rounded bg-rose-500/15 hover:bg-rose-500/25 text-rose-600 dark:text-rose-300 border border-rose-500/30 transition cursor-pointer"
                     >
                       查看明细
                     </button>
@@ -1633,60 +1731,72 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
               </div>
             )}
 
-            {/* Visual Architecture Diagram (from user request) */}
+            {/* Visual Architecture Diagram */}
             {showArchitectureGuide && (
-              <div className="p-4 rounded-xl bg-zinc-950/80 border border-white/10 space-y-3 font-mono text-xs">
-                <div className="text-zinc-300 font-bold flex items-center justify-between pb-2 border-b border-white/5">
+              <div className={`p-4 rounded-xl border space-y-3 font-mono text-xs ${
+                isLight ? 'bg-zinc-50 border-zinc-200' : 'bg-zinc-950/80 border-white/10'
+              }`}>
+                <div className={`font-bold flex items-center justify-between pb-2 border-b ${
+                  isLight ? 'text-zinc-800 border-zinc-200' : 'text-zinc-300 border-white/5'
+                }`}>
                   <span>小爱设备发现与规范解析流 (Dual-Track Architecture)</span>
                   <span className="text-[11px] font-normal text-[#FF6700]">Xiaomi Cloud + LAN Discovery</span>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs font-sans">
-                  <div className="p-3 rounded-lg bg-sky-950/30 border border-sky-500/20 space-y-1">
-                    <div className="text-sky-400 font-bold flex items-center gap-1.5">
+                  <div className={`p-3 rounded-lg border space-y-1 ${
+                    isLight ? 'bg-sky-50/80 border-sky-200' : 'bg-sky-950/30 border-sky-500/20'
+                  }`}>
+                    <div className={`font-bold flex items-center gap-1.5 ${isLight ? 'text-sky-700' : 'text-sky-400'}`}>
                       <Server className="w-3.5 h-3.5" />
                       1. Xiaomi Cloud 轨
                     </div>
-                    <p className="text-zinc-400 text-[11px] leading-relaxed">
-                      调用米家 Mina / MIoT 云端接口，拉取用户账号名下设备，提取官方唯一 <span className="text-sky-300 font-mono">DID</span> 和 <span className="text-sky-300 font-mono">Model</span>。
+                    <p className={`text-[11px] leading-relaxed ${isLight ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                      调用米家 Mina / MIoT 云端接口，拉取用户账号名下设备，提取官方唯一 <span className={`font-mono ${isLight ? 'text-sky-700 font-semibold' : 'text-sky-300'}`}>DID</span> 和 <span className={`font-mono ${isLight ? 'text-sky-700 font-semibold' : 'text-sky-300'}`}>Model</span>。
                     </p>
                   </div>
 
-                  <div className="p-3 rounded-lg bg-amber-950/30 border border-amber-500/20 space-y-1">
-                    <div className="text-amber-400 font-bold flex items-center gap-1.5">
+                  <div className={`p-3 rounded-lg border space-y-1 ${
+                    isLight ? 'bg-amber-50/80 border-amber-200' : 'bg-amber-950/30 border-amber-500/20'
+                  }`}>
+                    <div className={`font-bold flex items-center gap-1.5 ${isLight ? 'text-amber-700' : 'text-amber-400'}`}>
                       <Wifi className="w-3.5 h-3.5" />
                       2. LAN Discovery 轨
                     </div>
-                    <p className="text-zinc-400 text-[11px] leading-relaxed">
-                      UDP 54321 向网段下发 <span className="text-amber-300 font-mono">miIO Hello</span> 握手帧，直接嗅探内网活跃设备的 <span className="text-amber-300 font-mono">DID</span> 与实时 <span className="text-amber-300 font-mono">IP</span>。
+                    <p className={`text-[11px] leading-relaxed ${isLight ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                      UDP 54321 向网段下发 <span className={`font-mono ${isLight ? 'text-amber-700 font-semibold' : 'text-amber-300'}`}>miIO Hello</span> 握手帧，直接嗅探内网活跃设备的 <span className={`font-mono ${isLight ? 'text-amber-700 font-semibold' : 'text-amber-300'}`}>DID</span> 与实时 <span className={`font-mono ${isLight ? 'text-amber-700 font-semibold' : 'text-amber-300'}`}>IP</span>。
                     </p>
                   </div>
 
-                  <div className="p-3 rounded-lg bg-indigo-950/30 border border-indigo-500/20 space-y-1">
-                    <div className="text-indigo-400 font-bold flex items-center gap-1.5">
+                  <div className={`p-3 rounded-lg border space-y-1 ${
+                    isLight ? 'bg-indigo-50/80 border-indigo-200' : 'bg-indigo-950/30 border-indigo-500/20'
+                  }`}>
+                    <div className={`font-bold flex items-center gap-1.5 ${isLight ? 'text-indigo-700' : 'text-indigo-400'}`}>
                       <Cpu className="w-3.5 h-3.5" />
                       3. Device Resolver 引擎
                     </div>
-                    <p className="text-zinc-400 text-[11px] leading-relaxed">
-                      以 <span className="text-indigo-300 font-bold font-mono">DID</span> 为唯一主键进行拓扑级联匹配，聚合云端令牌与局域网 IP，生成双轨融合设备表。
+                    <p className={`text-[11px] leading-relaxed ${isLight ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                      以 <span className={`font-bold font-mono ${isLight ? 'text-indigo-700' : 'text-indigo-300'}`}>DID</span> 为唯一主键进行拓扑级联匹配，聚合云端令牌与局域网 IP，生成双轨融合设备表。
                     </p>
                   </div>
                 </div>
 
-                <div className="p-3 rounded-lg bg-purple-950/30 border border-purple-500/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 font-sans">
+                <div className={`p-3 rounded-lg border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 font-sans ${
+                  isLight ? 'bg-purple-50/80 border-purple-200' : 'bg-purple-950/30 border-purple-500/20'
+                }`}>
                   <div className="space-y-1">
-                    <div className="text-purple-400 font-bold flex items-center gap-1.5">
+                    <div className={`font-bold flex items-center gap-1.5 ${isLight ? 'text-purple-700' : 'text-purple-400'}`}>
                       <ShieldCheck className="w-3.5 h-3.5" />
                       4. MIoT Spec 规范研判：判断是不是音箱
                     </div>
-                    <p className="text-zinc-400 text-[11px] leading-relaxed">
-                      依据官方 MIoT Spec 定义检索设备能力，匹配 <code className="text-purple-300 font-mono">device:speaker</code>、<code className="text-purple-300 font-mono">service:play-control</code>、<code className="text-purple-300 font-mono">service:intelligent-speaker</code>。
+                    <p className={`text-[11px] leading-relaxed ${isLight ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                      依据官方 MIoT Spec 定义检索设备能力，匹配 <code className={`font-mono ${isLight ? 'text-purple-800 font-semibold' : 'text-purple-300'}`}>device:speaker</code>、<code className={`font-mono ${isLight ? 'text-purple-800 font-semibold' : 'text-purple-300'}`}>service:play-control</code>、<code className={`font-mono ${isLight ? 'text-purple-800 font-semibold' : 'text-purple-300'}`}>service:intelligent-speaker</code>。
                     </p>
                   </div>
                   <div className="flex items-center gap-2 flex-shrink-0">
-                    <span className="px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-300 text-xs font-bold border border-emerald-500/30">
+                    <span className="px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 text-xs font-bold border border-emerald-500/30">
                       ✓ 是 → 确认为小爱音箱
                     </span>
-                    <span className="px-2.5 py-1 rounded-full bg-rose-500/20 text-rose-300 text-xs font-bold border border-rose-500/30">
+                    <span className="px-2.5 py-1 rounded-full bg-rose-500/20 text-rose-700 dark:text-rose-300 text-xs font-bold border border-rose-500/30">
                       ✗ 否 → 自动过滤忽略
                     </span>
                   </div>
@@ -1695,31 +1805,33 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
             )}
           </div>
 
-          {/* Subnet Discovery & SSDP Probe Banner (Hidden as requested) */}
-
           {/* Empty State when no devices */}
           {devices.length === 0 && (
-            <div className="p-8 sm:p-10 rounded-3xl bg-zinc-900/40 border border-dashed border-white/10 text-center space-y-5">
+            <div className={`p-8 sm:p-10 rounded-3xl border border-dashed text-center space-y-5 ${
+              isLight ? 'bg-white/80 border-zinc-300' : 'bg-zinc-900/40 border-white/10'
+            }`}>
               <div className="w-14 h-14 rounded-2xl bg-[#FF6700]/10 border border-[#FF6700]/20 flex items-center justify-center mx-auto text-[#FF6700]">
                 <Radio className="w-7 h-7" />
               </div>
               <div className="space-y-2 max-w-lg mx-auto">
-                <h4 className="text-base font-bold text-white">暂未发现可联动的小米音箱设备</h4>
+                <h4 className={`text-base font-bold ${isLight ? 'text-zinc-900' : 'text-white'}`}>暂未发现可联动的小米音箱设备</h4>
                 {miotConfig.isLoggedIn && (
-                  <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-200 text-xs text-left space-y-1">
+                  <div className={`p-3 rounded-xl border text-xs text-left space-y-1 ${
+                    isLight ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-amber-500/10 border-amber-500/20 text-amber-200'
+                  }`}>
                     <p className="font-semibold flex items-center gap-1.5">
                       <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
                       绑状态：已成功关联 {miotConfig.bindMode === 'cookie' ? 'ServiceToken 令牌' : '小米云端账号'} (UserID: {miotConfig.userId || '已授权'})
                     </p>
-                    <p className="text-zinc-400 text-[11px] leading-relaxed">
+                    <p className={`text-[11px] leading-relaxed ${isLight ? 'text-zinc-600' : 'text-zinc-400'}`}>
                       系统已轮询 Mina / 米家云端 11 个接口节点，云端返回该账号下未挂载默认主音箱。排查建议：
-                      <br />1. 请确认该 ServiceToken 是在登录 <code className="text-amber-300 font-mono">mina.mi.com</code> 后从 Cookie 复制的。
+                      <br />1. 请确认该 ServiceToken 是在登录 <code className="text-amber-600 dark:text-amber-300 font-mono">mina.mi.com</code> 后从 Cookie 复制的。
                       <br />2. 若音箱处于同局域网下，强烈建议使用【手动添加音箱】直接输入音箱 IP (如 192.168.31.x) 实现直连播报！
                     </p>
                   </div>
                 )}
                 {!miotConfig.isLoggedIn && (
-                  <p className="text-xs text-zinc-400 leading-relaxed">
+                  <p className={`text-xs leading-relaxed ${isLight ? 'text-zinc-600' : 'text-zinc-400'}`}>
                     系统遵循真实设备模式（0台=0台）。请在【账号与凭据】中授权同步米家云端音箱，或点击【+ 手动添加音箱】输入局域网 IP 直连。
                   </p>
                 )}
@@ -1728,21 +1840,23 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                 <button
                   onClick={onScanDevices}
                   disabled={isScanning}
-                  className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-zinc-200 border border-white/10 transition active:scale-95 disabled:opacity-50"
+                  className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-xs font-semibold border transition active:scale-95 disabled:opacity-50 cursor-pointer ${
+                    isLight ? 'bg-zinc-100 hover:bg-zinc-200 text-zinc-800 border-zinc-200' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-white/10'
+                  }`}
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isScanning ? 'animate-spin text-[#FF6700]' : ''}`} />
                   {isScanning ? '正在调取云端与局域网...' : '重新调取云端与局域网'}
                 </button>
                 <button
                   onClick={openSnapshotModal}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-purple-500/15 hover:bg-purple-500/25 text-purple-300 border border-purple-500/30 text-xs font-semibold transition active:scale-95 cursor-pointer"
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-purple-500/15 hover:bg-purple-500/25 text-purple-600 dark:text-purple-300 border border-purple-500/30 text-xs font-semibold transition active:scale-95 cursor-pointer"
                 >
-                  <Bug className="w-3.5 h-3.5 text-purple-400" />
+                  <Bug className="w-3.5 h-3.5 text-purple-500 dark:text-purple-400" />
                   <span>抓包快照 / 查看云端原始数据</span>
                 </button>
                 <button
                   onClick={() => setIsAddModalOpen(true)}
-                  className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-[#FF6700] hover:bg-[#e55c00] text-xs font-semibold text-white shadow-[0_0_15px_rgba(255,103,0,0.3)] transition active:scale-95"
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-[#FF6700] hover:bg-[#e55c00] text-xs font-semibold text-white shadow-[0_0_15px_rgba(255,103,0,0.3)] transition active:scale-95 cursor-pointer"
                 >
                   <Plus className="w-4 h-4" />
                   手动添加音箱 (IP 直连)
@@ -1752,23 +1866,27 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
           )}
 
           {devices.length === 0 ? (
-            <div className="p-8 sm:p-12 rounded-3xl bg-zinc-900/40 backdrop-blur-md border border-white/5 text-center space-y-6">
+            <div className={`p-8 sm:p-12 rounded-3xl backdrop-blur-md border text-center space-y-6 ${
+              isLight ? 'bg-white/80 border-zinc-200 shadow-sm' : 'bg-zinc-900/40 border-white/5'
+            }`}>
               <div className="w-16 h-16 rounded-3xl bg-[#FF6700]/10 text-[#FF6700] border border-[#FF6700]/20 flex items-center justify-center mx-auto shadow-[0_0_20px_rgba(255,103,0,0.15)]">
                 <Radio className="w-8 h-8" />
               </div>
 
               <div className="max-w-lg mx-auto space-y-2">
-                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-zinc-800 text-zinc-300 text-xs font-semibold border border-white/5">
+                <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${
+                  isLight ? 'bg-zinc-100 text-zinc-700 border-zinc-200' : 'bg-zinc-800 text-zinc-300 border-white/5'
+                }`}>
                   <span className="w-2 h-2 rounded-full bg-amber-500" />
                   当前未发现音箱 (0 台)
                 </div>
-                <h3 className="text-lg font-bold text-white tracking-tight">
+                <h3 className={`text-lg font-bold tracking-tight ${isLight ? 'text-zinc-900' : 'text-white'}`}>
                   {miotConfig.isLoggedIn ? '账号已成功绑定，但云端未检索到音箱设备' : '暂未接入小爱音箱设备'}
                 </h3>
-                <p className="text-xs text-zinc-400 leading-relaxed">
+                <p className={`text-xs leading-relaxed ${isLight ? 'text-zinc-600' : 'text-zinc-400'}`}>
                   {miotConfig.isLoggedIn ? (
                     <>
-                      已验证小米云端身份（用户: <span className="font-mono text-zinc-200">{cleanDeviceName(miotConfig.miUser || miotConfig.userId)}</span>），但米家/Mina 云端接口返回 0 台设备。设备可能由其他家庭成员绑定，或处于不同小米账号下。
+                      已验证小米云端身份（用户: <span className={`font-mono font-semibold ${isLight ? 'text-zinc-900' : 'text-zinc-200'}`}>{cleanDeviceName(miotConfig.miUser || miotConfig.userId)}</span>），但米家/Mina 云端接口返回 0 台设备。设备可能由其他家庭成员绑定，或处于不同小米账号下。
                     </>
                   ) : (
                     '您可以前往绑定小米账号、扫描局域网，或直接输入音箱 IP 与 Token 进行局域网直连。'
@@ -1778,16 +1896,20 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
 
               {/* Detected Speaker from Audio Stream Log Banner */}
               {detectedStreamLog && (
-                <div className="max-w-lg mx-auto p-4 rounded-2xl bg-gradient-to-r from-emerald-500/15 via-teal-500/10 to-emerald-500/15 border border-emerald-500/30 text-left space-y-3 shadow-lg animate-fadeIn">
+                <div className={`max-w-lg mx-auto p-4 rounded-2xl border text-left space-y-3 shadow-lg animate-fadeIn ${
+                  isLight 
+                    ? 'bg-emerald-50 border-emerald-300' 
+                    : 'bg-gradient-to-r from-emerald-500/15 via-teal-500/10 to-emerald-500/15 border-emerald-500/30'
+                }`}>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
-                      <span className="text-xs font-bold text-emerald-300">📡 捕获到活跃小爱音箱连接</span>
+                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
+                      <span className={`text-xs font-bold ${isLight ? 'text-emerald-800' : 'text-emerald-300'}`}>📡 捕获到活跃小爱音箱连接</span>
                     </div>
-                    <span className="text-[10px] text-zinc-400 font-mono">{detectedStreamLog.timestamp}</span>
+                    <span className={`text-[10px] font-mono ${isLight ? 'text-zinc-500' : 'text-zinc-400'}`}>{detectedStreamLog.timestamp}</span>
                   </div>
-                  <p className="text-xs text-zinc-300 leading-relaxed">
-                    检测到来自 <strong className="text-emerald-300 font-mono">{detectedStreamLog.ip}</strong> 的音频流请求（<code className="text-emerald-400">HTTP 206</code> 接管成功），音箱已在拉取播放！可直接一键添加至受控列表：
+                  <p className={`text-xs leading-relaxed ${isLight ? 'text-zinc-700' : 'text-zinc-300'}`}>
+                    检测到来自 <strong className={`font-mono ${isLight ? 'text-emerald-800' : 'text-emerald-300'}`}>{detectedStreamLog.ip}</strong> 的音频流请求（<code className={`font-semibold ${isLight ? 'text-emerald-700' : 'text-emerald-400'}`}>HTTP 206</code> 接管成功），音箱已在拉取播放！可直接一键添加至受控列表：
                   </p>
                   <button
                     type="button"
@@ -1808,23 +1930,25 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
               )}
 
               {/* Suggestions / Guidance */}
-              <div className="max-w-lg mx-auto p-4 rounded-2xl bg-zinc-950/60 border border-white/5 text-left space-y-2.5 text-xs">
-                <span className="font-semibold text-zinc-200 block text-xs flex items-center gap-1.5">
+              <div className={`max-w-lg mx-auto p-4 rounded-2xl border text-left space-y-2.5 text-xs ${
+                isLight ? 'bg-zinc-50 border-zinc-200' : 'bg-zinc-950/60 border-white/5'
+              }`}>
+                <span className={`font-semibold block text-xs flex items-center gap-1.5 ${isLight ? 'text-zinc-800' : 'text-zinc-200'}`}>
                   <Sparkles className="w-3.5 h-3.5 text-[#FF6700]" />
                   真实设备接入建议：
                 </span>
-                <ul className="space-y-1.5 text-[11px] text-zinc-400">
+                <ul className={`space-y-1.5 text-[11px] ${isLight ? 'text-zinc-600' : 'text-zinc-400'}`}>
                   <li className="flex items-start gap-1.5">
                     <span className="text-[#FF6700] font-bold">1.</span>
-                    <span><strong className="text-emerald-300">扫码一键登录 (云端预览推荐 🌟)</strong>：在【协议配置】选择「方式二：手机扫码一键登录」，同步云端音箱后实现无缝推流。</span>
+                    <span><strong className={isLight ? 'text-emerald-700' : 'text-emerald-300'}>扫码一键登录 (云端预览推荐 🌟)</strong>：在【协议配置】选择「方式二：手机扫码一键登录」，同步云端音箱后实现无缝推流。</span>
                   </li>
                   <li className="flex items-start gap-1.5">
                     <span className="text-[#FF6700] font-bold">2.</span>
-                    <span><strong className="text-purple-300">局域网 Token 直连 (本地部署推荐 🏠)</strong>：私有部署在本地 NAS / 树莓派 / 同网段电脑时，可选择「方式三：局域网 Token 直连」实现 0 延迟本地推流。</span>
+                    <span><strong className={isLight ? 'text-purple-700' : 'text-purple-300'}>局域网 Token 直连 (本地部署推荐 🏠)</strong>：私有部署在本地 NAS / 树莓派 / 同网段电脑时，可选择「方式三：局域网 Token 直连」实现 0 延迟本地推流。</span>
                   </li>
                   <li className="flex items-start gap-1.5">
                     <span className="text-[#FF6700] font-bold">3.</span>
-                    <span><strong className="text-zinc-200">主账号核对</strong>：若音箱为家庭共享设备，需登录最初绑定该音箱的小米主账号。</span>
+                    <span><strong className={isLight ? 'text-zinc-900' : 'text-zinc-200'}>主账号核对</strong>：若音箱为家庭共享设备，需登录最初绑定该音箱的小米主账号。</span>
                   </li>
                 </ul>
               </div>
@@ -1842,9 +1966,9 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                 <button
                   type="button"
                   onClick={openSnapshotModal}
-                  className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/35 text-xs font-semibold transition active:scale-95 cursor-pointer"
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-purple-500/20 hover:bg-purple-500/30 text-purple-600 dark:text-purple-300 border border-purple-500/35 text-xs font-semibold transition active:scale-95 cursor-pointer"
                 >
-                  <Bug className="w-3.5 h-3.5 text-purple-400" />
+                  <Bug className="w-3.5 h-3.5 text-purple-500 dark:text-purple-400" />
                   <span>抓包排查：查看云端原始返回 (JSON)</span>
                 </button>
 
@@ -1852,7 +1976,9 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                   type="button"
                   onClick={onScanDevices}
                   disabled={isScanning}
-                  className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold text-zinc-200 border border-white/10 transition active:scale-95 disabled:opacity-50 cursor-pointer"
+                  className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-xs font-semibold border transition active:scale-95 disabled:opacity-50 cursor-pointer ${
+                    isLight ? 'bg-zinc-100 hover:bg-zinc-200 text-zinc-800 border-zinc-200' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-white/10'
+                  }`}
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isScanning ? 'animate-spin text-[#FF6700]' : ''}`} />
                   {isScanning ? '正在探测局域网...' : '重新扫描设备'}
@@ -1862,7 +1988,9 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                   <button
                     type="button"
                     onClick={() => setActiveSubTab('settings')}
-                    className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-zinc-800/60 hover:bg-zinc-700 text-xs font-semibold text-zinc-300 border border-white/5 transition cursor-pointer"
+                    className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-xs font-semibold border transition cursor-pointer ${
+                      isLight ? 'bg-zinc-100 hover:bg-zinc-200 text-zinc-700 border-zinc-200' : 'bg-zinc-800/60 hover:bg-zinc-700 text-zinc-300 border-white/5'
+                    }`}
                   >
                     前往绑定小米账号
                   </button>
@@ -1883,8 +2011,12 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                     id={`device-card-${dev.did}`}
                     className={`p-6 rounded-3xl border transition-all relative overflow-hidden backdrop-blur-md ${
                       isSelected
-                        ? 'bg-zinc-900/60 border-[#FF6700]/50 shadow-[0_0_25px_rgba(255,103,0,0.15)]'
-                        : 'bg-zinc-900/40 border-white/5 hover:border-white/10'
+                        ? isLight
+                          ? 'bg-orange-50/40 border-[#FF6700] shadow-[0_4px_20px_rgba(255,103,0,0.18)] ring-1 ring-[#FF6700]'
+                          : 'bg-zinc-900/60 border-[#FF6700]/50 shadow-[0_0_25px_rgba(255,103,0,0.15)]'
+                        : isLight
+                          ? 'bg-white/90 border-zinc-200 hover:border-zinc-300 shadow-sm hover:shadow-md'
+                          : 'bg-zinc-900/40 border-white/5 hover:border-white/10'
                     }`}
                   >
                     {/* Top line indicator */}
@@ -1893,48 +2025,62 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                         <div className={`p-3 rounded-2xl border ${
                           isSelected 
                             ? 'bg-[#FF6700]/20 text-[#FF6700] border-[#FF6700]/30 shadow-[0_0_12px_rgba(255,103,0,0.3)]' 
-                            : 'bg-zinc-800/80 text-zinc-400 border-white/5'
+                            : isLight
+                              ? 'bg-zinc-100 text-zinc-600 border-zinc-200'
+                              : 'bg-zinc-800/80 text-zinc-400 border-white/5'
                         }`}>
                           <Radio className="w-6 h-6" />
                         </div>
                         <div>
                           <div className="flex items-center gap-2">
-                            <h3 className="text-base font-bold text-white tracking-tight">
+                            <h3 className={`text-base font-bold tracking-tight ${isLight ? 'text-zinc-900' : 'text-white'}`}>
                               {dev.name}
                             </h3>
                             {isSelected && (
-                              <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full bg-[#FF6700] text-white font-bold shadow-[0_0_8px_rgba(255,103,0,0.5)]">
+                              <span className={`text-[10px] uppercase tracking-wider px-2.5 py-0.5 rounded-full font-bold shadow-sm ${
+                                isLight 
+                                  ? 'bg-orange-600 text-white shadow-[0_1px_6px_rgba(234,88,12,0.35)]' 
+                                  : 'bg-[#FF6700] text-white shadow-[0_0_8px_rgba(255,103,0,0.5)]'
+                              }`}>
                                 当前默认
                               </span>
                             )}
                           </div>
-                          <p className="text-xs text-zinc-400 font-mono mt-0.5">
+                          <p className={`text-xs font-mono mt-0.5 ${isLight ? 'text-zinc-500' : 'text-zinc-400'}`}>
                             型号: {dev.model} · 硬件: {dev.hardware}
                           </p>
 
                           {/* Source, Platform & Capability Tags */}
                           <div className="flex flex-wrap items-center gap-1.5 mt-2">
                             {dev.source === 'hybrid' && (
-                              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 flex items-center gap-1">
-                                <span className="w-1.5 h-1.5 rounded-full bg-indigo-400"></span>
+                              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border flex items-center gap-1 ${
+                                isLight ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30'
+                              }`}>
+                                <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
                                 双轨融合 (Cloud+LAN)
                               </span>
                             )}
                             {dev.source === 'cloud' && (
-                              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-sky-500/15 text-sky-300 border border-sky-500/30 flex items-center gap-1">
-                                <span className="w-1.5 h-1.5 rounded-full bg-sky-400"></span>
+                              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border flex items-center gap-1 ${
+                                isLight ? 'bg-sky-50 text-sky-700 border-sky-200' : 'bg-sky-500/15 text-sky-300 border-sky-500/30'
+                              }`}>
+                                <span className="w-1.5 h-1.5 rounded-full bg-sky-500"></span>
                                 云端拉取
                               </span>
                             )}
                             {dev.source === 'lan' && (
-                              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 flex items-center gap-1">
-                                <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border flex items-center gap-1 ${
+                                isLight ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                              }`}>
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>
                                 局域网 Hello 探测
                               </span>
                             )}
 
                             {dev.platform && (
-                              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-300 border border-white/5">
+                              <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${
+                                isLight ? 'bg-zinc-100 text-zinc-700 border-zinc-200' : 'bg-zinc-800 text-zinc-300 border-white/5'
+                              }`}>
                                 {dev.platform === 'mina' ? 'Mina Cloud' : dev.platform === 'miio' ? 'miIO UDP' : 'MIoT'}
                               </span>
                             )}
@@ -1945,34 +2091,46 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                               dev.model?.toLowerCase().includes('l05c') || 
                               dev.hardware?.toUpperCase() === 'OH2P' || 
                               dev.hardware?.toUpperCase() === 'L16A') && (
-                              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 flex items-center gap-1" title="匹配 XiaoWei CP 高兼容流媒体协议，已启用专用 player_play_music 直链投播">
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border flex items-center gap-1 ${
+                                isLight ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                              }`} title="匹配 XiaoWei CP 高兼容流媒体协议，已启用专用 player_play_music 直链投播">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
                                 高兼容 CP 流媒体就绪
                               </span>
                             )}
 
                             {dev.capabilities?.hasTts && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-300 border border-purple-500/20 font-medium">
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium border ${
+                                isLight ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-purple-500/10 text-purple-300 border-purple-500/20'
+                              }`}>
                                 TTS
                               </span>
                             )}
                             {dev.capabilities?.hasPlayControl && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 font-medium">
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium border ${
+                                isLight ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20'
+                              }`}>
                                 播控
                               </span>
                             )}
                             {dev.capabilities?.hasVolumeControl && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-300 border border-blue-500/20 font-medium">
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium border ${
+                                isLight ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-blue-500/10 text-blue-300 border-blue-500/20'
+                              }`}>
                                 音量
                               </span>
                             )}
                             {dev.capabilities?.supportsDlna && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20 font-medium">
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium border ${
+                                isLight ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-amber-500/10 text-amber-300 border-amber-500/20'
+                              }`}>
                                 DLNA
                               </span>
                             )}
                             {dev.capabilities?.hasClock && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/10 text-rose-300 border border-rose-500/20 font-medium">
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium border ${
+                                isLight ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-rose-500/10 text-rose-300 border-rose-500/20'
+                              }`}>
                                 时钟
                               </span>
                             )}
@@ -1986,14 +2144,15 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                           dev.deviceState === 'connecting' ? 'bg-blue-400 animate-pulse' :
                           dev.deviceState === 'paused' ? 'bg-blue-400' :
                           dev.deviceState === 'error' ? 'bg-rose-500' :
-                          dev.isOnline ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]' : 'bg-zinc-600'
+                          dev.isOnline ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]' : 'bg-zinc-400'
                         }`} />
                         <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${
-                          dev.deviceState === 'playing' ? 'bg-amber-500/20 text-amber-300 border-amber-500/30' :
-                          dev.deviceState === 'connecting' ? 'bg-blue-500/20 text-blue-300 border-blue-500/30' :
-                          dev.deviceState === 'paused' ? 'bg-blue-500/20 text-blue-300 border-blue-500/30' :
-                          dev.deviceState === 'error' ? 'bg-rose-500/20 text-rose-300 border-rose-500/30' :
-                          dev.isOnline ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' : 'bg-zinc-800 text-zinc-400 border-zinc-700'
+                          dev.deviceState === 'playing' ? (isLight ? 'bg-amber-100 text-amber-800 border-amber-300' : 'bg-amber-500/20 text-amber-300 border-amber-500/30') :
+                          dev.deviceState === 'connecting' ? (isLight ? 'bg-blue-100 text-blue-800 border-blue-300' : 'bg-blue-500/20 text-blue-300 border-blue-500/30') :
+                          dev.deviceState === 'paused' ? (isLight ? 'bg-blue-100 text-blue-800 border-blue-300' : 'bg-blue-500/20 text-blue-300 border-blue-500/30') :
+                          dev.deviceState === 'error' ? (isLight ? 'bg-rose-100 text-rose-800 border-rose-300' : 'bg-rose-500/20 text-rose-300 border-rose-500/30') :
+                          dev.isOnline ? (isLight ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30') : 
+                          (isLight ? 'bg-zinc-100 text-zinc-500 border-zinc-300' : 'bg-zinc-800 text-zinc-400 border-zinc-700')
                         }`}>
                           {dev.deviceState === 'playing' ? '▶ 播放中' :
                            dev.deviceState === 'connecting' ? '⏳ 握手连接中' :
@@ -2005,38 +2164,46 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                     </div>
 
                     {/* Device Network & Hardware Info */}
-                    <div className="grid grid-cols-2 gap-2 my-4 p-3.5 rounded-2xl bg-zinc-950/60 border border-white/5 text-xs">
+                    <div className={`grid grid-cols-2 gap-2 my-4 p-3.5 rounded-2xl border text-xs ${
+                      isLight ? 'bg-zinc-50/90 border-zinc-200' : 'bg-zinc-950/60 border-white/5'
+                    }`}>
                       <div>
-                        <span className="text-zinc-500">局域网 IP:</span>
+                        <span className={isLight ? 'text-zinc-500' : 'text-zinc-500'}>局域网 IP:</span>
                         {dev.ip ? (
-                          <span className="text-zinc-200 font-mono ml-1.5">{dev.ip}</span>
+                          <span className={`font-mono ml-1.5 font-medium ${isLight ? 'text-zinc-900' : 'text-zinc-200'}`}>{dev.ip}</span>
                         ) : (
-                          <span className="text-amber-400 font-mono ml-1.5 text-[11px] bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20">
+                          <span className="text-amber-600 dark:text-amber-400 font-mono ml-1.5 text-[11px] bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 font-medium">
                             未获取 (云端设备)
                           </span>
                         )}
                       </div>
                       <div>
-                        <span className="text-zinc-500">设备 DID:</span>
-                        <span className="text-zinc-200 font-mono ml-1.5">{dev.did}</span>
+                        <span className={isLight ? 'text-zinc-500' : 'text-zinc-500'}>设备 DID:</span>
+                        <span className={`font-mono ml-1.5 font-medium ${isLight ? 'text-zinc-900' : 'text-zinc-200'}`}>{dev.did}</span>
                       </div>
                       <div>
-                        <span className="text-zinc-500">MAC 地址:</span>
-                        <span className="text-zinc-200 font-mono ml-1.5">{dev.mac}</span>
+                        <span className={isLight ? 'text-zinc-500' : 'text-zinc-500'}>MAC 地址:</span>
+                        <span className={`font-mono ml-1.5 font-medium ${isLight ? 'text-zinc-900' : 'text-zinc-200'}`}>{dev.mac || '—'}</span>
                       </div>
                       <div>
-                        <span className="text-zinc-500">当前音量:</span>
+                        <span className={isLight ? 'text-zinc-500' : 'text-zinc-500'}>当前音量:</span>
                         <span className="text-[#FF6700] font-mono font-bold ml-1.5">{dev.status?.volume ?? 40}%</span>
                       </div>
 
                       {/* Ping Handshake, Edit, and Delete Row */}
-                      <div className="col-span-2 pt-2 mt-1 border-t border-white/5 flex flex-wrap items-center justify-between gap-2">
+                      <div className={`col-span-2 pt-2 mt-1 border-t flex flex-wrap items-center justify-between gap-2 ${
+                        isLight ? 'border-zinc-200' : 'border-white/5'
+                      }`}>
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
                             onClick={() => handlePing(dev)}
                             disabled={isPinging}
-                            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-zinc-800/90 hover:bg-[#FF6700]/20 hover:text-[#FF6700] text-zinc-300 text-[11px] font-medium transition"
+                            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium transition cursor-pointer ${
+                              isLight 
+                                ? 'bg-zinc-200/80 hover:bg-[#FF6700]/15 hover:text-[#FF6700] text-zinc-700' 
+                                : 'bg-zinc-800/90 hover:bg-[#FF6700]/20 hover:text-[#FF6700] text-zinc-300'
+                            }`}
                             title="向音箱发起 TCP 握手测算延迟与连通性"
                           >
                             <Activity className={`w-3 h-3 ${isPinging ? 'animate-spin text-[#FF6700]' : ''}`} />
@@ -2046,8 +2213,8 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                           {pingInfo && (
                             <span className={`text-[11px] px-2 py-0.5 rounded-full font-mono flex items-center gap-1 ${
                               pingInfo.reachable
-                                ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                                : 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
+                                ? isLight ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                                : isLight ? 'bg-amber-100 text-amber-800 border border-amber-300' : 'bg-amber-500/15 text-amber-400 border border-amber-500/30'
                             }`}>
                               {pingInfo.reachable ? `✓ 延迟 ${pingInfo.latency}ms` : `⚠ ${pingInfo.message}`}
                             </span>
@@ -2059,7 +2226,11 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                           <button
                             type="button"
                             onClick={() => openEditModal(dev)}
-                            className="text-zinc-400 hover:text-[#FF6700] px-2.5 py-1 rounded-full bg-zinc-800/80 hover:bg-[#FF6700]/10 border border-white/5 text-[11px] flex items-center gap-1 transition"
+                            className={`px-2.5 py-1 rounded-full border text-[11px] flex items-center gap-1 transition cursor-pointer ${
+                              isLight 
+                                ? 'bg-zinc-100 hover:bg-[#FF6700]/10 hover:text-[#FF6700] text-zinc-700 border-zinc-200' 
+                                : 'bg-zinc-800/80 hover:bg-[#FF6700]/10 hover:text-[#FF6700] text-zinc-400 border-white/5'
+                            }`}
                             title="修改此音箱的名称、IP地址或硬件型号"
                           >
                             <Edit3 className="w-3.5 h-3.5" />
@@ -2075,7 +2246,11 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                                 e.stopPropagation();
                                 onDeleteDevice(dev.did);
                               }}
-                              className="text-zinc-400 hover:text-rose-400 px-2.5 py-1 rounded-full bg-zinc-800/80 hover:bg-rose-950/40 border border-white/5 text-[11px] flex items-center gap-1 transition active:scale-95 cursor-pointer"
+                              className={`px-2.5 py-1 rounded-full border text-[11px] flex items-center gap-1 transition active:scale-95 cursor-pointer ${
+                                isLight
+                                  ? 'bg-zinc-100 hover:bg-rose-50 hover:text-rose-600 text-zinc-700 border-zinc-200'
+                                  : 'bg-zinc-800/80 hover:bg-rose-950/40 hover:text-rose-400 text-zinc-400 border-white/5'
+                              }`}
                               title="从列表中移除此音箱"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -2089,22 +2264,28 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                     {/* Playback Status & Interactive Controls */}
                     <div className="mb-4">
                       {isDevPlaying ? (
-                        <div className="flex items-center justify-between p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs">
+                        <div className={`flex items-center justify-between p-3 rounded-2xl border text-xs ${
+                          isLight ? 'bg-amber-50/90 border-amber-200' : 'bg-amber-500/10 border-amber-500/20'
+                        }`}>
                           <div className="flex items-center gap-2.5 min-w-0">
-                            <div className="w-8 h-8 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center flex-shrink-0">
-                              <Radio className="w-4 h-4 text-amber-400 animate-pulse" />
+                            <div className={`w-8 h-8 rounded-xl border flex items-center justify-center flex-shrink-0 ${
+                              isLight ? 'bg-amber-100 border-amber-300' : 'bg-amber-500/20 border-amber-500/30'
+                            }`}>
+                              <Radio className={`w-4 h-4 animate-pulse ${isLight ? 'text-amber-700' : 'text-amber-400'}`} />
                             </div>
                             <div className="min-w-0">
                               <div className="flex items-center gap-2">
-                                <span className="text-zinc-200 font-medium truncate">
+                                <span className={`font-semibold truncate ${isLight ? 'text-zinc-900' : 'text-zinc-200'}`}>
                                   {dev.status?.currentTitle}
                                 </span>
-                                <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1 flex-shrink-0">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border flex items-center gap-1 flex-shrink-0 ${
+                                  isLight ? 'bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                                }`}>
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></span>
                                   播放中
                                 </span>
                               </div>
-                              <span className="text-zinc-400 text-[11px] block truncate mt-0.5">
+                              <span className={`text-[11px] block truncate mt-0.5 ${isLight ? 'text-zinc-600' : 'text-zinc-400'}`}>
                                 {dev.status?.currentArtist}
                               </span>
                             </div>
@@ -2115,29 +2296,39 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                               e.stopPropagation();
                               onControlDevice(dev.did, 'pause');
                             }}
-                            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white border border-white/10 text-xs font-semibold transition active:scale-95 shadow-sm cursor-pointer ml-3 flex-shrink-0"
+                            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl border text-xs font-semibold transition active:scale-95 shadow-sm cursor-pointer ml-3 flex-shrink-0 ${
+                              isLight 
+                                ? 'bg-zinc-100 hover:bg-zinc-200 text-zinc-800 border-zinc-300' 
+                                : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white border-white/10'
+                            }`}
                             title="点击暂停音箱播放"
                           >
-                            <Pause className="w-3.5 h-3.5 fill-current text-zinc-300" />
+                            <Pause className={`w-3.5 h-3.5 fill-current ${isLight ? 'text-zinc-700' : 'text-zinc-300'}`} />
                             <span>暂停播放</span>
                           </button>
                         </div>
                       ) : dev.status?.currentTitle ? (
-                        <div className="flex items-center justify-between p-3 rounded-2xl bg-zinc-900/60 border border-white/10 text-xs">
+                        <div className={`flex items-center justify-between p-3 rounded-2xl border text-xs ${
+                          isLight ? 'bg-zinc-50 border-zinc-200' : 'bg-zinc-900/60 border-white/10'
+                        }`}>
                           <div className="flex items-center gap-2.5 min-w-0">
-                            <div className="w-8 h-8 rounded-xl bg-zinc-800 border border-white/10 flex items-center justify-center flex-shrink-0">
-                              <Pause className="w-4 h-4 text-zinc-400" />
+                            <div className={`w-8 h-8 rounded-xl border flex items-center justify-center flex-shrink-0 ${
+                              isLight ? 'bg-zinc-200 border-zinc-300' : 'bg-zinc-800 border-white/10'
+                            }`}>
+                              <Pause className={`w-4 h-4 ${isLight ? 'text-zinc-600' : 'text-zinc-400'}`} />
                             </div>
                             <div className="min-w-0">
                               <div className="flex items-center gap-2">
-                                <span className="text-zinc-300 font-medium truncate">
+                                <span className={`font-semibold truncate ${isLight ? 'text-zinc-900' : 'text-zinc-300'}`}>
                                   {dev.status?.currentTitle}
                                 </span>
-                                <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-zinc-800 text-zinc-400 border border-zinc-700 flex-shrink-0">
+                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold border flex-shrink-0 ${
+                                  isLight ? 'bg-zinc-200 text-zinc-700 border-zinc-300' : 'bg-zinc-800 text-zinc-400 border-zinc-700'
+                                }`}>
                                   已暂停
                                 </span>
                               </div>
-                              <span className="text-zinc-500 text-[11px] block truncate mt-0.5">
+                              <span className={`text-[11px] block truncate mt-0.5 ${isLight ? 'text-zinc-500' : 'text-zinc-500'}`}>
                                 {dev.status?.currentArtist}
                               </span>
                             </div>
@@ -2156,7 +2347,9 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                           </button>
                         </div>
                       ) : (
-                        <div className="p-3 rounded-2xl bg-zinc-950/40 border border-white/5 text-xs text-zinc-500 flex items-center justify-between">
+                        <div className={`p-3 rounded-2xl border text-xs flex items-center justify-between ${
+                          isLight ? 'bg-zinc-50 border-zinc-200 text-zinc-500' : 'bg-zinc-950/40 border-white/5 text-zinc-500'
+                        }`}>
                           <span>当前处于空闲待命状态</span>
                           {currentSong && (
                             <button
@@ -2177,7 +2370,9 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                     </div>
 
                     {/* Actions */}
-                    <div className="flex items-center justify-between gap-3 pt-3 border-t border-white/5">
+                    <div className={`flex items-center justify-between gap-3 pt-3 border-t ${
+                      isLight ? 'border-zinc-200' : 'border-white/5'
+                    }`}>
                       <button
                         type="button"
                         id={`btn-select-device-${dev.did}`}
@@ -2186,13 +2381,20 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                           e.stopPropagation();
                           onSelectDevice(dev.did);
                         }}
-                        className={`flex-1 py-2.5 rounded-full text-xs font-semibold transition cursor-pointer ${
+                        className={`flex-1 py-2.5 rounded-full text-xs font-semibold transition cursor-pointer flex items-center justify-center gap-1.5 ${
                           isSelected
-                            ? 'bg-white/10 text-white border border-white/10'
-                            : 'bg-zinc-800/80 hover:bg-[#FF6700] hover:text-white text-zinc-300'
+                            ? isLight
+                              ? 'bg-orange-600 text-white font-bold shadow-[0_2px_8px_rgba(234,88,12,0.35)] border border-orange-700'
+                              : 'bg-[#FF6700] text-white shadow-[0_2px_12px_rgba(255,103,0,0.35)] border border-[#FF6700]'
+                            : isLight
+                              ? 'bg-zinc-100 hover:bg-orange-600 text-zinc-900 hover:text-white border border-zinc-300 font-semibold'
+                              : 'bg-zinc-800/80 hover:bg-[#FF6700] text-zinc-300 hover:text-white border border-white/5'
                         }`}
                       >
-                        {isSelected ? '已选为默认音箱' : '设为目标音箱'}
+                        {isSelected && <Check className="w-3.5 h-3.5 stroke-[2.5] text-white" />}
+                        <span className={isSelected ? 'text-white font-bold' : ''}>
+                          {isSelected ? '已选为默认音箱' : '设为目标音箱'}
+                        </span>
                       </button>
 
                       <button
@@ -2203,7 +2405,11 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                           onSelectDevice(dev.did);
                           setActiveSubTab('control');
                         }}
-                        className="px-4 py-2.5 rounded-full bg-zinc-800/60 hover:bg-zinc-700 text-zinc-300 text-xs font-semibold border border-white/5 hover:border-white/10 transition cursor-pointer"
+                        className={`px-4 py-2.5 rounded-full text-xs font-semibold border transition cursor-pointer ${
+                          isLight
+                            ? 'bg-zinc-100 hover:bg-zinc-200 text-zinc-800 border-zinc-300'
+                            : 'bg-zinc-800/60 hover:bg-zinc-700 text-zinc-300 border-white/5 hover:border-white/10'
+                        }`}
                       >
                         音量与播控
                       </button>

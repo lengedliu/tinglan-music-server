@@ -384,22 +384,34 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
     <div className="space-y-6 pb-28">
       
       {/* Top Banner / Dashboard Hero Info (Referencing Subsonic Server Card Architecture) */}
-      <div className="p-6 sm:p-8 rounded-3xl bg-zinc-900/60 backdrop-blur-xl border border-white/10 relative overflow-hidden shadow-2xl">
+      <div className={`p-6 sm:p-8 rounded-3xl backdrop-blur-xl border relative overflow-hidden shadow-2xl transition-colors ${
+        isLight 
+          ? 'bg-white/90 border-zinc-200/80 shadow-[0_10px_30px_rgba(0,0,0,0.06)]' 
+          : 'bg-zinc-900/60 border-white/10'
+      }`}>
         <div className="absolute top-0 right-0 w-96 h-96 bg-[#FF6700]/10 blur-[120px] pointer-events-none" />
         
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 relative z-10">
           <div className="space-y-3 max-w-2xl">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/30 text-xs font-semibold">
+            <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold ${
+              isLight
+                ? 'bg-orange-50 text-[#FF6700] border border-orange-200'
+                : 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/30'
+            }`}>
               <Radio className="w-3.5 h-3.5" />
               <span>当前连接音箱：{activeDevice?.name || '未选择音箱'}</span>
-              <span className={`w-2 h-2 rounded-full ${activeDevice?.isOnline ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]' : 'bg-zinc-500'}`} />
+              <span className={`w-2 h-2 rounded-full ${activeDevice?.isOnline ? 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.8)]' : 'bg-zinc-400'}`} />
             </div>
 
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
+            <h1 className={`text-2xl sm:text-3xl font-extrabold tracking-tight ${
+              isLight ? 'text-zinc-900' : 'text-white'
+            }`}>
               私有音乐曲库
             </h1>
 
-            <p className="text-sm text-zinc-300 leading-relaxed">
+            <p className={`text-sm leading-relaxed ${
+              isLight ? 'text-zinc-600' : 'text-zinc-300'
+            }`}>
               支持 FLAC / 320k MP3 / DSD 纯净串流，通过 MIoT 协议一键推送到小米小爱音箱。本地目录实时挂载，适配 NAS 与 Docker 独立部署。
             </p>
           </div>
@@ -409,10 +421,14 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
               <button
                 id="btn-open-navidrome-modal"
                 onClick={onOpenNavidromeModal}
-                className="flex items-center justify-center gap-2 px-4 py-3 rounded-2xl bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-semibold border border-white/10 transition active:scale-95 shadow-sm"
+                className={`flex items-center justify-center gap-2 px-4 py-3 rounded-2xl text-xs font-semibold border transition active:scale-95 shadow-sm ${
+                  isLight
+                    ? 'bg-white hover:bg-zinc-50 text-zinc-800 border-zinc-200'
+                    : 'bg-zinc-800 hover:bg-zinc-700 text-white border-white/10'
+                }`}
                 title="连接 Navidrome / Subsonic 远程服务器"
               >
-                <Server className="w-4 h-4 text-emerald-400" />
+                <Server className="w-4 h-4 text-emerald-500" />
                 <span>连接 Navidrome</span>
               </button>
             )}
@@ -421,10 +437,14 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
               id="btn-scan-music-library"
               onClick={onScanMusicDir}
               disabled={isScanning}
-              className="flex items-center justify-center gap-2 px-4 py-3 rounded-2xl bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-semibold border border-white/10 transition active:scale-95 disabled:opacity-50 shadow-sm"
+              className={`flex items-center justify-center gap-2 px-4 py-3 rounded-2xl text-xs font-semibold border transition active:scale-95 disabled:opacity-50 shadow-sm ${
+                isLight
+                  ? 'bg-white hover:bg-zinc-50 text-zinc-800 border-zinc-200'
+                  : 'bg-zinc-800 hover:bg-zinc-700 text-white border-white/10'
+              }`}
               title="重新扫描 Docker 挂载的 /app/music 目录"
             >
-              <FolderSync className={`w-4 h-4 ${isScanning ? 'animate-spin text-[#FF6700]' : 'text-zinc-400'}`} />
+              <FolderSync className={`w-4 h-4 ${isScanning ? 'animate-spin text-[#FF6700]' : isLight ? 'text-zinc-500' : 'text-zinc-400'}`} />
               <span>{isScanning ? '扫描中...' : '扫描挂载目录'}</span>
             </button>
 
@@ -440,22 +460,42 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
         </div>
 
         {/* Library Metrics Cards (Subsonic Style) */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-8 pt-6 border-t border-white/10 relative z-10">
-          <div className="p-4 rounded-2xl bg-zinc-950/60 border border-white/5 space-y-1">
-            <span className="text-[10px] text-zinc-500 font-medium uppercase tracking-wider block">曲库总量</span>
-            <span className="text-base font-bold text-white font-mono">{songs.length} 首发烧曲目</span>
+        <div className={`grid grid-cols-2 sm:grid-cols-4 gap-3 mt-8 pt-6 border-t relative z-10 ${
+          isLight ? 'border-zinc-200/80' : 'border-white/10'
+        }`}>
+          <div className={`p-4 rounded-2xl border space-y-1 ${
+            isLight ? 'bg-zinc-50/80 border-zinc-200/70' : 'bg-zinc-950/60 border-white/5'
+          }`}>
+            <span className={`text-[10px] font-medium uppercase tracking-wider block ${
+              isLight ? 'text-zinc-500' : 'text-zinc-500'
+            }`}>曲库总量</span>
+            <span className={`text-base font-bold font-mono ${
+              isLight ? 'text-zinc-900' : 'text-white'
+            }`}>{songs.length} 首发烧曲目</span>
           </div>
-          <div className="p-4 rounded-2xl bg-zinc-950/60 border border-white/5 space-y-1">
-            <span className="text-[10px] text-zinc-500 font-medium uppercase tracking-wider block">自建歌单</span>
-            <span className="text-base font-bold text-amber-400 font-mono">{playlists.length} 个播放列表</span>
+          <div className={`p-4 rounded-2xl border space-y-1 ${
+            isLight ? 'bg-zinc-50/80 border-zinc-200/70' : 'bg-zinc-950/60 border-white/5'
+          }`}>
+            <span className={`text-[10px] font-medium uppercase tracking-wider block ${
+              isLight ? 'text-zinc-500' : 'text-zinc-500'
+            }`}>自建歌单</span>
+            <span className="text-base font-bold text-amber-500 font-mono">{playlists.length} 个播放列表</span>
           </div>
-          <div className="p-4 rounded-2xl bg-zinc-950/60 border border-white/5 space-y-1">
-            <span className="text-[10px] text-zinc-500 font-medium uppercase tracking-wider block">当前筛选匹配</span>
-            <span className="text-base font-bold text-emerald-400 font-mono">{filteredSongs.length} 首曲目</span>
+          <div className={`p-4 rounded-2xl border space-y-1 ${
+            isLight ? 'bg-zinc-50/80 border-zinc-200/70' : 'bg-zinc-950/60 border-white/5'
+          }`}>
+            <span className={`text-[10px] font-medium uppercase tracking-wider block ${
+              isLight ? 'text-zinc-500' : 'text-zinc-500'
+            }`}>当前筛选匹配</span>
+            <span className="text-base font-bold text-emerald-500 font-mono">{filteredSongs.length} 首曲目</span>
           </div>
-          <div className="p-4 rounded-2xl bg-zinc-950/60 border border-white/5 space-y-1">
-            <span className="text-[10px] text-zinc-500 font-medium uppercase tracking-wider block">母带串流标准</span>
-            <span className="text-base font-bold text-cyan-400 font-mono">FLAC 96k / MIoT</span>
+          <div className={`p-4 rounded-2xl border space-y-1 ${
+            isLight ? 'bg-zinc-50/80 border-zinc-200/70' : 'bg-zinc-950/60 border-white/5'
+          }`}>
+            <span className={`text-[10px] font-medium uppercase tracking-wider block ${
+              isLight ? 'text-zinc-500' : 'text-zinc-500'
+            }`}>母带串流标准</span>
+            <span className="text-base font-bold text-cyan-500 font-mono">FLAC 96k / MIoT</span>
           </div>
         </div>
       </div>
@@ -472,7 +512,9 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
               id="btn-scroll-tabs-left"
               type="button"
               onClick={() => scrollTabs('left')}
-              className="absolute -left-2 z-20 p-2 rounded-full bg-zinc-900/95 border border-[#FF6700]/40 text-[#FF6700] hover:bg-[#FF6700] hover:text-white shadow-2xl transition-all active:scale-95"
+              className={`absolute -left-2 z-20 p-2 rounded-full border text-[#FF6700] hover:bg-[#FF6700] hover:text-white shadow-xl transition-all active:scale-95 ${
+                isLight ? 'bg-white/95 border-zinc-200' : 'bg-zinc-900/95 border-[#FF6700]/40'
+              }`}
               title="向左滚动歌单"
             >
               <ChevronLeft className="w-4 h-4" />
@@ -499,11 +541,19 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                 className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-medium whitespace-nowrap transition-all flex-shrink-0 ${
                   selectedPlaylistId === 'all'
                     ? 'bg-[#FF6700] text-white font-semibold shadow-[0_2px_12px_rgba(255,103,0,0.4)]'
-                    : 'bg-zinc-900/80 text-zinc-300 hover:text-white hover:bg-zinc-800 border border-white/10'
+                    : isLight
+                      ? 'bg-white text-zinc-700 hover:text-zinc-950 hover:bg-zinc-100 border border-zinc-200'
+                      : 'bg-zinc-900/80 text-zinc-300 hover:text-white hover:bg-zinc-800 border border-white/10'
                 }`}
               >
                 <span>全部歌曲</span>
-                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${selectedPlaylistId === 'all' ? 'bg-white/20 text-white' : 'bg-zinc-800 text-zinc-400'}`}>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                  selectedPlaylistId === 'all' 
+                    ? 'bg-white/20 text-white' 
+                    : isLight 
+                      ? 'bg-zinc-100 text-zinc-600' 
+                      : 'bg-zinc-800 text-zinc-400'
+                }`}>
                   {songs.length}
                 </span>
               </button>
@@ -517,12 +567,20 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                 className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-medium whitespace-nowrap transition-all flex-shrink-0 ${
                   selectedPlaylistId === 'favorites'
                     ? 'bg-rose-500 text-white font-semibold shadow-[0_2px_12px_rgba(244,63,94,0.4)]'
-                    : 'bg-zinc-900/80 text-zinc-300 hover:text-white hover:bg-zinc-800 border border-white/10'
+                    : isLight
+                      ? 'bg-white text-zinc-700 hover:text-zinc-950 hover:bg-zinc-100 border border-zinc-200'
+                      : 'bg-zinc-900/80 text-zinc-300 hover:text-white hover:bg-zinc-800 border border-white/10'
                 }`}
               >
-                <Heart className="w-3.5 h-3.5 fill-current text-rose-300" />
+                <Heart className="w-3.5 h-3.5 fill-current text-rose-400" />
                 <span>我喜欢的</span>
-                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${selectedPlaylistId === 'favorites' ? 'bg-white/20 text-white' : 'bg-zinc-800 text-zinc-400'}`}>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                  selectedPlaylistId === 'favorites' 
+                    ? 'bg-white/20 text-white' 
+                    : isLight 
+                      ? 'bg-zinc-100 text-zinc-600' 
+                      : 'bg-zinc-800 text-zinc-400'
+                }`}>
                   {songs.filter(s => s.isFavorite).length}
                 </span>
               </button>
@@ -540,13 +598,21 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                     }}
                     className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-medium whitespace-nowrap transition-all flex-shrink-0 ${
                       isSelected
-                        ? 'bg-[#FF6700]/20 text-[#FF6700] border border-[#FF6700]/50 font-semibold shadow-[0_0_12px_rgba(255,103,0,0.25)]'
-                        : 'bg-zinc-900/80 text-zinc-300 hover:text-white hover:bg-zinc-800 border border-white/10'
+                        ? (isLight 
+                            ? 'bg-orange-50 text-[#FF6700] border border-orange-300 font-semibold shadow-sm' 
+                            : 'bg-[#FF6700]/20 text-[#FF6700] border border-[#FF6700]/50 font-semibold shadow-[0_0_12px_rgba(255,103,0,0.25)]')
+                        : (isLight
+                            ? 'bg-white text-zinc-700 hover:text-zinc-950 hover:bg-zinc-100 border border-zinc-200'
+                            : 'bg-zinc-900/80 text-zinc-300 hover:text-white hover:bg-zinc-800 border border-white/10')
                     }`}
                   >
                     <ListMusic className="w-3.5 h-3.5 text-[#FF6700]" />
                     <span>{pl.name}</span>
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${isSelected ? 'bg-[#FF6700]/30 text-[#FF6700]' : 'bg-zinc-800 text-zinc-400'}`}>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                      isSelected 
+                        ? (isLight ? 'bg-orange-200/60 text-[#FF6700]' : 'bg-[#FF6700]/30 text-[#FF6700]') 
+                        : (isLight ? 'bg-zinc-100 text-zinc-600' : 'bg-zinc-800 text-zinc-400')
+                    }`}>
                       {songCount}
                     </span>
                   </button>
@@ -559,7 +625,11 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                 onClick={() => {
                   if (!hasDragged) setShowNewPlaylistModal(true);
                 }}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-medium text-zinc-300 hover:text-white bg-zinc-900/80 hover:bg-zinc-800 border border-dashed border-zinc-600 hover:border-[#FF6700] transition-all flex-shrink-0 shadow-sm"
+                className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-medium border border-dashed transition-all flex-shrink-0 shadow-sm ${
+                  isLight
+                    ? 'text-zinc-700 hover:text-zinc-950 bg-white hover:bg-zinc-50 border-zinc-300 hover:border-[#FF6700]'
+                    : 'text-zinc-300 hover:text-white bg-zinc-900/80 hover:bg-zinc-800 border-zinc-600 hover:border-[#FF6700]'
+                }`}
                 title="新建播放歌单"
               >
                 <Plus className="w-3.5 h-3.5 text-[#FF6700]" />
@@ -572,7 +642,9 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
               id="btn-scroll-tabs-right"
               type="button"
               onClick={() => scrollTabs('right')}
-              className="absolute -right-2 z-20 p-2 rounded-full bg-zinc-900/95 border border-[#FF6700]/40 text-[#FF6700] hover:bg-[#FF6700] hover:text-white shadow-2xl transition-all active:scale-95"
+              className={`absolute -right-2 z-20 p-2 rounded-full border text-[#FF6700] hover:bg-[#FF6700] hover:text-white shadow-xl transition-all active:scale-95 ${
+                isLight ? 'bg-white/95 border-zinc-200' : 'bg-zinc-900/95 border-[#FF6700]/40'
+              }`}
               title="向右滚动歌单"
             >
               <ChevronRight className="w-4 h-4" />
@@ -582,19 +654,27 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
 
           {/* Search Bar */}
           <div className="relative w-full lg:w-72 flex-shrink-0">
-            <Search className="w-4 h-4 text-zinc-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <Search className={`w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none ${
+              isLight ? 'text-zinc-400' : 'text-zinc-400'
+            }`} />
             <input
               id="input-search-music"
               type="text"
               placeholder="搜索歌曲、歌手或专辑..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-8 py-2 bg-zinc-900/80 border border-white/10 rounded-full text-xs sm:text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-[#FF6700] transition shadow-inner"
+              className={`w-full pl-10 pr-8 py-2 border rounded-full text-xs sm:text-sm focus:outline-none focus:border-[#FF6700] transition ${
+                isLight
+                  ? 'bg-white border-zinc-200 text-zinc-900 placeholder-zinc-400 shadow-sm'
+                  : 'bg-zinc-900/80 border-white/10 text-zinc-200 placeholder-zinc-500 shadow-inner'
+              }`}
             />
             {searchQuery && (
               <button 
                 onClick={() => setSearchQuery('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white p-0.5"
+                className={`absolute right-3 top-1/2 -translate-y-1/2 p-0.5 ${
+                  isLight ? 'text-zinc-400 hover:text-zinc-900' : 'text-zinc-400 hover:text-white'
+                }`}
               >
                 <X className="w-3.5 h-3.5" />
               </button>
@@ -607,22 +687,30 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
           const currentPl = playlists.find(p => p.id === selectedPlaylistId);
           if (!currentPl) return null;
           return (
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl bg-gradient-to-r from-zinc-900/90 to-zinc-950/80 border border-[#FF6700]/30 shadow-xl">
+            <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-2xl border shadow-xl ${
+              isLight
+                ? 'bg-white border-orange-200 shadow-sm'
+                : 'bg-gradient-to-r from-zinc-900/90 to-zinc-950/80 border-[#FF6700]/30'
+            }`}>
               <div className="flex items-center gap-3.5">
-                <div className="w-11 h-11 rounded-2xl bg-[#FF6700]/15 border border-[#FF6700]/30 flex items-center justify-center text-[#FF6700] flex-shrink-0">
+                <div className={`w-11 h-11 rounded-2xl border flex items-center justify-center text-[#FF6700] flex-shrink-0 ${
+                  isLight ? 'bg-orange-50 border-orange-200' : 'bg-[#FF6700]/15 border-[#FF6700]/30'
+                }`}>
                   <ListMusic className="w-6 h-6" />
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <h3 className="text-base font-bold text-white">{currentPl.name}</h3>
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-[#FF6700]/20 text-[#FF6700] font-semibold">
+                    <h3 className={`text-base font-bold ${isLight ? 'text-zinc-900' : 'text-white'}`}>{currentPl.name}</h3>
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
+                      isLight ? 'bg-orange-100 text-[#FF6700]' : 'bg-[#FF6700]/20 text-[#FF6700]'
+                    }`}>
                       {filteredSongs.length} 首歌曲
                     </span>
                   </div>
                   {currentPl.description ? (
-                    <p className="text-xs text-zinc-400 mt-1">{currentPl.description}</p>
+                    <p className={`text-xs mt-1 ${isLight ? 'text-zinc-600' : 'text-zinc-400'}`}>{currentPl.description}</p>
                   ) : (
-                    <p className="text-xs text-zinc-500 mt-1">创建时间: {currentPl.createdAt}</p>
+                    <p className={`text-xs mt-1 ${isLight ? 'text-zinc-500' : 'text-zinc-500'}`}>创建时间: {currentPl.createdAt}</p>
                   )}
                 </div>
               </div>
@@ -644,7 +732,9 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                   className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 disabled:opacity-50 shadow-md ${
                     isCasting 
                       ? 'bg-[#FF6700] hover:bg-[#e55c00] text-white shadow-[0_2px_14px_rgba(255,103,0,0.5)] border border-[#FF6700]' 
-                      : 'bg-white hover:bg-zinc-100 text-zinc-950 shadow-[0_2px_10px_rgba(255,255,255,0.2)]'
+                      : isLight
+                        ? 'bg-zinc-900 hover:bg-zinc-800 text-white'
+                        : 'bg-white hover:bg-zinc-100 text-zinc-950 shadow-[0_2px_10px_rgba(255,255,255,0.2)]'
                   }`}
                   title={
                     isCasting 
@@ -659,7 +749,7 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                     </>
                   ) : (
                     <>
-                      <Play className="w-3.5 h-3.5 fill-current text-zinc-950" />
+                      <Play className="w-3.5 h-3.5 fill-current" />
                       <span>播放全部 ({filteredSongs.length} 首)</span>
                     </>
                   )}
@@ -668,7 +758,11 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                 <button
                   id="btn-batch-add-songs"
                   onClick={() => setShowBatchAddModal(true)}
-                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold border border-white/10 transition active:scale-95"
+                  className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold border transition active:scale-95 ${
+                    isLight
+                      ? 'bg-white hover:bg-zinc-50 text-zinc-800 border-zinc-200'
+                      : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-white/10'
+                  }`}
                 >
                   <ListPlus className="w-4 h-4 text-[#FF6700]" />
                   <span>添加歌曲</span>
@@ -682,10 +776,14 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                       setRenamePlaylistName(currentPl.name);
                       setShowRenamePlaylistModal(true);
                     }}
-                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold border border-white/10 transition active:scale-95"
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition active:scale-95 ${
+                      isLight
+                        ? 'bg-white hover:bg-zinc-50 text-zinc-800 border-zinc-200'
+                        : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-white/10'
+                    }`}
                     title="重命名当前歌单"
                   >
-                    <Edit2 className="w-3.5 h-3.5 text-amber-400" />
+                    <Edit2 className="w-3.5 h-3.5 text-amber-500" />
                     <span>重命名</span>
                   </button>
                 )}
@@ -695,35 +793,45 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                   <button
                     id="btn-export-custom-playlist"
                     onClick={() => setShowExportMenu(prev => !prev)}
-                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold border border-white/10 transition active:scale-95"
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition active:scale-95 ${
+                      isLight
+                        ? 'bg-white hover:bg-zinc-50 text-zinc-800 border-zinc-200'
+                        : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-white/10'
+                    }`}
                     title="导出当前歌单 (M3U8 / JSON 标准格式)"
                   >
-                    <Download className="w-3.5 h-3.5 text-cyan-400" />
+                    <Download className="w-3.5 h-3.5 text-cyan-500" />
                     <span>导出歌单</span>
                   </button>
                   {showExportMenu && (
                     <>
                       <div className="fixed inset-0 z-20" onClick={() => setShowExportMenu(false)} />
-                      <div className="absolute right-0 top-full mt-1.5 w-40 py-1.5 rounded-xl bg-zinc-900 border border-white/10 shadow-2xl z-30 flex flex-col gap-1">
+                      <div className={`absolute right-0 top-full mt-1.5 w-40 py-1.5 rounded-xl border shadow-2xl z-30 flex flex-col gap-1 ${
+                        isLight ? 'bg-white border-zinc-200' : 'bg-zinc-900 border-white/10'
+                      }`}>
                         <button
                           onClick={() => {
                             exportPlaylist('m3u8');
                             setShowExportMenu(false);
                           }}
-                          className="px-3 py-1.5 text-left text-xs text-zinc-200 hover:bg-white/10 hover:text-white flex items-center justify-between"
+                          className={`px-3 py-1.5 text-left text-xs flex items-center justify-between ${
+                            isLight ? 'text-zinc-800 hover:bg-zinc-100' : 'text-zinc-200 hover:bg-white/10 hover:text-white'
+                          }`}
                         >
                           <span>标准 M3U8 格式</span>
-                          <span className="text-[10px] font-mono text-cyan-400">.m3u8</span>
+                          <span className="text-[10px] font-mono text-cyan-500">.m3u8</span>
                         </button>
                         <button
                           onClick={() => {
                             exportPlaylist('json');
                             setShowExportMenu(false);
                           }}
-                          className="px-3 py-1.5 text-left text-xs text-zinc-200 hover:bg-white/10 hover:text-white flex items-center justify-between"
+                          className={`px-3 py-1.5 text-left text-xs flex items-center justify-between ${
+                            isLight ? 'text-zinc-800 hover:bg-zinc-100' : 'text-zinc-200 hover:bg-white/10 hover:text-white'
+                          }`}
                         >
                           <span>结构化 JSON 格式</span>
-                          <span className="text-[10px] font-mono text-amber-400">.json</span>
+                          <span className="text-[10px] font-mono text-amber-500">.json</span>
                         </button>
                       </div>
                     </>
@@ -739,7 +847,11 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                         setSelectedPlaylistId('all');
                       }
                     }}
-                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-300 text-xs font-medium transition"
+                    className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-medium transition ${
+                      isLight
+                        ? 'bg-rose-50 hover:bg-rose-100 border-rose-200 text-rose-600'
+                        : 'bg-rose-500/15 hover:bg-rose-500/25 border-rose-500/30 text-rose-300'
+                    }`}
                     title="删除当前歌单"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -753,9 +865,13 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
       </div>
 
       {/* Global Quick Action Toolbar for current view */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 px-5 py-3 rounded-2xl bg-zinc-900/60 border border-white/5 backdrop-blur-md">
+      <div className={`flex flex-col lg:flex-row lg:items-center justify-between gap-3 px-5 py-3 rounded-2xl border backdrop-blur-md transition-colors ${
+        isLight
+          ? 'bg-white/90 border-zinc-200 shadow-sm'
+          : 'bg-zinc-900/60 border-white/5'
+      }`}>
         <div className="flex items-center gap-2.5 flex-wrap">
-          {/* Unified Dynamic Master Play All Button (Plan B) */}
+          {/* Unified Dynamic Master Play All Button */}
           <button
             id="btn-play-all-current-view"
             disabled={filteredSongs.length === 0}
@@ -771,7 +887,9 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
             }}
             className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-md ${
               filteredSongs.length === 0
-                ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed border border-white/5 opacity-60'
+                ? isLight
+                  ? 'bg-zinc-100 text-zinc-400 border border-zinc-200 cursor-not-allowed opacity-75'
+                  : 'bg-zinc-800 text-zinc-500 cursor-not-allowed border border-white/5 opacity-60'
                 : isCasting
                   ? 'bg-[#FF6700] hover:bg-[#e55c00] text-white shadow-[0_2px_14px_rgba(255,103,0,0.45)] border border-[#FF6700] active:scale-95'
                   : isLight
@@ -788,25 +906,29 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
           >
             {isCasting ? (
               <>
-                <Speaker className={`w-3.5 h-3.5 ${filteredSongs.length > 0 ? 'animate-pulse text-white' : 'text-zinc-500'}`} />
+                <Speaker className={`w-3.5 h-3.5 ${filteredSongs.length > 0 ? 'animate-pulse text-white' : 'text-zinc-400'}`} />
                 <span>投播全部至【{activeDevice?.name ? (activeDevice.name.length > 7 ? activeDevice.name.slice(0, 7) + '…' : activeDevice.name) : '小爱音箱'}】({filteredSongs.length} 首)</span>
               </>
             ) : (
               <>
-                <Play className={`w-3.5 h-3.5 fill-current ${filteredSongs.length === 0 ? 'text-zinc-500' : isLight ? 'text-white' : 'text-zinc-950'}`} />
+                <Play className={`w-3.5 h-3.5 fill-current ${filteredSongs.length === 0 ? 'text-zinc-400' : isLight ? 'text-white' : 'text-zinc-950'}`} />
                 <span>播放全部 ({filteredSongs.length} 首)</span>
               </>
             )}
           </button>
 
           {/* Source Filter Pills */}
-          <div className="flex items-center bg-zinc-800/80 p-1 rounded-xl border border-white/5 text-xs">
+          <div className={`flex items-center p-1 rounded-xl border text-xs ${
+            isLight ? 'bg-zinc-100/90 border-zinc-200' : 'bg-zinc-800/80 border-white/5'
+          }`}>
             <button
               type="button"
               id="btn-source-filter-all"
               onClick={() => setSourceFilter('all')}
               className={`px-2.5 py-1 rounded-lg transition font-medium ${
-                sourceFilter === 'all' ? 'bg-[#FF6700] text-white font-bold shadow-sm' : 'text-zinc-400 hover:text-white'
+                sourceFilter === 'all' 
+                  ? 'bg-[#FF6700] text-white font-bold shadow-sm' 
+                  : isLight ? 'text-zinc-600 hover:text-zinc-950 hover:bg-zinc-200/60' : 'text-zinc-400 hover:text-white'
               }`}
             >
               全部
@@ -816,7 +938,9 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
               id="btn-source-filter-local"
               onClick={() => setSourceFilter('local')}
               className={`px-2.5 py-1 rounded-lg transition font-medium ${
-                sourceFilter === 'local' ? 'bg-[#FF6700] text-white font-bold shadow-sm' : 'text-zinc-400 hover:text-white'
+                sourceFilter === 'local' 
+                  ? 'bg-[#FF6700] text-white font-bold shadow-sm' 
+                  : isLight ? 'text-zinc-600 hover:text-zinc-950 hover:bg-zinc-200/60' : 'text-zinc-400 hover:text-white'
               }`}
             >
               本地音频
@@ -826,7 +950,9 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
               id="btn-source-filter-navidrome"
               onClick={() => setSourceFilter('navidrome')}
               className={`px-2.5 py-1 rounded-lg transition font-medium ${
-                sourceFilter === 'navidrome' ? 'bg-[#FF6700] text-white font-bold shadow-sm' : 'text-zinc-400 hover:text-white'
+                sourceFilter === 'navidrome' 
+                  ? 'bg-[#FF6700] text-white font-bold shadow-sm' 
+                  : isLight ? 'text-zinc-600 hover:text-zinc-950 hover:bg-zinc-200/60' : 'text-zinc-400 hover:text-white'
               }`}
             >
               Navidrome
@@ -836,7 +962,9 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
               id="btn-source-filter-favorites"
               onClick={() => setSourceFilter('favorites')}
               className={`px-2.5 py-1 rounded-lg transition font-medium ${
-                sourceFilter === 'favorites' ? 'bg-[#FF6700] text-white font-bold shadow-sm' : 'text-zinc-400 hover:text-white'
+                sourceFilter === 'favorites' 
+                  ? 'bg-[#FF6700] text-white font-bold shadow-sm' 
+                  : isLight ? 'text-zinc-600 hover:text-zinc-950 hover:bg-zinc-200/60' : 'text-zinc-400 hover:text-white'
               }`}
             >
               收藏
@@ -844,66 +972,83 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
           </div>
 
           {/* Sorting Dropdown */}
-          <div className="flex items-center gap-1 bg-zinc-800/80 px-2.5 py-1.5 rounded-xl border border-white/5 text-xs text-zinc-300">
+          <div className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl border text-xs ${
+            isLight ? 'bg-zinc-100/90 border-zinc-200 text-zinc-700' : 'bg-zinc-800/80 border-white/5 text-zinc-300'
+          }`}>
             <ArrowUpDown className="w-3.5 h-3.5 text-[#FF6700] flex-shrink-0" />
             <select
               value={sortOption}
               onChange={(e) => setSortOption(e.target.value as any)}
-              className="bg-transparent text-xs text-zinc-200 outline-none cursor-pointer pr-1"
+              className={`bg-transparent text-xs outline-none cursor-pointer pr-1 font-medium ${
+                isLight ? 'text-zinc-800' : 'text-zinc-200'
+              }`}
               title="选择列表排序方式"
             >
-              <option value="default" className="bg-zinc-900 text-white">默认顺序</option>
-              <option value="title_asc" className="bg-zinc-900 text-white">歌名 (A-Z)</option>
-              <option value="title_desc" className="bg-zinc-900 text-white">歌名 (Z-A)</option>
-              <option value="artist_asc" className="bg-zinc-900 text-white">歌手 (A-Z)</option>
-              <option value="duration_desc" className="bg-zinc-900 text-white">时长 (长到短)</option>
-              <option value="duration_asc" className="bg-zinc-900 text-white">时长 (短到长)</option>
-              <option value="bitrate_desc" className="bg-zinc-900 text-white">无损母带优先</option>
+              <option value="default" className={isLight ? 'bg-white text-zinc-900' : 'bg-zinc-900 text-white'}>默认顺序</option>
+              <option value="title_asc" className={isLight ? 'bg-white text-zinc-900' : 'bg-zinc-900 text-white'}>歌名 (A-Z)</option>
+              <option value="title_desc" className={isLight ? 'bg-white text-zinc-900' : 'bg-zinc-900 text-white'}>歌名 (Z-A)</option>
+              <option value="artist_asc" className={isLight ? 'bg-white text-zinc-900' : 'bg-zinc-900 text-white'}>歌手 (A-Z)</option>
+              <option value="duration_desc" className={isLight ? 'bg-white text-zinc-900' : 'bg-zinc-900 text-white'}>时长 (长到短)</option>
+              <option value="duration_asc" className={isLight ? 'bg-white text-zinc-900' : 'bg-zinc-900 text-white'}>时长 (短到长)</option>
+              <option value="bitrate_desc" className={isLight ? 'bg-white text-zinc-900' : 'bg-zinc-900 text-white'}>无损母带优先</option>
             </select>
           </div>
 
-          {/* Export Current View Playlist */}
-          {filteredSongs.length > 0 && (
-            <div className="relative">
-              <button
-                id="btn-export-view-playlist"
-                type="button"
-                onClick={() => setShowExportMenu(prev => !prev)}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition border bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-300 border-white/5 active:scale-95"
-                title="导出当前列表为 M3U8 或 JSON 文件"
-              >
-                <Download className="w-3.5 h-3.5 text-cyan-400" />
-                <span>导出歌单</span>
-              </button>
-              {showExportMenu && (
-                <>
-                  <div className="fixed inset-0 z-20" onClick={() => setShowExportMenu(false)} />
-                  <div className="absolute right-0 top-full mt-1.5 w-40 py-1.5 rounded-xl bg-zinc-900 border border-white/10 shadow-2xl z-30 flex flex-col gap-1">
-                    <button
-                      onClick={() => {
-                        exportPlaylist('m3u8');
-                        setShowExportMenu(false);
-                      }}
-                      className="px-3 py-1.5 text-left text-xs text-zinc-200 hover:bg-white/10 hover:text-white flex items-center justify-between"
-                    >
-                      <span>标准 M3U8 歌单</span>
-                      <span className="text-[10px] font-mono text-cyan-400">.m3u8</span>
-                    </button>
-                    <button
-                      onClick={() => {
-                        exportPlaylist('json');
-                        setShowExportMenu(false);
-                      }}
-                      className="px-3 py-1.5 text-left text-xs text-zinc-200 hover:bg-white/10 hover:text-white flex items-center justify-between"
-                    >
-                      <span>元数据 JSON</span>
-                      <span className="text-[10px] font-mono text-amber-400">.json</span>
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
+          {/* Export Current View Playlist - Always kept in toolbar row */}
+          <div className="relative">
+            <button
+              id="btn-export-view-playlist"
+              type="button"
+              disabled={filteredSongs.length === 0}
+              onClick={() => setShowExportMenu(prev => !prev)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition border active:scale-95 ${
+                filteredSongs.length === 0
+                  ? isLight 
+                    ? 'bg-zinc-100 text-zinc-400 border-zinc-200 cursor-not-allowed opacity-60' 
+                    : 'bg-zinc-800/40 text-zinc-600 border-white/5 cursor-not-allowed opacity-50'
+                  : isLight
+                    ? 'bg-zinc-100/90 hover:bg-zinc-200/80 text-zinc-700 border-zinc-200'
+                    : 'bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-300 border-white/5'
+              }`}
+              title={filteredSongs.length === 0 ? "当前列表暂无歌曲可导出" : "导出当前列表为 M3U8 或 JSON 文件"}
+            >
+              <Download className={`w-3.5 h-3.5 ${filteredSongs.length === 0 ? 'text-zinc-400' : 'text-cyan-500'}`} />
+              <span>导出歌单</span>
+            </button>
+            {showExportMenu && filteredSongs.length > 0 && (
+              <>
+                <div className="fixed inset-0 z-20" onClick={() => setShowExportMenu(false)} />
+                <div className={`absolute right-0 top-full mt-1.5 w-40 py-1.5 rounded-xl border shadow-2xl z-30 flex flex-col gap-1 ${
+                  isLight ? 'bg-white border-zinc-200' : 'bg-zinc-900 border-white/10'
+                }`}>
+                  <button
+                    onClick={() => {
+                      exportPlaylist('m3u8');
+                      setShowExportMenu(false);
+                    }}
+                    className={`px-3 py-1.5 text-left text-xs flex items-center justify-between ${
+                      isLight ? 'text-zinc-800 hover:bg-zinc-100' : 'text-zinc-200 hover:bg-white/10 hover:text-white'
+                    }`}
+                  >
+                    <span>标准 M3U8 歌单</span>
+                    <span className="text-[10px] font-mono text-cyan-500">.m3u8</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      exportPlaylist('json');
+                      setShowExportMenu(false);
+                    }}
+                    className={`px-3 py-1.5 text-left text-xs flex items-center justify-between ${
+                      isLight ? 'text-zinc-800 hover:bg-zinc-100' : 'text-zinc-200 hover:bg-white/10 hover:text-white'
+                    }`}
+                  >
+                    <span>元数据 JSON</span>
+                    <span className="text-[10px] font-mono text-amber-500">.json</span>
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
 
           {/* Batch Mode Toggle */}
           <button
@@ -917,14 +1062,20 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
             }}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition border ${
               filteredSongs.length === 0
-                ? 'bg-zinc-800/40 text-zinc-600 border-white/5 cursor-not-allowed opacity-50'
+                ? isLight 
+                  ? 'bg-zinc-100 text-zinc-400 border-zinc-200 cursor-not-allowed opacity-60' 
+                  : 'bg-zinc-800/40 text-zinc-600 border-white/5 cursor-not-allowed opacity-50'
                 : isBatchMode
-                  ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-sm'
-                  : 'bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-300 border-white/5'
+                  ? (isLight 
+                      ? 'bg-cyan-50 text-cyan-700 border-cyan-300 shadow-sm' 
+                      : 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-sm')
+                  : (isLight
+                      ? 'bg-zinc-100/90 hover:bg-zinc-200/80 text-zinc-700 border-zinc-200'
+                      : 'bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-300 border-white/5')
             }`}
             title={filteredSongs.length === 0 ? "暂无歌曲可批量管理" : "批量多选操作歌曲"}
           >
-            <CheckSquare className="w-3.5 h-3.5 text-cyan-400" />
+            <CheckSquare className="w-3.5 h-3.5 text-cyan-500" />
             <span>{isBatchMode ? '退出批量' : '批量管理'}</span>
           </button>
 
@@ -946,22 +1097,30 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
           )}
         </div>
 
-        <div className="text-xs text-zinc-400 flex items-center gap-2">
-          <span>列表共 <strong className="text-white font-mono">{filteredSongs.length}</strong> 首</span>
-          {searchQuery && <span className="text-amber-400 font-mono">(匹配 "{searchQuery}")</span>}
+        <div className={`text-xs flex items-center gap-2 ${isLight ? 'text-zinc-600' : 'text-zinc-400'}`}>
+          <span>列表共 <strong className={`font-mono ${isLight ? 'text-zinc-900' : 'text-white'}`}>{filteredSongs.length}</strong> 首</span>
+          {searchQuery && <span className="text-amber-500 font-mono">(匹配 "{searchQuery}")</span>}
         </div>
       </div>
 
       {/* Songs Table with Immersive UI Styling */}
-      <div className="bg-zinc-900/40 backdrop-blur-md border border-white/5 rounded-3xl overflow-hidden shadow-2xl">
-        <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between text-xs text-zinc-400 font-medium">
+      <div className={`border rounded-3xl overflow-hidden shadow-2xl transition-colors ${
+        isLight
+          ? 'bg-white/90 border-zinc-200 shadow-[0_10px_30px_rgba(0,0,0,0.05)]'
+          : 'bg-zinc-900/40 backdrop-blur-md border-white/5'
+      }`}>
+        <div className={`px-6 py-4 border-b flex items-center justify-between text-xs font-medium ${
+          isLight ? 'border-zinc-200 text-zinc-500 bg-zinc-50/60' : 'border-white/5 text-zinc-400'
+        }`}>
           <div className="flex items-center gap-4">
             {isBatchMode ? (
               <button
                 id="btn-batch-toggle-all"
                 type="button"
                 onClick={handleToggleSelectAll}
-                className="w-6 flex items-center justify-center text-zinc-400 hover:text-white transition"
+                className={`w-6 flex items-center justify-center transition ${
+                  isLight ? 'text-zinc-500 hover:text-zinc-900' : 'text-zinc-400 hover:text-white'
+                }`}
                 title={isAllSelected ? "取消全选" : "全选当前筛选结果"}
               >
                 {isAllSelected ? <CheckSquare className="w-4 h-4 text-[#FF6700]" /> : <Square className="w-4 h-4" />}
@@ -970,24 +1129,24 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
               <span className="w-6 text-center">#</span>
             )}
             <div className="flex items-center gap-2">
-              <span className="text-[10px] uppercase tracking-[0.15em] text-zinc-500 font-bold">Track & Artist</span>
-              <span className="text-[10px] text-zinc-500 font-normal hidden sm:inline">
+              <span className="text-[10px] uppercase tracking-[0.15em] font-bold">Track & Artist</span>
+              <span className="text-[10px] font-normal hidden sm:inline opacity-80">
                 {isBatchMode ? '(点击行或勾选框选择)' : '(单击选中 · 双击播放)'}
               </span>
             </div>
           </div>
           <div className="flex items-center gap-8">
-            <span className="hidden md:inline text-[10px] uppercase tracking-[0.15em] text-zinc-500 font-bold">Audio Quality</span>
-            <span className="hidden sm:inline text-[10px] uppercase tracking-[0.15em] text-zinc-500 font-bold">Time</span>
-            <span className="text-right text-[10px] uppercase tracking-[0.15em] text-zinc-500 font-bold">Actions & Cast</span>
+            <span className="hidden md:inline text-[10px] uppercase tracking-[0.15em] font-bold">Audio Quality</span>
+            <span className="hidden sm:inline text-[10px] uppercase tracking-[0.15em] font-bold">Time</span>
+            <span className="text-right text-[10px] uppercase tracking-[0.15em] font-bold">Actions & Cast</span>
           </div>
         </div>
 
-        <div className="divide-y divide-white/5">
+        <div className={`divide-y ${isLight ? 'divide-zinc-200/80' : 'divide-white/5'}`}>
           {filteredSongs.length === 0 ? (
-            <div className="py-16 text-center text-zinc-500">
-              <Music className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p className="text-sm font-medium text-zinc-300">
+            <div className="py-16 text-center">
+              <Music className={`w-12 h-12 mx-auto mb-3 ${isLight ? 'text-zinc-300' : 'text-zinc-600 opacity-40'}`} />
+              <p className={`text-sm font-semibold ${isLight ? 'text-zinc-800' : 'text-zinc-300'}`}>
                 {sourceFilter === 'navidrome'
                   ? 'Navidrome 音乐库中暂无歌曲'
                   : sourceFilter === 'local'
@@ -998,7 +1157,7 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                         ? `未找到与 "${searchQuery}" 匹配的歌曲`
                         : '没有找到符合条件的音乐'}
               </p>
-              <p className="text-xs text-zinc-500 mt-1 max-w-md mx-auto">
+              <p className={`text-xs mt-1 max-w-md mx-auto leading-relaxed ${isLight ? 'text-zinc-500' : 'text-zinc-400'}`}>
                 {sourceFilter === 'navidrome'
                   ? '可前往右上角设置面板配置并一键同步 Navidrome 歌曲，或点击下方切换回全部/本地音频'
                   : sourceFilter === 'favorites'
@@ -1007,12 +1166,16 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                       ? '请尝试检查错别字或缩短搜索关键词'
                       : '请尝试更换筛选条件，或点击上方“导入/上传音乐”添加本地音频'}
               </p>
-              <div className="mt-4 flex items-center justify-center gap-2 flex-wrap">
+              <div className="mt-5 flex items-center justify-center gap-2.5 flex-wrap">
                 {sourceFilter !== 'all' && (
                   <button
                     type="button"
                     onClick={() => setSourceFilter('all')}
-                    className="px-3.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium transition border border-white/10"
+                    className={`px-4 py-2 rounded-xl text-xs font-semibold transition border shadow-sm ${
+                      isLight
+                        ? 'bg-zinc-900 hover:bg-zinc-800 text-white border-zinc-900'
+                        : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-white/10'
+                    }`}
                   >
                     查看全部歌曲
                   </button>
@@ -1021,9 +1184,22 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                   <button
                     type="button"
                     onClick={() => setSearchQuery('')}
-                    className="px-3.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium transition border border-white/10"
+                    className={`px-4 py-2 rounded-xl text-xs font-semibold transition border shadow-sm ${
+                      isLight
+                        ? 'bg-zinc-100 hover:bg-zinc-200 text-zinc-800 border-zinc-200'
+                        : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-white/10'
+                    }`}
                   >
                     清除搜索关键词
+                  </button>
+                )}
+                {sourceFilter === 'navidrome' && onOpenNavidromeModal && (
+                  <button
+                    type="button"
+                    onClick={onOpenNavidromeModal}
+                    className="px-4 py-2 rounded-xl text-xs font-bold transition bg-[#FF6700] hover:bg-[#e55c00] text-white shadow-sm"
+                  >
+                    同步 Navidrome 音乐
                   </button>
                 )}
               </div>
@@ -1070,7 +1246,9 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                       ? 'bg-cyan-500/10 hover:bg-cyan-500/15 border-l-2 border-l-cyan-400'
                       : isSelected 
                         ? 'bg-[#FF6700]/10 hover:bg-[#FF6700]/15 border-l-2 border-l-[#FF6700]' 
-                        : 'hover:bg-white/5 border-l-2 border-l-transparent'
+                        : isLight
+                          ? 'hover:bg-zinc-100/80 border-l-2 border-l-transparent'
+                          : 'hover:bg-white/5 border-l-2 border-l-transparent'
                   }`}
                 >
                   {/* Left: Index / Play button / Checkbox & Song Details */}
@@ -1087,9 +1265,9 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                           className="cursor-pointer p-1"
                         >
                           {isBatchChecked ? (
-                            <CheckSquare className="w-4 h-4 text-cyan-400" />
+                            <CheckSquare className="w-4 h-4 text-cyan-500" />
                           ) : (
-                            <Square className="w-4 h-4 text-zinc-500 hover:text-zinc-300" />
+                            <Square className={`w-4 h-4 ${isLight ? 'text-zinc-400 hover:text-zinc-600' : 'text-zinc-500 hover:text-zinc-300'}`} />
                           )}
                         </div>
                       ) : isCurrent && isPlaying ? (
@@ -1106,7 +1284,11 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                             setSelectedSongId(song.id);
                             onPlaySong(song);
                           }}
-                          className="w-7 h-7 rounded-full flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/20 group-hover:text-white transition"
+                          className={`w-7 h-7 rounded-full flex items-center justify-center transition ${
+                            isLight
+                              ? 'text-zinc-500 hover:text-zinc-900 hover:bg-zinc-200 group-hover:text-zinc-900'
+                              : 'text-zinc-400 hover:text-white hover:bg-white/20 group-hover:text-white'
+                          }`}
                           title="播放"
                         >
                           <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
@@ -1115,7 +1297,9 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                     </div>
 
                     {/* Album Cover */}
-                    <div className="relative w-12 h-12 rounded-lg overflow-hidden flex-shrink-0 shadow border border-white/10">
+                    <div className={`relative w-12 h-12 rounded-lg overflow-hidden flex-shrink-0 shadow border ${
+                      isLight ? 'border-zinc-200' : 'border-white/10'
+                    }`}>
                       <img 
                         src={song.coverUrl} 
                         alt={song.title}
@@ -1134,20 +1318,24 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                         <span className={`text-sm font-semibold truncate ${
                           isSelected 
                             ? 'text-[#FF6700]' 
-                            : 'text-zinc-100 group-hover:text-white'
+                            : isLight 
+                              ? 'text-zinc-900 group-hover:text-zinc-950' 
+                              : 'text-zinc-100 group-hover:text-white'
                         }`}>
                           {song.title}
                         </span>
                         {song.source === 'uploaded' && (
-                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
                             本地自制
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-2 text-xs text-zinc-400 truncate mt-0.5">
+                      <div className={`flex items-center gap-2 text-xs truncate mt-0.5 ${
+                        isLight ? 'text-zinc-500' : 'text-zinc-400'
+                      }`}>
                         <span className="truncate">{song.artist}</span>
                         <span>·</span>
-                        <span className="truncate text-zinc-500">{song.album}</span>
+                        <span className={`truncate ${isLight ? 'text-zinc-400' : 'text-zinc-500'}`}>{song.album}</span>
                       </div>
                     </div>
                   </div>
@@ -1157,16 +1345,16 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                     
                     {/* Bitrate badge */}
                     <div className="hidden md:flex flex-col items-end text-right">
-                      <span className="text-xs font-mono font-medium text-zinc-300">
+                      <span className={`text-xs font-mono font-medium ${isLight ? 'text-zinc-700' : 'text-zinc-300'}`}>
                         {song.bitrate || 'FLAC 96kHz'}
                       </span>
-                      <span className="text-[10px] text-zinc-500 font-mono">
+                      <span className={`text-[10px] font-mono ${isLight ? 'text-zinc-400' : 'text-zinc-500'}`}>
                         {song.fileSize || '24.1 MB'}
                       </span>
                     </div>
 
                     {/* Duration */}
-                    <span className="hidden sm:inline text-xs font-mono text-zinc-400">
+                    <span className={`hidden sm:inline text-xs font-mono ${isLight ? 'text-zinc-600' : 'text-zinc-400'}`}>
                       {formatTime(song.duration)}
                     </span>
 
@@ -1177,7 +1365,9 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                         e.stopPropagation();
                         onToggleFavorite(song.id);
                       }}
-                      className="p-1.5 text-zinc-500 hover:text-rose-500 transition"
+                      className={`p-1.5 transition ${
+                        isLight ? 'text-zinc-400 hover:text-rose-500' : 'text-zinc-500 hover:text-rose-500'
+                      }`}
                       title={song.isFavorite ? '取消收藏' : '添加到我喜欢'}
                     >
                       <Heart className={`w-4 h-4 ${song.isFavorite ? 'fill-rose-500 text-rose-500' : ''}`} />
@@ -1190,7 +1380,11 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                         e.stopPropagation();
                         setSongToAddToPlaylist(song);
                       }}
-                      className="p-1.5 text-zinc-400 hover:text-[#FF6700] hover:bg-white/5 rounded-lg transition"
+                      className={`p-1.5 rounded-lg transition ${
+                        isLight
+                          ? 'text-zinc-400 hover:text-[#FF6700] hover:bg-zinc-200/70'
+                          : 'text-zinc-400 hover:text-[#FF6700] hover:bg-white/5'
+                      }`}
                       title="加入指定歌单"
                     >
                       <FolderPlus className="w-4 h-4" />
@@ -1204,7 +1398,7 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                           e.stopPropagation();
                           onToggleSongInPlaylist(song.id, selectedPlaylistId);
                         }}
-                        className="p-1.5 text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition"
+                        className="p-1.5 text-zinc-500 hover:text-rose-500 hover:bg-rose-500/10 rounded-lg transition"
                         title="从当前歌单移除"
                       >
                         <FolderMinus className="w-4 h-4" />
@@ -1219,7 +1413,11 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                           e.stopPropagation();
                           onInspectSong(song);
                         }}
-                        className="p-1.5 text-zinc-400 hover:text-cyan-400 hover:bg-cyan-500/10 rounded-lg transition"
+                        className={`p-1.5 rounded-lg transition ${
+                          isLight
+                            ? 'text-zinc-400 hover:text-cyan-600 hover:bg-cyan-50'
+                            : 'text-zinc-400 hover:text-cyan-400 hover:bg-cyan-500/10'
+                        }`}
                         title="查看无损规格与音频指标"
                       >
                         <Cpu className="w-4 h-4" />
@@ -1258,11 +1456,15 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
 
         {/* Pagination Bar */}
         {totalItems > 0 && (
-          <div className="px-6 py-4 bg-zinc-950/40 border-t border-white/5 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-zinc-400">
+          <div className={`px-6 py-4 border-t flex flex-col sm:flex-row items-center justify-between gap-4 text-xs ${
+            isLight
+              ? 'bg-zinc-50 border-zinc-200 text-zinc-600'
+              : 'bg-zinc-950/40 border-white/5 text-zinc-400'
+          }`}>
             {/* Range & Count */}
             <div className="flex items-center gap-2">
               <span>
-                显示第 <strong className="text-zinc-200">{(validCurrentPage - 1) * pageSize + 1}</strong> - <strong className="text-zinc-200">{Math.min(validCurrentPage * pageSize, totalItems)}</strong> 首，共 <strong className="text-[#FF6700]">{totalItems}</strong> 首歌曲
+                显示第 <strong className={isLight ? 'text-zinc-900 font-semibold' : 'text-zinc-200'}>{(validCurrentPage - 1) * pageSize + 1}</strong> - <strong className={isLight ? 'text-zinc-900 font-semibold' : 'text-zinc-200'}>{Math.min(validCurrentPage * pageSize, totalItems)}</strong> 首，共 <strong className="text-[#FF6700] font-semibold">{totalItems}</strong> 首歌曲
               </span>
             </div>
 
@@ -1272,7 +1474,11 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                 id="btn-page-first"
                 onClick={() => setCurrentPage(1)}
                 disabled={validCurrentPage === 1}
-                className="p-1.5 rounded-lg bg-zinc-900 border border-white/5 hover:bg-zinc-800 disabled:opacity-30 disabled:pointer-events-none text-zinc-300 transition"
+                className={`p-1.5 rounded-lg border disabled:opacity-30 disabled:pointer-events-none transition ${
+                  isLight
+                    ? 'bg-white border-zinc-200 hover:bg-zinc-100 text-zinc-700'
+                    : 'bg-zinc-900 border-white/5 hover:bg-zinc-800 text-zinc-300'
+                }`}
                 title="首页"
               >
                 <ChevronsLeft className="w-4 h-4" />
@@ -1282,7 +1488,11 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                 id="btn-page-prev"
                 onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                 disabled={validCurrentPage === 1}
-                className="p-1.5 rounded-lg bg-zinc-900 border border-white/5 hover:bg-zinc-800 disabled:opacity-30 disabled:pointer-events-none text-zinc-300 transition"
+                className={`p-1.5 rounded-lg border disabled:opacity-30 disabled:pointer-events-none transition ${
+                  isLight
+                    ? 'bg-white border-zinc-200 hover:bg-zinc-100 text-zinc-700'
+                    : 'bg-zinc-900 border-white/5 hover:bg-zinc-800 text-zinc-300'
+                }`}
                 title="上一页"
               >
                 <ChevronLeft className="w-4 h-4" />
@@ -1291,7 +1501,7 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
               <div className="flex items-center gap-1">
                 {pageNumbers.map((p, idx) => {
                   if (p === '...') {
-                    return <span key={`ellipsis-${idx}`} className="px-1.5 text-zinc-600">...</span>;
+                    return <span key={`ellipsis-${idx}`} className={`px-1.5 ${isLight ? 'text-zinc-400' : 'text-zinc-600'}`}>...</span>;
                   }
                   const pageNum = p as number;
                   const isActive = pageNum === validCurrentPage;
@@ -1303,7 +1513,9 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                       className={`min-w-[32px] h-8 px-2 rounded-lg text-xs font-semibold transition ${
                         isActive
                           ? 'bg-[#FF6700] text-white shadow-[0_0_10px_rgba(255,103,0,0.4)]'
-                          : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-white/5'
+                          : isLight
+                            ? 'bg-white hover:bg-zinc-100 text-zinc-700 border border-zinc-200'
+                            : 'bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-white/5'
                       }`}
                     >
                       {pageNum}
@@ -1316,7 +1528,11 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                 id="btn-page-next"
                 onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                 disabled={validCurrentPage === totalPages}
-                className="p-1.5 rounded-lg bg-zinc-900 border border-white/5 hover:bg-zinc-800 disabled:opacity-30 disabled:pointer-events-none text-zinc-300 transition"
+                className={`p-1.5 rounded-lg border disabled:opacity-30 disabled:pointer-events-none transition ${
+                  isLight
+                    ? 'bg-white border-zinc-200 hover:bg-zinc-100 text-zinc-700'
+                    : 'bg-zinc-900 border-white/5 hover:bg-zinc-800 text-zinc-300'
+                }`}
                 title="下一页"
               >
                 <ChevronRight className="w-4 h-4" />
@@ -1326,7 +1542,11 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                 id="btn-page-last"
                 onClick={() => setCurrentPage(totalPages)}
                 disabled={validCurrentPage === totalPages}
-                className="p-1.5 rounded-lg bg-zinc-900 border border-white/5 hover:bg-zinc-800 disabled:opacity-30 disabled:pointer-events-none text-zinc-300 transition"
+                className={`p-1.5 rounded-lg border disabled:opacity-30 disabled:pointer-events-none transition ${
+                  isLight
+                    ? 'bg-white border-zinc-200 hover:bg-zinc-100 text-zinc-700'
+                    : 'bg-zinc-900 border-white/5 hover:bg-zinc-800 text-zinc-300'
+                }`}
                 title="末页"
               >
                 <ChevronsRight className="w-4 h-4" />
@@ -1343,7 +1563,11 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                   setPageSize(Number(e.target.value));
                   setCurrentPage(1);
                 }}
-                className="bg-zinc-900 border border-white/10 rounded-lg px-2 py-1 text-xs text-zinc-200 focus:outline-none focus:border-[#FF6700] transition"
+                className={`border rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-[#FF6700] transition ${
+                  isLight
+                    ? 'bg-white border-zinc-300 text-zinc-800'
+                    : 'bg-zinc-900 border-white/10 text-zinc-200'
+                }`}
               >
                 <option value={15}>15 条/页</option>
                 <option value={30}>30 条/页</option>
