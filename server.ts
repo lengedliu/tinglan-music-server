@@ -2783,6 +2783,38 @@ app.delete('/api/songs/:id', (req: Request, res: Response) => {
   res.status(404).json({ error: 'Song not found' });
 });
 
+// Clear all songs from library
+app.delete('/api/songs', (req: Request, res: Response) => {
+  const count = storedSongs.length;
+  storedSongs = [];
+  saveJson(SONGS_FILE, storedSongs);
+
+  // Also clear song references from playlists so playlists don't reference ghost songIds
+  let playlistsModified = false;
+  for (const pl of storedPlaylists) {
+    if (pl.songIds && pl.songIds.length > 0) {
+      pl.songIds = [];
+      playlistsModified = true;
+    }
+  }
+  if (playlistsModified) {
+    saveJson(PLAYLISTS_FILE, storedPlaylists);
+  }
+
+  castLogs.unshift({
+    id: `log-${Date.now()}`,
+    timestamp: new Date().toLocaleTimeString(),
+    type: 'sync',
+    message: `已清空曲库全部歌曲`,
+    detail: `共清除 ${count} 首歌曲记录与歌单关联`,
+    success: true
+  });
+  if (castLogs.length > 50) castLogs.pop();
+
+  console.log(`[MusicLibrary] 🗑️ 已清空曲库全部歌曲，共 ${count} 首`);
+  res.json({ success: true, message: `已清空全部 ${count} 首歌曲`, count });
+});
+
 // Toggle Favorite
 app.post('/api/songs/:id/favorite', (req: Request, res: Response) => {
   const { id } = req.params;

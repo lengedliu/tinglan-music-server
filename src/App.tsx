@@ -1395,6 +1395,38 @@ export default function App() {
     showToast('歌单已删除', `歌单《${targetPl?.name || ''}》已成功移除`, 'info');
   };
 
+  const handleClearAllSongs = async () => {
+    try {
+      const res = await apiFetch('/api/songs', { method: 'DELETE' });
+      const data = await res.json();
+      if (data.success) {
+        setSongs([]);
+        setPlayQueue([]);
+        setPlaylists(prev => prev.map(p => ({ ...p, songIds: [] })));
+        if (isPlaying) {
+          setIsPlaying(false);
+          if (audioRef.current) audioRef.current.pause();
+        }
+        setCurrentSong(null);
+        setCurrentTime(0);
+        showToast('曲库已清空', `成功清除 ${data.count || 0} 首歌曲及播放队列`, 'success');
+        return;
+      }
+    } catch (e) {
+      console.error('Clear all songs error:', e);
+    }
+    setSongs([]);
+    setPlayQueue([]);
+    setPlaylists(prev => prev.map(p => ({ ...p, songIds: [] })));
+    if (isPlaying) {
+      setIsPlaying(false);
+      if (audioRef.current) audioRef.current.pause();
+    }
+    setCurrentSong(null);
+    setCurrentTime(0);
+    showToast('曲库已清空', '已重置本地曲库列表', 'info');
+  };
+
   const handleAddDevice = async (newDev: { name: string; ip: string; did?: string; model?: string; hardware?: string; token?: string }) => {
     try {
       const res = await apiFetch('/api/miot/devices', {
@@ -1585,6 +1617,7 @@ export default function App() {
               onCreatePlaylist={handleCreatePlaylist}
               onToggleSongInPlaylist={handleToggleSongInPlaylist}
               onDeletePlaylist={handleDeletePlaylist}
+              onClearAllSongs={handleClearAllSongs}
               onOpenNavidromeModal={() => setIsNavidromeModalOpen(true)}
             />
           )}

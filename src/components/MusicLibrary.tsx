@@ -17,6 +17,7 @@ import {
   Sparkles, 
   Check, 
   Trash2,
+  AlertTriangle,
   X,
   SlidersHorizontal,
   Clock,
@@ -52,6 +53,7 @@ interface MusicLibraryProps {
   onCreatePlaylist: (name: string, description: string) => void;
   onToggleSongInPlaylist?: (songId: string, playlistId: string) => void;
   onDeletePlaylist?: (playlistId: string) => void;
+  onClearAllSongs?: () => void;
   onOpenNavidromeModal?: () => void;
 }
 
@@ -73,6 +75,7 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
   onCreatePlaylist,
   onToggleSongInPlaylist,
   onDeletePlaylist,
+  onClearAllSongs,
   onOpenNavidromeModal
 }) => {
   const { themeConfig } = useTheme();
@@ -91,6 +94,8 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
   const [showBatchAddModal, setShowBatchAddModal] = useState(false);
   const [inlineNewPlaylistName, setInlineNewPlaylistName] = useState('');
   const [batchSearchQuery, setBatchSearchQuery] = useState('');
+  const [showClearConfirmModal, setShowClearConfirmModal] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -601,6 +606,23 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                 </>
               )}
             </button>
+
+            {/* Clear All Songs button - only displayed in "全部歌曲" view */}
+            {selectedPlaylistId === 'all' && onClearAllSongs && songs.length > 0 && (
+              <button
+                id="btn-clear-all-songs"
+                onClick={() => setShowClearConfirmModal(true)}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all active:scale-95 border ${
+                  isLight
+                    ? 'bg-rose-50 hover:bg-rose-100 text-rose-600 border-rose-200 hover:border-rose-300'
+                    : 'bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border-rose-500/20 hover:border-rose-500/40'
+                }`}
+                title="清空曲库中的所有歌曲"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>清除所有歌曲</span>
+              </button>
+            )}
           </div>
 
           <div className="text-xs text-zinc-400 flex items-center gap-2">
@@ -1191,6 +1213,66 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
           </div>
         );
       })()}
+
+      {/* Confirmation Modal for Clearing All Songs */}
+      {showClearConfirmModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className={`w-full max-w-md rounded-2xl p-6 border shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150 ${
+            isLight ? 'bg-white border-zinc-200 text-zinc-900' : 'bg-zinc-900 border-white/10 text-white'
+          }`}>
+            <div className="flex items-start gap-4">
+              <div className="w-10 h-10 rounded-xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center flex-shrink-0 text-rose-500">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="text-base font-bold text-rose-500">确认清除所有歌曲？</h3>
+                <p className={`text-xs mt-1 leading-relaxed ${isLight ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                  此操作将从曲库中移除全部 <strong className="text-rose-500 font-mono font-bold">{songs.length}</strong> 首歌曲记录及对应歌单关联，同时重置当前播放队列。
+                </p>
+                <div className={`mt-3 p-3 rounded-xl text-[11px] leading-normal border ${
+                  isLight ? 'bg-zinc-50 border-zinc-200 text-zinc-600' : 'bg-zinc-800/60 border-white/5 text-zinc-400'
+                }`}>
+                  💡 提示：本地挂载目录中的音频源文件不会受损，您随时可以再次点击【扫描挂载目录】或重新同步 Navidrome 导入。
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                disabled={isClearing}
+                onClick={() => setShowClearConfirmModal(false)}
+                className={`px-4 py-2 rounded-xl text-xs font-semibold transition border ${
+                  isLight 
+                    ? 'bg-zinc-100 hover:bg-zinc-200 text-zinc-700 border-zinc-200' 
+                    : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-white/5'
+                }`}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                disabled={isClearing}
+                onClick={async () => {
+                  if (onClearAllSongs) {
+                    setIsClearing(true);
+                    try {
+                      await onClearAllSongs();
+                    } finally {
+                      setIsClearing(false);
+                      setShowClearConfirmModal(false);
+                    }
+                  }
+                }}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 active:scale-95 text-white transition disabled:opacity-50 shadow-md shadow-rose-600/20"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isClearing ? '正在清除...' : '确认清除全部歌曲'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
