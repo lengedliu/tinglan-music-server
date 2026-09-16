@@ -1,0 +1,185 @@
+{
+  "enabled": true,
+  "pollIntervalMs": 3000,
+  "ttsFeedbackEnabled": true,
+  "rules": [
+    {
+      "id": "rule_control_resume",
+      "name": "语音继续播放/恢复",
+      "triggerPhrases": [
+        "继续播放",
+        "恢复播放",
+        "继续放",
+        "开始播放",
+        "继续放歌",
+        "接着放",
+        "接着唱"
+      ],
+      "actionType": "control_command",
+      "controlAction": "resume",
+      "ttsFeedback": "好的，继续播放",
+      "enabled": true
+    },
+    {
+      "id": "rule_control_pause",
+      "name": "语音暂停/停止",
+      "triggerPhrases": [
+        "暂停音乐",
+        "别放了",
+        "先别唱了",
+        "停止播放",
+        "闭嘴",
+        "暂停",
+        "停止",
+        "安静",
+        "别播了"
+      ],
+      "actionType": "control_command",
+      "controlAction": "pause",
+      "ttsFeedback": "已暂停",
+      "enabled": true
+    },
+    {
+      "id": "rule_control_next",
+      "name": "语音切歌 (下一首)",
+      "triggerPhrases": [
+        "切歌",
+        "换一首",
+        "不要这首",
+        "下一曲",
+        "下一首",
+        "下个歌",
+        "跳过这首",
+        "下一个"
+      ],
+      "actionType": "control_command",
+      "controlAction": "next",
+      "ttsFeedback": "好的，下一首",
+      "enabled": true
+    },
+    {
+      "id": "rule_control_prev",
+      "name": "语音切歌 (上一首)",
+      "triggerPhrases": [
+        "上一首",
+        "上一曲",
+        "重播上一首",
+        "回到上一首",
+        "上一个歌",
+        "上一个"
+      ],
+      "actionType": "control_command",
+      "controlAction": "prev",
+      "ttsFeedback": "好的，上一首",
+      "enabled": true
+    },
+    {
+      "id": "rule_control_volume_up",
+      "name": "调大音量",
+      "triggerPhrases": [
+        "调大音量",
+        "大点声",
+        "声音大一点",
+        "大声一点",
+        "音量加",
+        "加大音量",
+        "大点声音",
+        "调高音量"
+      ],
+      "actionType": "control_command",
+      "controlAction": "volume_up",
+      "ttsFeedback": "音量已调大",
+      "enabled": true
+    },
+    {
+      "id": "rule_control_volume_down",
+      "name": "调小音量",
+      "triggerPhrases": [
+        "调小音量",
+        "小点声",
+        "声音小一点",
+        "小声一点",
+        "音量减",
+        "减小音量",
+        "小点声音",
+        "调低音量"
+      ],
+      "actionType": "control_command",
+      "controlAction": "volume_down",
+      "ttsFeedback": "音量已调小",
+      "enabled": true
+    },
+    {
+      "id": "rule_play_favorites",
+      "name": "播放我喜欢的音乐",
+      "triggerPhrases": [
+        "播放收藏",
+        "放我喜欢的歌",
+        "我喜欢的歌",
+        "播放我喜欢",
+        "放收藏",
+        "听我喜欢的歌",
+        "放我喜欢的音乐",
+        "播放红心歌曲"
+      ],
+      "actionType": "play_playlist",
+      "targetPlaylistId": "favorites",
+      "ttsFeedback": "好的，为您播放喜欢的音乐",
+      "enabled": true
+    },
+    {
+      "id": "rule_play_random",
+      "name": "随机播放全部",
+      "triggerPhrases": [
+        "随便放点歌",
+        "随机播放",
+        "随心听",
+        "随便听听",
+        "随便放首歌",
+        "来点音乐",
+        "随便放",
+        "随便播",
+        "随便放点"
+      ],
+      "actionType": "play_random_all",
+      "ttsFeedback": "好的，为您随机播放音乐",
+      "enabled": true
+    },
+    {
+      "id": "rule_play_default_playlist",
+      "name": "播放当前/默认歌单",
+      "triggerPhrases": [
+        "播放本地歌单",
+        "放本地歌",
+        "播放私房歌",
+        "播放我的歌单",
+        "播放默认歌单",
+        "放歌单"
+      ],
+      "actionType": "play_playlist",
+      "targetPlaylistId": "default",
+      "ttsFeedback": "好的，正在播放歌单",
+      "enabled": true
+    },
+    {
+      "id": "rule_search_song",
+      "name": "智能搜歌点歌",
+      "triggerPhrases": [
+        "点歌",
+        "来一首",
+        "放一首",
+        "我想听",
+        "播放歌曲",
+        "来首",
+        "放首",
+        "听",
+        "放",
+        "播",
+        "搜"
+      ],
+      "actionType": "play_song_search",
+      "ttsFeedback": "好的，为您播放 {title}",
+      "enabled": true
+    }
+  ]
+}

@@ -29,9 +29,15 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Speaker,
-  Laptop
+  Laptop,
+  CheckSquare,
+  Square,
+  ArrowUpDown,
+  Edit2,
+  Download,
+  Cpu
 } from 'lucide-react';
-import { Song, Playlist, XiaomiDevice } from '../types';
+import { Song, Playlist, XiaomiDevice, SongSortOption, LibrarySourceFilter } from '../types';
 import { formatTime } from '../utils/lyricParser';
 import { useTheme } from '../context/ThemeContext';
 
@@ -53,8 +59,15 @@ interface MusicLibraryProps {
   onCreatePlaylist: (name: string, description: string) => void;
   onToggleSongInPlaylist?: (songId: string, playlistId: string) => void;
   onDeletePlaylist?: (playlistId: string) => void;
+  onRenamePlaylist?: (playlistId: string, newName: string) => void;
   onClearAllSongs?: () => void;
   onOpenNavidromeModal?: () => void;
+  onBatchPlay?: (songs: Song[]) => void;
+  onBatchCast?: (songs: Song[]) => void;
+  onBatchAddToQueue?: (songs: Song[]) => void;
+  onBatchAddToPlaylist?: (songIds: string[], playlistId: string) => void;
+  onBatchRemoveFromPlaylist?: (songIds: string[], playlistId: string) => void;
+  onInspectSong?: (song: Song) => void;
 }
 
 export const MusicLibrary: React.FC<MusicLibraryProps> = ({
@@ -75,8 +88,15 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
   onCreatePlaylist,
   onToggleSongInPlaylist,
   onDeletePlaylist,
+  onRenamePlaylist,
   onClearAllSongs,
-  onOpenNavidromeModal
+  onOpenNavidromeModal,
+  onBatchPlay,
+  onBatchCast,
+  onBatchAddToQueue,
+  onBatchAddToPlaylist,
+  onBatchRemoveFromPlaylist,
+  onInspectSong
 }) => {
   const { themeConfig } = useTheme();
   const isLight = !!themeConfig?.isLight;
@@ -84,6 +104,15 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string>('all');
   const [selectedGenre, setSelectedGenre] = useState<string>('all');
+  const [sortOption, setSortOption] = useState<SongSortOption>('default');
+  const [sourceFilter, setSourceFilter] = useState<LibrarySourceFilter>('all');
+  const [isBatchMode, setIsBatchMode] = useState<boolean>(false);
+  const [selectedBatchSongIds, setSelectedBatchSongIds] = useState<Set<string>>(new Set());
+  const [showRenamePlaylistModal, setShowRenamePlaylistModal] = useState<boolean>(false);
+  const [renamePlaylistId, setRenamePlaylistId] = useState<string>('');
+  const [renamePlaylistName, setRenamePlaylistName] = useState<string>('');
+  const [showBatchPlaylistDropdown, setShowBatchPlaylistDropdown] = useState<boolean>(false);
+  const [showExportMenu, setShowExportMenu] = useState<boolean>(false);
   
   // Modal states
   const [showNewPlaylistModal, setShowNewPlaylistModal] = useState(false);
@@ -162,7 +191,7 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
   // Reset page to 1 when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedPlaylistId, selectedGenre, searchQuery]);
+  }, [selectedPlaylistId, selectedGenre, searchQuery, sourceFilter, sortOption]);
 
   // Extract all distinct genres
   const genres = useMemo(() => {
@@ -173,15 +202,24 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
     return ['all', ...Array.from(set)];
   }, [songs]);
 
-  // Filter songs
+  // Filter & Sort songs
   const filteredSongs = useMemo(() => {
-    return songs.filter(song => {
+    let result = songs.filter(song => {
       // Playlist filter
       if (selectedPlaylistId === 'favorites') {
         if (!song.isFavorite) return false;
       } else if (selectedPlaylistId !== 'all') {
         const pl = playlists.find(p => p.id === selectedPlaylistId);
         if (pl && !pl.songIds.includes(song.id)) return false;
+      }
+
+      // Source filter
+      if (sourceFilter === 'local') {
+        if (song.id.startsWith('navidrome-') || (song.url && song.url.includes('/rest/stream'))) return false;
+      } else if (sourceFilter === 'navidrome') {
+        if (!song.id.startsWith('navidrome-') && (!song.url || !song.url.includes('/rest/stream'))) return false;
+      } else if (sourceFilter === 'favorites') {
+        if (!song.isFavorite) return false;
       }
 
       // Genre filter
@@ -202,7 +240,100 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
 
       return true;
     });
-  }, [songs, playlists, selectedPlaylistId, selectedGenre, searchQuery]);
+
+    // Multi-criteria sorting
+    if (sortOption === 'title_asc') {
+      result = [...result].sort((a, b) => (a.title || '').localeCompare(b.title || '', 'zh-CN'));
+    } else if (sortOption === 'title_desc') {
+      result = [...result].sort((a, b) => (b.title || '').localeCompare(a.title || '', 'zh-CN'));
+    } else if (sortOption === 'artist_asc') {
+      result = [...result].sort((a, b) => (a.artist || '').localeCompare(b.artist || '', 'zh-CN'));
+    } else if (sortOption === 'duration_asc') {
+      result = [...result].sort((a, b) => (a.duration || 0) - (b.duration || 0));
+    } else if (sortOption === 'duration_desc') {
+      result = [...result].sort((a, b) => (b.duration || 0) - (a.duration || 0));
+    } else if (sortOption === 'bitrate_desc') {
+      result = [...result].sort((a, b) => {
+        const aFlac = (a.bitrate || '').toLowerCase().includes('flac') ? 1 : 0;
+        const bFlac = (b.bitrate || '').toLowerCase().includes('flac') ? 1 : 0;
+        return bFlac - aFlac;
+      });
+    }
+
+    return result;
+  }, [songs, playlists, selectedPlaylistId, selectedGenre, searchQuery, sourceFilter, sortOption]);
+
+  // Batch selection helpers
+  const isAllSelected = useMemo(() => {
+    if (filteredSongs.length === 0) return false;
+    return filteredSongs.every(s => selectedBatchSongIds.has(s.id));
+  }, [filteredSongs, selectedBatchSongIds]);
+
+  const handleToggleSelectAll = () => {
+    if (isAllSelected) {
+      setSelectedBatchSongIds(new Set());
+    } else {
+      setSelectedBatchSongIds(new Set(filteredSongs.map(s => s.id)));
+    }
+  };
+
+  const handleToggleBatchSelectSong = (songId: string) => {
+    setSelectedBatchSongIds(prev => {
+      const next = new Set(prev);
+      if (next.has(songId)) {
+        next.delete(songId);
+      } else {
+        next.add(songId);
+      }
+      return next;
+    });
+  };
+
+  const exportPlaylist = (format: 'm3u8' | 'json') => {
+    let name = '曲库全部歌曲';
+    if (selectedPlaylistId === 'favorites') {
+      name = '我喜欢的音乐';
+    } else if (selectedPlaylistId !== 'all') {
+      const pl = playlists.find(p => p.id === selectedPlaylistId);
+      if (pl) name = pl.name;
+    }
+
+    const exportSongs = filteredSongs;
+    if (exportSongs.length === 0) {
+      return;
+    }
+
+    if (format === 'm3u8') {
+      let content = '#EXTM3U\n';
+      content += `#PLAYLIST:${name}\n\n`;
+      exportSongs.forEach(s => {
+        const dur = Math.round(s.duration || 0);
+        content += `#EXTINF:${dur},${s.artist} - ${s.title}\n`;
+        content += `${s.publicStreamUrl || s.url}\n\n`;
+      });
+      const blob = new Blob([content], { type: 'audio/x-mpegurl;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${name.replace(/[/\\?%*:|"<>]/g, '_')}.m3u8`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } else {
+      const data = {
+        playlistName: name,
+        exportedAt: new Date().toISOString(),
+        totalSongs: exportSongs.length,
+        songs: exportSongs
+      };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${name.replace(/[/\\?%*:|"<>]/g, '_')}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+  };
 
   const totalItems = filteredSongs.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
@@ -543,6 +674,62 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                   <span>添加歌曲</span>
                 </button>
 
+                {onRenamePlaylist && (
+                  <button
+                    id="btn-rename-playlist"
+                    onClick={() => {
+                      setRenamePlaylistId(currentPl.id);
+                      setRenamePlaylistName(currentPl.name);
+                      setShowRenamePlaylistModal(true);
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold border border-white/10 transition active:scale-95"
+                    title="重命名当前歌单"
+                  >
+                    <Edit2 className="w-3.5 h-3.5 text-amber-400" />
+                    <span>重命名</span>
+                  </button>
+                )}
+
+                {/* Export Playlist (M3U8 / JSON) */}
+                <div className="relative">
+                  <button
+                    id="btn-export-custom-playlist"
+                    onClick={() => setShowExportMenu(prev => !prev)}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold border border-white/10 transition active:scale-95"
+                    title="导出当前歌单 (M3U8 / JSON 标准格式)"
+                  >
+                    <Download className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>导出歌单</span>
+                  </button>
+                  {showExportMenu && (
+                    <>
+                      <div className="fixed inset-0 z-20" onClick={() => setShowExportMenu(false)} />
+                      <div className="absolute right-0 top-full mt-1.5 w-40 py-1.5 rounded-xl bg-zinc-900 border border-white/10 shadow-2xl z-30 flex flex-col gap-1">
+                        <button
+                          onClick={() => {
+                            exportPlaylist('m3u8');
+                            setShowExportMenu(false);
+                          }}
+                          className="px-3 py-1.5 text-left text-xs text-zinc-200 hover:bg-white/10 hover:text-white flex items-center justify-between"
+                        >
+                          <span>标准 M3U8 格式</span>
+                          <span className="text-[10px] font-mono text-cyan-400">.m3u8</span>
+                        </button>
+                        <button
+                          onClick={() => {
+                            exportPlaylist('json');
+                            setShowExportMenu(false);
+                          }}
+                          className="px-3 py-1.5 text-left text-xs text-zinc-200 hover:bg-white/10 hover:text-white flex items-center justify-between"
+                        >
+                          <span>结构化 JSON 格式</span>
+                          <span className="text-[10px] font-mono text-amber-400">.json</span>
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+
                 {onDeletePlaylist && (
                   <button
                     id="btn-delete-playlist"
@@ -566,80 +753,227 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
       </div>
 
       {/* Global Quick Action Toolbar for current view */}
-      {filteredSongs.length > 0 && (
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-5 py-3 rounded-2xl bg-zinc-900/60 border border-white/5 backdrop-blur-md">
-          <div className="flex items-center gap-3 flex-wrap">
-            {/* Unified Dynamic Master Play All Button (Plan B) */}
-            <button
-              id="btn-play-all-current-view"
-              onClick={() => {
-                if (isCasting && onCastAllToXiaomi && activeDevice) {
-                  onCastAllToXiaomi(filteredSongs);
-                } else if (onPlayAll) {
-                  onPlayAll(filteredSongs, 0);
-                } else if (filteredSongs[0]) {
-                  onPlaySong(filteredSongs[0]);
-                }
-              }}
-              className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all active:scale-95 shadow-md ${
-                isCasting
-                  ? 'bg-[#FF6700] hover:bg-[#e55c00] text-white shadow-[0_2px_14px_rgba(255,103,0,0.45)] border border-[#FF6700]'
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 px-5 py-3 rounded-2xl bg-zinc-900/60 border border-white/5 backdrop-blur-md">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          {/* Unified Dynamic Master Play All Button (Plan B) */}
+          <button
+            id="btn-play-all-current-view"
+            disabled={filteredSongs.length === 0}
+            onClick={() => {
+              if (filteredSongs.length === 0) return;
+              if (isCasting && onCastAllToXiaomi && activeDevice) {
+                onCastAllToXiaomi(filteredSongs);
+              } else if (onPlayAll) {
+                onPlayAll(filteredSongs, 0);
+              } else if (filteredSongs[0]) {
+                onPlaySong(filteredSongs[0]);
+              }
+            }}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-md ${
+              filteredSongs.length === 0
+                ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed border border-white/5 opacity-60'
+                : isCasting
+                  ? 'bg-[#FF6700] hover:bg-[#e55c00] text-white shadow-[0_2px_14px_rgba(255,103,0,0.45)] border border-[#FF6700] active:scale-95'
                   : isLight
-                    ? 'bg-zinc-900 hover:bg-zinc-800 text-white shadow-md'
-                    : 'bg-white hover:bg-zinc-100 text-zinc-950 shadow-[0_2px_10px_rgba(255,255,255,0.2)]'
-              }`}
-              title={
-                isCasting
+                    ? 'bg-zinc-900 hover:bg-zinc-800 text-white shadow-md active:scale-95'
+                    : 'bg-white hover:bg-zinc-100 text-zinc-950 shadow-[0_2px_10px_rgba(255,255,255,0.2)] active:scale-95'
+            }`}
+            title={
+              filteredSongs.length === 0
+                ? '当前列表暂无歌曲可播放'
+                : isCasting
                   ? `【音箱模式】一键将当前 ${filteredSongs.length} 首歌曲投播到【${activeDevice?.name || '小爱音箱'}】进行连续播放`
                   : `【本地模式】按当前列表顺序在本地设备播放所有歌曲 (${filteredSongs.length} 首)`
-              }
+            }
+          >
+            {isCasting ? (
+              <>
+                <Speaker className={`w-3.5 h-3.5 ${filteredSongs.length > 0 ? 'animate-pulse text-white' : 'text-zinc-500'}`} />
+                <span>投播全部至【{activeDevice?.name ? (activeDevice.name.length > 7 ? activeDevice.name.slice(0, 7) + '…' : activeDevice.name) : '小爱音箱'}】({filteredSongs.length} 首)</span>
+              </>
+            ) : (
+              <>
+                <Play className={`w-3.5 h-3.5 fill-current ${filteredSongs.length === 0 ? 'text-zinc-500' : isLight ? 'text-white' : 'text-zinc-950'}`} />
+                <span>播放全部 ({filteredSongs.length} 首)</span>
+              </>
+            )}
+          </button>
+
+          {/* Source Filter Pills */}
+          <div className="flex items-center bg-zinc-800/80 p-1 rounded-xl border border-white/5 text-xs">
+            <button
+              type="button"
+              id="btn-source-filter-all"
+              onClick={() => setSourceFilter('all')}
+              className={`px-2.5 py-1 rounded-lg transition font-medium ${
+                sourceFilter === 'all' ? 'bg-[#FF6700] text-white font-bold shadow-sm' : 'text-zinc-400 hover:text-white'
+              }`}
             >
-              {isCasting ? (
+              全部
+            </button>
+            <button
+              type="button"
+              id="btn-source-filter-local"
+              onClick={() => setSourceFilter('local')}
+              className={`px-2.5 py-1 rounded-lg transition font-medium ${
+                sourceFilter === 'local' ? 'bg-[#FF6700] text-white font-bold shadow-sm' : 'text-zinc-400 hover:text-white'
+              }`}
+            >
+              本地音频
+            </button>
+            <button
+              type="button"
+              id="btn-source-filter-navidrome"
+              onClick={() => setSourceFilter('navidrome')}
+              className={`px-2.5 py-1 rounded-lg transition font-medium ${
+                sourceFilter === 'navidrome' ? 'bg-[#FF6700] text-white font-bold shadow-sm' : 'text-zinc-400 hover:text-white'
+              }`}
+            >
+              Navidrome
+            </button>
+            <button
+              type="button"
+              id="btn-source-filter-favorites"
+              onClick={() => setSourceFilter('favorites')}
+              className={`px-2.5 py-1 rounded-lg transition font-medium ${
+                sourceFilter === 'favorites' ? 'bg-[#FF6700] text-white font-bold shadow-sm' : 'text-zinc-400 hover:text-white'
+              }`}
+            >
+              收藏
+            </button>
+          </div>
+
+          {/* Sorting Dropdown */}
+          <div className="flex items-center gap-1 bg-zinc-800/80 px-2.5 py-1.5 rounded-xl border border-white/5 text-xs text-zinc-300">
+            <ArrowUpDown className="w-3.5 h-3.5 text-[#FF6700] flex-shrink-0" />
+            <select
+              value={sortOption}
+              onChange={(e) => setSortOption(e.target.value as any)}
+              className="bg-transparent text-xs text-zinc-200 outline-none cursor-pointer pr-1"
+              title="选择列表排序方式"
+            >
+              <option value="default" className="bg-zinc-900 text-white">默认顺序</option>
+              <option value="title_asc" className="bg-zinc-900 text-white">歌名 (A-Z)</option>
+              <option value="title_desc" className="bg-zinc-900 text-white">歌名 (Z-A)</option>
+              <option value="artist_asc" className="bg-zinc-900 text-white">歌手 (A-Z)</option>
+              <option value="duration_desc" className="bg-zinc-900 text-white">时长 (长到短)</option>
+              <option value="duration_asc" className="bg-zinc-900 text-white">时长 (短到长)</option>
+              <option value="bitrate_desc" className="bg-zinc-900 text-white">无损母带优先</option>
+            </select>
+          </div>
+
+          {/* Export Current View Playlist */}
+          {filteredSongs.length > 0 && (
+            <div className="relative">
+              <button
+                id="btn-export-view-playlist"
+                type="button"
+                onClick={() => setShowExportMenu(prev => !prev)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition border bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-300 border-white/5 active:scale-95"
+                title="导出当前列表为 M3U8 或 JSON 文件"
+              >
+                <Download className="w-3.5 h-3.5 text-cyan-400" />
+                <span>导出歌单</span>
+              </button>
+              {showExportMenu && (
                 <>
-                  <Speaker className="w-3.5 h-3.5 animate-pulse text-white" />
-                  <span>投播全部至【{activeDevice?.name ? (activeDevice.name.length > 7 ? activeDevice.name.slice(0, 7) + '…' : activeDevice.name) : '小爱音箱'}】({filteredSongs.length} 首)</span>
-                </>
-              ) : (
-                <>
-                  <Play className={`w-3.5 h-3.5 fill-current ${isLight ? 'text-white' : 'text-zinc-950'}`} />
-                  <span>播放全部 ({filteredSongs.length} 首)</span>
+                  <div className="fixed inset-0 z-20" onClick={() => setShowExportMenu(false)} />
+                  <div className="absolute right-0 top-full mt-1.5 w-40 py-1.5 rounded-xl bg-zinc-900 border border-white/10 shadow-2xl z-30 flex flex-col gap-1">
+                    <button
+                      onClick={() => {
+                        exportPlaylist('m3u8');
+                        setShowExportMenu(false);
+                      }}
+                      className="px-3 py-1.5 text-left text-xs text-zinc-200 hover:bg-white/10 hover:text-white flex items-center justify-between"
+                    >
+                      <span>标准 M3U8 歌单</span>
+                      <span className="text-[10px] font-mono text-cyan-400">.m3u8</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        exportPlaylist('json');
+                        setShowExportMenu(false);
+                      }}
+                      className="px-3 py-1.5 text-left text-xs text-zinc-200 hover:bg-white/10 hover:text-white flex items-center justify-between"
+                    >
+                      <span>元数据 JSON</span>
+                      <span className="text-[10px] font-mono text-amber-400">.json</span>
+                    </button>
+                  </div>
                 </>
               )}
+            </div>
+          )}
+
+          {/* Batch Mode Toggle */}
+          <button
+            id="btn-toggle-batch-mode"
+            type="button"
+            disabled={filteredSongs.length === 0}
+            onClick={() => {
+              if (filteredSongs.length === 0) return;
+              setIsBatchMode(prev => !prev);
+              setSelectedBatchSongIds(new Set());
+            }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition border ${
+              filteredSongs.length === 0
+                ? 'bg-zinc-800/40 text-zinc-600 border-white/5 cursor-not-allowed opacity-50'
+                : isBatchMode
+                  ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 shadow-sm'
+                  : 'bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-300 border-white/5'
+            }`}
+            title={filteredSongs.length === 0 ? "暂无歌曲可批量管理" : "批量多选操作歌曲"}
+          >
+            <CheckSquare className="w-3.5 h-3.5 text-cyan-400" />
+            <span>{isBatchMode ? '退出批量' : '批量管理'}</span>
+          </button>
+
+          {/* Clear All Songs button - only displayed in "全部歌曲" view */}
+          {selectedPlaylistId === 'all' && onClearAllSongs && songs.length > 0 && (
+            <button
+              id="btn-clear-all-songs"
+              onClick={() => setShowClearConfirmModal(true)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all active:scale-95 border ${
+                isLight
+                  ? 'bg-rose-50 hover:bg-rose-100 text-rose-600 border-rose-200 hover:border-rose-300'
+                  : 'bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border-rose-500/20 hover:border-rose-500/40'
+              }`}
+              title="清空曲库中的所有歌曲"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>清空曲库</span>
             </button>
-
-            {/* Clear All Songs button - only displayed in "全部歌曲" view */}
-            {selectedPlaylistId === 'all' && onClearAllSongs && songs.length > 0 && (
-              <button
-                id="btn-clear-all-songs"
-                onClick={() => setShowClearConfirmModal(true)}
-                className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition-all active:scale-95 border ${
-                  isLight
-                    ? 'bg-rose-50 hover:bg-rose-100 text-rose-600 border-rose-200 hover:border-rose-300'
-                    : 'bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border-rose-500/20 hover:border-rose-500/40'
-                }`}
-                title="清空曲库中的所有歌曲"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>清除所有歌曲</span>
-              </button>
-            )}
-          </div>
-
-          <div className="text-xs text-zinc-400 flex items-center gap-2">
-            <span>列表共 <strong className="text-white font-mono">{filteredSongs.length}</strong> 首</span>
-            {searchQuery && <span className="text-amber-400 font-mono">(匹配关键词 "{searchQuery}")</span>}
-          </div>
+          )}
         </div>
-      )}
+
+        <div className="text-xs text-zinc-400 flex items-center gap-2">
+          <span>列表共 <strong className="text-white font-mono">{filteredSongs.length}</strong> 首</span>
+          {searchQuery && <span className="text-amber-400 font-mono">(匹配 "{searchQuery}")</span>}
+        </div>
+      </div>
 
       {/* Songs Table with Immersive UI Styling */}
       <div className="bg-zinc-900/40 backdrop-blur-md border border-white/5 rounded-3xl overflow-hidden shadow-2xl">
         <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between text-xs text-zinc-400 font-medium">
           <div className="flex items-center gap-4">
-            <span className="w-6 text-center">#</span>
+            {isBatchMode ? (
+              <button
+                id="btn-batch-toggle-all"
+                type="button"
+                onClick={handleToggleSelectAll}
+                className="w-6 flex items-center justify-center text-zinc-400 hover:text-white transition"
+                title={isAllSelected ? "取消全选" : "全选当前筛选结果"}
+              >
+                {isAllSelected ? <CheckSquare className="w-4 h-4 text-[#FF6700]" /> : <Square className="w-4 h-4" />}
+              </button>
+            ) : (
+              <span className="w-6 text-center">#</span>
+            )}
             <div className="flex items-center gap-2">
               <span className="text-[10px] uppercase tracking-[0.15em] text-zinc-500 font-bold">Track & Artist</span>
-              <span className="text-[10px] text-zinc-500 font-normal hidden sm:inline">(单击选中 · 双击播放)</span>
+              <span className="text-[10px] text-zinc-500 font-normal hidden sm:inline">
+                {isBatchMode ? '(点击行或勾选框选择)' : '(单击选中 · 双击播放)'}
+              </span>
             </div>
           </div>
           <div className="flex items-center gap-8">
@@ -653,14 +987,53 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
           {filteredSongs.length === 0 ? (
             <div className="py-16 text-center text-zinc-500">
               <Music className="w-12 h-12 mx-auto mb-3 opacity-30" />
-              <p className="text-sm font-medium">没有找到符合条件的音乐</p>
-              <p className="text-xs text-zinc-600 mt-1">请尝试更换搜索词、添加歌曲，或点击上方“导入/上传音乐”</p>
+              <p className="text-sm font-medium text-zinc-300">
+                {sourceFilter === 'navidrome'
+                  ? 'Navidrome 音乐库中暂无歌曲'
+                  : sourceFilter === 'local'
+                    ? '本地音频库中暂无歌曲'
+                    : sourceFilter === 'favorites'
+                      ? '暂无收藏的音乐'
+                      : searchQuery
+                        ? `未找到与 "${searchQuery}" 匹配的歌曲`
+                        : '没有找到符合条件的音乐'}
+              </p>
+              <p className="text-xs text-zinc-500 mt-1 max-w-md mx-auto">
+                {sourceFilter === 'navidrome'
+                  ? '可前往右上角设置面板配置并一键同步 Navidrome 歌曲，或点击下方切换回全部/本地音频'
+                  : sourceFilter === 'favorites'
+                    ? '在歌曲列表中点击红心图标即可快速收藏您喜爱的音乐'
+                    : searchQuery
+                      ? '请尝试检查错别字或缩短搜索关键词'
+                      : '请尝试更换筛选条件，或点击上方“导入/上传音乐”添加本地音频'}
+              </p>
+              <div className="mt-4 flex items-center justify-center gap-2 flex-wrap">
+                {sourceFilter !== 'all' && (
+                  <button
+                    type="button"
+                    onClick={() => setSourceFilter('all')}
+                    className="px-3.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium transition border border-white/10"
+                  >
+                    查看全部歌曲
+                  </button>
+                )}
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    className="px-3.5 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium transition border border-white/10"
+                  >
+                    清除搜索关键词
+                  </button>
+                )}
+              </div>
             </div>
           ) : (
             paginatedSongs.map((song, index) => {
               const isCurrent = currentSong?.id === song.id;
               const isSelected = selectedSongId === song.id;
               const isSongCasting = isCurrent && isCasting;
+              const isBatchChecked = selectedBatchSongIds.has(song.id);
 
               return (
                 <div
@@ -668,32 +1041,58 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                   id={`song-row-${song.id}`}
                   tabIndex={0}
                   onClick={() => {
-                    setSelectedSongId(song.id);
+                    if (isBatchMode) {
+                      handleToggleBatchSelectSong(song.id);
+                    } else {
+                      setSelectedSongId(song.id);
+                    }
                   }}
                   onDoubleClick={() => {
-                    setSelectedSongId(song.id);
-                    onPlaySong(song);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
+                    if (!isBatchMode) {
                       setSelectedSongId(song.id);
                       onPlaySong(song);
                     }
                   }}
-                  title={isCurrent ? "当前正在播放（双击可重新播放）" : "单击选中歌曲，双击开始播放"}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      if (isBatchMode) {
+                        handleToggleBatchSelectSong(song.id);
+                      } else {
+                        setSelectedSongId(song.id);
+                        onPlaySong(song);
+                      }
+                    }
+                  }}
+                  title={isBatchMode ? "点击选择/取消选择此歌曲" : (isCurrent ? "当前正在播放（双击可重新播放）" : "单击选中歌曲，双击开始播放")}
                   className={`group flex items-center justify-between px-6 py-3.5 transition-all duration-150 cursor-pointer select-none outline-none ${
-                    isSelected 
-                      ? 'bg-[#FF6700]/10 hover:bg-[#FF6700]/15 border-l-2 border-l-[#FF6700]' 
-                      : 'hover:bg-white/5 border-l-2 border-l-transparent'
+                    isBatchChecked
+                      ? 'bg-cyan-500/10 hover:bg-cyan-500/15 border-l-2 border-l-cyan-400'
+                      : isSelected 
+                        ? 'bg-[#FF6700]/10 hover:bg-[#FF6700]/15 border-l-2 border-l-[#FF6700]' 
+                        : 'hover:bg-white/5 border-l-2 border-l-transparent'
                   }`}
                 >
-                  {/* Left: Index / Play button & Song Details */}
+                  {/* Left: Index / Play button / Checkbox & Song Details */}
                   <div className="flex items-center gap-4 min-w-0 flex-1">
                     
-                    {/* Index or Play icon */}
+                    {/* Index, Play icon, or Batch Checkbox */}
                     <div className="w-6 flex items-center justify-center flex-shrink-0">
-                      {isCurrent && isPlaying ? (
+                      {isBatchMode ? (
+                        <div
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleToggleBatchSelectSong(song.id);
+                          }}
+                          className="cursor-pointer p-1"
+                        >
+                          {isBatchChecked ? (
+                            <CheckSquare className="w-4 h-4 text-cyan-400" />
+                          ) : (
+                            <Square className="w-4 h-4 text-zinc-500 hover:text-zinc-300" />
+                          )}
+                        </div>
+                      ) : isCurrent && isPlaying ? (
                         <div className="flex items-end gap-0.5 h-4">
                           <span className="w-1 bg-[#FF6700] animate-pulse h-3 rounded-full shadow-[0_0_6px_rgba(255,103,0,0.6)]" />
                           <span className="w-1 bg-[#FF6700] animate-pulse delay-75 h-4 rounded-full shadow-[0_0_6px_rgba(255,103,0,0.6)]" />
@@ -809,6 +1208,21 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                         title="从当前歌单移除"
                       >
                         <FolderMinus className="w-4 h-4" />
+                      </button>
+                    )}
+
+                    {/* Track Technical Inspector Button */}
+                    {onInspectSong && (
+                      <button
+                        id={`btn-inspect-song-${song.id}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onInspectSong(song);
+                        }}
+                        className="p-1.5 text-zinc-400 hover:text-cyan-400 hover:bg-cyan-500/10 rounded-lg transition"
+                        title="查看无损规格与音频指标"
+                      >
+                        <Cpu className="w-4 h-4" />
                       </button>
                     )}
 
@@ -1270,6 +1684,200 @@ export const MusicLibrary: React.FC<MusicLibraryProps> = ({
                 <span>{isClearing ? '正在清除...' : '确认清除全部歌曲'}</span>
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Rename Playlist Modal */}
+      {showRenamePlaylistModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className={`w-full max-w-sm rounded-2xl p-5 border shadow-2xl space-y-4 ${
+            isLight ? 'bg-white border-zinc-200 text-zinc-900' : 'bg-zinc-900 border-white/10 text-white'
+          }`}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold flex items-center gap-2">
+                <Edit2 className="w-4 h-4 text-amber-400" />
+                <span>重命名歌单</span>
+              </h3>
+              <button
+                onClick={() => setShowRenamePlaylistModal(false)}
+                className="text-zinc-400 hover:text-white transition p-1"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div>
+              <label className="text-[11px] text-zinc-400 block mb-1.5 font-medium">新歌单名称</label>
+              <input
+                type="text"
+                value={renamePlaylistName}
+                onChange={(e) => setRenamePlaylistName(e.target.value)}
+                placeholder="请输入歌单新名称..."
+                className={`w-full px-3.5 py-2 rounded-xl text-xs border outline-none transition ${
+                  isLight 
+                    ? 'bg-zinc-50 border-zinc-300 text-zinc-900 focus:border-[#FF6700]' 
+                    : 'bg-zinc-800/80 border-white/10 text-white focus:border-[#FF6700]'
+                }`}
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && renamePlaylistName.trim() && onRenamePlaylist) {
+                    onRenamePlaylist(renamePlaylistId, renamePlaylistName.trim());
+                    setShowRenamePlaylistModal(false);
+                  }
+                }}
+              />
+            </div>
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setShowRenamePlaylistModal(false)}
+                className="px-3.5 py-1.5 rounded-xl text-xs font-medium text-zinc-400 hover:text-zinc-200 transition"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                disabled={!renamePlaylistName.trim()}
+                onClick={() => {
+                  if (renamePlaylistName.trim() && onRenamePlaylist) {
+                    onRenamePlaylist(renamePlaylistId, renamePlaylistName.trim());
+                    setShowRenamePlaylistModal(false);
+                  }
+                }}
+                className="px-4 py-1.5 rounded-xl text-xs font-bold bg-[#FF6700] hover:bg-[#e55c00] text-white disabled:opacity-40 transition shadow-sm"
+              >
+                保存重命名
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Floating Batch Operations Toolbar */}
+      {isBatchMode && selectedBatchSongIds.size > 0 && (
+        <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-40 w-11/12 max-w-3xl py-3 px-5 rounded-2xl bg-zinc-950/95 backdrop-blur-xl border border-[#FF6700]/40 shadow-[0_10px_40px_rgba(0,0,0,0.85)] flex flex-wrap items-center justify-between gap-3 animate-in slide-in-from-bottom-6 duration-200 text-white">
+          <div className="flex items-center gap-3">
+            <div className="px-3 py-1 rounded-full bg-[#FF6700]/20 text-[#FF6700] font-mono text-xs font-bold border border-[#FF6700]/30 flex items-center gap-1.5">
+              <CheckSquare className="w-3.5 h-3.5" />
+              <span>已勾选 {selectedBatchSongIds.size} 首</span>
+            </div>
+            <button
+              onClick={() => {
+                if (selectedBatchSongIds.size === filteredSongs.length) {
+                  setSelectedBatchSongIds(new Set());
+                } else {
+                  setSelectedBatchSongIds(new Set(filteredSongs.map(s => s.id)));
+                }
+              }}
+              className="text-xs text-zinc-400 hover:text-white underline underline-offset-2 transition"
+            >
+              {selectedBatchSongIds.size === filteredSongs.length ? '取消全选' : '全选筛选结果'}
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              id="btn-batch-play"
+              onClick={() => {
+                const selected = songs.filter(s => selectedBatchSongIds.has(s.id));
+                if (onBatchPlay) onBatchPlay(selected);
+                else if (onPlayAll) onPlayAll(selected);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-zinc-200 text-zinc-950 text-xs font-bold transition shadow-sm"
+            >
+              <Play className="w-3.5 h-3.5 fill-current text-zinc-950" />
+              <span>播放所选</span>
+            </button>
+
+            {activeDevice && (
+              <button
+                id="btn-batch-cast"
+                onClick={() => {
+                  const selected = songs.filter(s => selectedBatchSongIds.has(s.id));
+                  if (onBatchCast) onBatchCast(selected);
+                  else if (onCastAllToXiaomi) onCastAllToXiaomi(selected);
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#FF6700] hover:bg-[#e55c00] text-white text-xs font-bold transition shadow-sm"
+              >
+                <Speaker className="w-3.5 h-3.5" />
+                <span>投播音箱</span>
+              </button>
+            )}
+
+            <button
+              id="btn-batch-add-queue"
+              onClick={() => {
+                const selected = songs.filter(s => selectedBatchSongIds.has(s.id));
+                if (onBatchAddToQueue) onBatchAddToQueue(selected);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold border border-white/10 transition"
+            >
+              <ListPlus className="w-3.5 h-3.5 text-[#FF6700]" />
+              <span>加入队列</span>
+            </button>
+
+            {/* Batch Add to Playlist Dropdown */}
+            <div className="relative">
+              <button
+                id="btn-batch-add-playlist-menu"
+                onClick={() => setShowBatchPlaylistDropdown(!showBatchPlaylistDropdown)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold border border-white/10 transition"
+              >
+                <FolderPlus className="w-3.5 h-3.5 text-amber-400" />
+                <span>加入歌单</span>
+              </button>
+
+              {showBatchPlaylistDropdown && (
+                <div className="absolute bottom-full mb-2 right-0 w-48 rounded-2xl bg-zinc-900 border border-white/10 shadow-2xl p-2 space-y-1 z-50 animate-in fade-in zoom-in-95 duration-150">
+                  <div className="text-[10px] text-zinc-400 px-2 py-1 font-bold uppercase tracking-wider">选择目标歌单</div>
+                  {playlists.length === 0 ? (
+                    <div className="text-xs text-zinc-500 px-2 py-2">暂无自定义歌单</div>
+                  ) : (
+                    playlists.map(pl => (
+                      <button
+                        key={pl.id}
+                        onClick={() => {
+                          if (onBatchAddToPlaylist) {
+                            onBatchAddToPlaylist(Array.from(selectedBatchSongIds), pl.id);
+                          }
+                          setShowBatchPlaylistDropdown(false);
+                        }}
+                        className="w-full text-left px-2.5 py-1.5 rounded-xl text-xs hover:bg-zinc-800 text-zinc-200 hover:text-white truncate flex items-center justify-between transition"
+                      >
+                        <span className="truncate">{pl.name}</span>
+                        <span className="text-[10px] text-zinc-500 font-mono">{pl.songIds.length}首</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Batch Remove from custom playlist if in custom playlist */}
+            {selectedPlaylistId !== 'all' && selectedPlaylistId !== 'favorites' && onBatchRemoveFromPlaylist && (
+              <button
+                id="btn-batch-remove-from-pl"
+                onClick={() => {
+                  onBatchRemoveFromPlaylist(Array.from(selectedBatchSongIds), selectedPlaylistId);
+                  setSelectedBatchSongIds(new Set());
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 text-xs font-semibold border border-rose-500/30 transition"
+              >
+                <FolderMinus className="w-3.5 h-3.5" />
+                <span>移出此歌单</span>
+              </button>
+            )}
+
+            <button
+              onClick={() => {
+                setIsBatchMode(false);
+                setSelectedBatchSongIds(new Set());
+              }}
+              className="p-1.5 text-zinc-400 hover:text-white rounded-lg hover:bg-white/10 transition ml-1"
+              title="退出多选模式"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
         </div>
       )}

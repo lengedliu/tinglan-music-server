@@ -17,9 +17,16 @@ import {
   Check,
   Disc,
   Laptop,
-  Speaker
+  Speaker,
+  Moon,
+  Gauge,
+  HelpCircle,
+  Keyboard,
+  Layers,
+  Cpu,
+  Flag
 } from 'lucide-react';
-import { Song, XiaomiDevice, DeviceCommandState } from '../types';
+import { Song, XiaomiDevice, DeviceCommandState, SleepTimerConfig, ABLoopConfig } from '../types';
 import { formatTime } from '../utils/lyricParser';
 import { useTheme } from '../context/ThemeContext';
 
@@ -50,6 +57,16 @@ interface PlayerBarProps {
   queueCount?: number;
   speakerVolume?: number;
   onSpeakerVolumeChange?: (vol: number) => void;
+  playbackSpeed?: number;
+  onPlaybackSpeedChange?: (speed: number) => void;
+  sleepTimer?: SleepTimerConfig;
+  onOpenSleepTimer?: () => void;
+  onOpenShortcuts?: () => void;
+  onOpenVinyl?: () => void;
+  onOpenMultiRoom?: () => void;
+  onOpenInspector?: () => void;
+  abLoop?: ABLoopConfig;
+  onToggleABLoop?: () => void;
 }
 
 export const PlayerBar: React.FC<PlayerBarProps> = ({
@@ -78,15 +95,42 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({
   onOpenSubsonic,
   queueCount,
   speakerVolume = 40,
-  onSpeakerVolumeChange
+  onSpeakerVolumeChange,
+  playbackSpeed = 1.0,
+  onPlaybackSpeedChange,
+  sleepTimer,
+  onOpenSleepTimer,
+  onOpenShortcuts,
+  onOpenVinyl,
+  onOpenMultiRoom,
+  onOpenInspector,
+  abLoop = { a: null, b: null, enabled: false },
+  onToggleABLoop
 }) => {
   const [isMuted, setIsMuted] = useState(false);
   const [prevVolume, setPrevVolume] = useState(volume);
   const [isHoveringProgress, setIsHoveringProgress] = useState(false);
+  const [showSpeedMenu, setShowSpeedMenu] = useState(false);
+  const speedMenuRef = useRef<HTMLDivElement>(null);
   const [draggingSpeakerVol, setDraggingSpeakerVol] = useState<number | null>(null);
   const draggingSpeakerVolRef = useRef<number | null>(null);
   draggingSpeakerVolRef.current = draggingSpeakerVol;
   const progressBarRef = useRef<HTMLDivElement>(null);
+
+  // Close speed menu on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (speedMenuRef.current && !speedMenuRef.current.contains(e.target as Node)) {
+        setShowSpeedMenu(false);
+      }
+    };
+    if (showSpeedMenu) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showSpeedMenu]);
 
   // Release commit listener across window so releasing outside the slider bounds still commits cleanly
   useEffect(() => {
@@ -159,8 +203,18 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({
           currentSong ? 'cursor-pointer hover:h-2' : 'cursor-default opacity-40'
         }`}
       >
+        {/* A-B Loop highlighted section */}
+        {duration > 0 && abLoop?.a !== null && abLoop?.b !== null && abLoop.b > abLoop.a && (
+          <div 
+            className="absolute top-0 bottom-0 bg-cyan-400/50 z-10 border-x border-cyan-400"
+            style={{
+              left: `${(abLoop.a / duration) * 100}%`,
+              width: `${((abLoop.b - abLoop.a) / duration) * 100}%`
+            }}
+          />
+        )}
         <div 
-          className="h-full bg-[#FF6700] transition-all duration-75 relative shadow-[0_0_10px_rgba(255,103,0,0.7)]"
+          className="h-full bg-[#FF6700] transition-all duration-75 relative shadow-[0_0_10px_rgba(255,103,0,0.7)] z-10"
           style={{ width: `${progressPercent}%` }}
         >
           {currentSong && (
@@ -200,9 +254,19 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({
                 {currentSong.artist}
               </p>
               <div className="flex items-center gap-1.5 mt-1">
-                <span className="text-[10px] font-bold border border-zinc-700 bg-zinc-800/80 rounded px-1.5 py-0.5 leading-none text-zinc-300 font-mono">
+                <button
+                  id="btn-inspect-track"
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (onOpenInspector) onOpenInspector();
+                  }}
+                  className="text-[10px] font-bold border border-zinc-700 bg-zinc-800/80 hover:bg-[#FF6700]/20 hover:border-[#FF6700]/50 hover:text-[#FF6700] rounded px-1.5 py-0.5 leading-none text-zinc-300 font-mono transition flex items-center gap-1 cursor-pointer"
+                  title="点击查看音频技术指标与 ID3 元数据"
+                >
+                  <Cpu className="w-2.5 h-2.5 text-[#FF6700]" />
                   {currentSong.bitrate?.includes('FLAC') ? 'Lossless' : currentSong.bitrate || 'Hi-Fi'}
-                </span>
+                </button>
                 {isCasting ? (
                   <span className="text-[10px] px-2 py-0.5 rounded bg-[#FF6700]/20 text-[#FF6700] border border-[#FF6700]/40 flex items-center gap-1 font-semibold">
                     <Speaker className="w-2.5 h-2.5 animate-pulse text-[#FF6700]" />
@@ -441,11 +505,140 @@ export const PlayerBar: React.FC<PlayerBarProps> = ({
           <button
             id="btn-open-lyrics-modal"
             onClick={onOpenLyrics}
-            title="查看动态歌词与试听"
+            title="查看动态歌词与试听 (L)"
             className={`p-2 ${isLight ? 'text-zinc-600 hover:text-zinc-950 hover:bg-zinc-200/70' : 'text-zinc-400 hover:text-white hover:bg-white/5'} rounded-full transition`}
           >
             <Mic2 className="w-4.5 h-4.5" />
           </button>
+
+          {/* Playback Speed Controller */}
+          {onPlaybackSpeedChange && (
+            <div className="relative" ref={speedMenuRef}>
+              <button
+                id="btn-toggle-playback-speed"
+                onClick={() => setShowSpeedMenu(prev => !prev)}
+                title={`播放倍速: ${playbackSpeed}x`}
+                className={`px-2 py-1 rounded-lg text-xs font-mono font-bold transition flex items-center gap-1 ${
+                  playbackSpeed !== 1.0
+                    ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/30 shadow-sm'
+                    : isLight
+                      ? 'text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200/70'
+                      : 'text-zinc-400 hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <span>{playbackSpeed}x</span>
+              </button>
+
+              {showSpeedMenu && (
+                <div className={`absolute bottom-full mb-2 -left-6 py-1.5 px-1 rounded-2xl border shadow-xl z-50 flex flex-col gap-1 min-w-[70px] animate-in fade-in zoom-in-95 duration-100 ${
+                  isLight ? 'bg-white border-zinc-200 text-zinc-900' : 'bg-zinc-900 border-white/10 text-white'
+                }`}>
+                  {[0.5, 0.75, 1.0, 1.25, 1.5, 2.0].map((spd) => (
+                    <button
+                      key={spd}
+                      id={`btn-speed-option-${spd}`}
+                      onClick={() => {
+                        onPlaybackSpeedChange(spd);
+                        setShowSpeedMenu(false);
+                      }}
+                      className={`px-3 py-1 rounded-xl text-xs font-mono font-semibold transition text-left ${
+                        playbackSpeed === spd
+                          ? 'bg-[#FF6700] text-white'
+                          : isLight
+                            ? 'hover:bg-zinc-100 text-zinc-700'
+                            : 'hover:bg-white/10 text-zinc-300'
+                      }`}
+                    >
+                      {spd}x
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Sleep Timer Toggle Button */}
+          {onOpenSleepTimer && (
+            sleepTimer?.enabled ? (
+              <button
+                id="btn-open-sleep-timer-active"
+                onClick={onOpenSleepTimer}
+                title="睡眠定时器运行中，点击查看或调整"
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#FF6700]/20 hover:bg-[#FF6700]/30 text-[#FF6700] border border-[#FF6700]/40 text-xs font-mono font-bold transition shadow-[0_0_10px_rgba(255,103,0,0.3)] animate-pulse shrink-0"
+              >
+                <Moon className="w-3.5 h-3.5 fill-current" />
+                <span>
+                  {sleepTimer.stopAtEndOfSong 
+                    ? '播完停' 
+                    : `${Math.floor(sleepTimer.remainingSeconds / 60)}:${(sleepTimer.remainingSeconds % 60).toString().padStart(2, '0')}`}
+                </span>
+              </button>
+            ) : (
+              <button
+                id="btn-open-sleep-timer-idle"
+                onClick={onOpenSleepTimer}
+                title="睡眠定时器 (T) - 伴着音乐入眠"
+                className={`p-2 ${isLight ? 'text-zinc-600 hover:text-[#FF6700] hover:bg-zinc-200/70' : 'text-zinc-400 hover:text-[#FF6700] hover:bg-white/5'} rounded-full transition`}
+              >
+                <Moon className="w-4.5 h-4.5" />
+              </button>
+            )
+          )}
+
+          {/* Vinyl Immersive Player Fullscreen Toggle */}
+          {onOpenVinyl && (
+            <button
+              id="btn-open-vinyl-modal"
+              onClick={onOpenVinyl}
+              title="开启沉浸黑胶唱盘舞台 (V)"
+              className={`p-2 ${isLight ? 'text-zinc-600 hover:text-[#FF6700] hover:bg-zinc-200/70' : 'text-zinc-400 hover:text-[#FF6700] hover:bg-white/5'} rounded-full transition`}
+            >
+              <Disc className="w-4.5 h-4.5" />
+            </button>
+          )}
+
+          {/* Multi-room Speaker Group Cast Toggle */}
+          {onOpenMultiRoom && (
+            <button
+              id="btn-open-multiroom-modal"
+              onClick={onOpenMultiRoom}
+              title="全屋多音箱同播 · 分组广播"
+              className={`p-2 ${isLight ? 'text-zinc-600 hover:text-[#FF6700] hover:bg-zinc-200/70' : 'text-zinc-400 hover:text-[#FF6700] hover:bg-white/5'} rounded-full transition`}
+            >
+              <Layers className="w-4.5 h-4.5" />
+            </button>
+          )}
+
+          {/* A-B Loop Button */}
+          {onToggleABLoop && (
+            <button
+              id="btn-toggle-ab-loop"
+              onClick={onToggleABLoop}
+              title={abLoop.enabled ? `A-B复读中 [${formatTime(abLoop.a || 0)} - ${formatTime(abLoop.b || 0)}] 点击重置` : (abLoop.a !== null ? `已定A点: ${formatTime(abLoop.a)}, 点击定B点` : 'A-B 段区间复读 (点击定起点)')}
+              className={`p-1.5 rounded-lg text-xs font-mono font-bold transition flex items-center gap-1 ${
+                abLoop.enabled 
+                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-sm' 
+                  : abLoop.a !== null 
+                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' 
+                    : (isLight ? 'text-zinc-500 hover:text-zinc-900' : 'text-zinc-400 hover:text-white')
+              }`}
+            >
+              <Flag className="w-3.5 h-3.5 text-cyan-400" />
+              <span className="hidden xl:inline text-[11px]">{abLoop.enabled ? 'A-B' : '复读'}</span>
+            </button>
+          )}
+
+          {/* Keyboard Shortcuts Guide Toggle */}
+          {onOpenShortcuts && (
+            <button
+              id="btn-open-shortcuts-modal"
+              onClick={onOpenShortcuts}
+              title="全局键盘快捷键速查 (? / Shift + /)"
+              className={`p-2 ${isLight ? 'text-zinc-600 hover:text-zinc-950 hover:bg-zinc-200/70' : 'text-zinc-400 hover:text-white hover:bg-white/5'} rounded-full transition`}
+            >
+              <Keyboard className="w-4.5 h-4.5" />
+            </button>
+          )}
 
           {/* Dual-Mode Volume Control: Speaker Physical Volume vs Local Audio Volume */}
           <div className="hidden md:flex items-center gap-2">

@@ -1,11 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Sliders, X, Sparkles, Volume2, RotateCcw, Activity } from 'lucide-react';
+import { Sliders, X, Sparkles, Volume2, RotateCcw, Activity, ShieldCheck, Shuffle } from 'lucide-react';
+import { AudioEngineSettings } from '../types';
 
 interface AudioEqualizerModalProps {
   isOpen: boolean;
   onClose: () => void;
   audioRef: React.RefObject<HTMLAudioElement | null>;
   isPlaying: boolean;
+  audioSettings?: AudioEngineSettings;
+  onAudioSettingsChange?: (settings: AudioEngineSettings) => void;
 }
 
 // 10-Band Equalizer frequencies in Hz
@@ -27,6 +30,8 @@ export const AudioEqualizerModal: React.FC<AudioEqualizerModalProps> = ({
   onClose,
   audioRef,
   isPlaying,
+  audioSettings = { crossfadeDuration: 3, replayGainEnabled: true },
+  onAudioSettingsChange,
 }) => {
   const [eqGains, setEqGains] = useState<number[]>([0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
   const [selectedPreset, setSelectedPreset] = useState<string>('Flat');
@@ -87,18 +92,27 @@ export const AudioEqualizerModal: React.FC<AudioEqualizerModalProps> = ({
         });
         filtersRef.current = filters;
 
+        // Create DynamicsCompressor for ReplayGain loudness normalization
+        const compressor = ctx.createDynamicsCompressor();
+        compressor.threshold.setValueAtTime(-24, ctx.currentTime);
+        compressor.knee.setValueAtTime(30, ctx.currentTime);
+        compressor.ratio.setValueAtTime(12, ctx.currentTime);
+        compressor.attack.setValueAtTime(0.003, ctx.currentTime);
+        compressor.release.setValueAtTime(0.25, ctx.currentTime);
+
         // Create AnalyserNode
         const analyser = ctx.createAnalyser();
         analyser.fftSize = 64;
         analyserRef.current = analyser;
 
-        // Chain nodes: Source -> F1 -> F2 ... -> F10 -> Analyser -> Destination
+        // Chain nodes: Source -> Filters -> DynamicsCompressor -> Analyser -> Destination
         let prevNode: AudioNode = sourceNode;
         filters.forEach((filter) => {
           prevNode.connect(filter);
           prevNode = filter;
         });
-        prevNode.connect(analyser);
+        prevNode.connect(compressor);
+        compressor.connect(analyser);
         analyser.connect(ctx.destination);
       }
     } catch (e) {
@@ -327,6 +341,76 @@ export const AudioEqualizerModal: React.FC<AudioEqualizerModalProps> = ({
                 </div>
               );
             })}
+          </div>
+        </div>
+
+        {/* Advanced Audio Engine Controls: Crossfade & ReplayGain */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+          {/* ReplayGain Normalization */}
+          <div className="p-3 rounded-xl bg-zinc-900/60 border border-white/5 flex flex-col justify-between">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-xs font-bold text-zinc-300 flex items-center gap-1.5">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                ReplayGain 响度标准化
+              </span>
+              <button
+                onClick={() => {
+                  if (onAudioSettingsChange) {
+                    onAudioSettingsChange({
+                      ...audioSettings,
+                      replayGainEnabled: !audioSettings.replayGainEnabled
+                    });
+                  }
+                }}
+                className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                  audioSettings.replayGainEnabled ? 'bg-[#FF6700]' : 'bg-zinc-700'
+                }`}
+              >
+                <span
+                  className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                    audioSettings.replayGainEnabled ? 'translate-x-4.5' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+            <p className="text-[11px] text-zinc-500 leading-relaxed">
+              基于动态压缩器实时平抑不同母带的音量突变与爆音，保障听感均匀一致。
+            </p>
+          </div>
+
+          {/* Crossfade Duration */}
+          <div className="p-3 rounded-xl bg-zinc-900/60 border border-white/5 flex flex-col justify-between">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-xs font-bold text-zinc-300 flex items-center gap-1.5">
+                <Shuffle className="w-3.5 h-3.5 text-[#FF6700]" />
+                切歌淡入淡出 (Crossfade)
+              </span>
+              <span className="text-xs font-mono font-bold text-[#FF6700]">
+                {audioSettings.crossfadeDuration === 0 ? '已关闭' : `${audioSettings.crossfadeDuration}s`}
+              </span>
+            </div>
+            <div className="flex items-center gap-1 mt-1">
+              {[0, 2, 4, 6, 8, 12].map((sec) => (
+                <button
+                  key={sec}
+                  onClick={() => {
+                    if (onAudioSettingsChange) {
+                      onAudioSettingsChange({
+                        ...audioSettings,
+                        crossfadeDuration: sec
+                      });
+                    }
+                  }}
+                  className={`flex-1 py-1 rounded text-[10px] font-mono font-semibold transition ${
+                    audioSettings.crossfadeDuration === sec
+                      ? 'bg-[#FF6700] text-white'
+                      : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400'
+                  }`}
+                >
+                  {sec === 0 ? '关' : `${sec}s`}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 

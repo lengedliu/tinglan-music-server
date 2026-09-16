@@ -277,11 +277,12 @@ export class XiaomiAdapter {
             };
           }
         } else {
+          console.log(`[XiaomiAdapter] [Tier 1 DLNA] 局域网 DLNA 未响应，已自动无缝降级到 Tier 2 小米云端通道...`);
           steps.push({
             timestamp: nowStr(),
             step: 'DLNA',
             status: 'FAIL',
-            message: `DLNA 响应失败: ${dlnaRes.error || '端口未响应'}`
+            message: `局域网 DLNA 未命中 (${dlnaRes.error || '端口未响应'})，已自动无缝降级至云端通道`
           });
         }
       } catch (dlnaErr: any) {

@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF7A1A" />
+      <stop offset="100%" stop-color="#E05300" />
+    </linearGradient>
+    <linearGradient id="waveGrad" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.9" />
+      <stop offset="100%" stop-color="#FFF0E6" stop-opacity="1" />
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="16" stdDeviation="24" flood-color="#E05300" flood-opacity="0.4" />
+    </filter>
+  </defs>
+
+  <!-- Background rounded squircle -->
+  <rect x="32" y="32" width="448" height="448" rx="112" fill="url(#grad)" filter="url(#shadow)" />
+
+  <!-- Inner dark disk reflection -->
+  <circle cx="256" cy="256" r="160" fill="#18181B" opacity="0.25" />
+  <circle cx="256" cy="256" r="120" fill="#09090B" opacity="0.35" />
+
+  <!-- Dynamic Equalizer / Music Waves -->
+  <g fill="url(#waveGrad)">
+    <rect x="144" y="216" width="24" height="80" rx="12" />
+    <rect x="188" y="176" width="24" height="160" rx="12" />
+    <rect x="232" y="136" width="24" height="240" rx="12" />
+    <rect x="276" y="160" width="24" height="192" rx="12" />
+    <rect x="320" y="200" width="24" height="112" rx="12" />
+    <rect x="364" y="232" width="24" height="48" rx="12" />
+  </g>
+
+  <!-- Center small vinyl dot -->
+  <circle cx="244" cy="256" r="6" fill="#FF7A1A" />
+</svg>

@@ -14,6 +14,12 @@ export interface Song {
   fileSize?: string;
   isFavorite?: boolean;
   source?: 'local' | 'demo' | 'uploaded';
+  sampleRate?: string;
+  bitDepth?: string;
+  format?: string;
+  channels?: string;
+  codec?: string;
+  filePath?: string;
 }
 
 export interface LyricLine {
@@ -295,6 +301,53 @@ export interface VoiceListenerStatus {
   logsCount: number;
   lastProcessedTime: number;
 }
+
+export interface SleepTimerConfig {
+  enabled: boolean;
+  remainingSeconds: number;
+  initialMinutes: number;
+  stopAtEndOfSong: boolean;
+  smoothFadeOut: boolean;
+}
+
+export type SongSortOption = 
+  | 'default' 
+  | 'title_asc' 
+  | 'title_desc' 
+  | 'artist_asc' 
+  | 'duration_asc' 
+  | 'duration_desc' 
+  | 'bitrate_desc'
+  | 'date_desc';
+
+export type LibrarySourceFilter = 'all' | 'local' | 'navidrome' | 'favorites';
+
+export interface ABLoopConfig {
+  a: number | null; // start time in seconds
+  b: number | null; // end time in seconds
+  enabled: boolean;
+}
+
+export interface AudioEngineSettings {
+  crossfadeDuration: number; // 0 - 12 seconds, 0 = disabled
+  replayGainEnabled: boolean; // Loudness Normalization
+}
+
+export interface GroupCastDeviceResult {
+  did: string;
+  name: string;
+  success: boolean;
+  message?: string;
+}
+
+export interface GroupCastResponse {
+  success: boolean;
+  total: number;
+  successCount: number;
+  failedCount: number;
+  results: GroupCastDeviceResult[];
+}
+
 
 
 

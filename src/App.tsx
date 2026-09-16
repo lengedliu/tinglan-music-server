@@ -14,10 +14,16 @@ import { AuthModal } from './components/AuthModal';
 import { SettingsPage } from './components/SettingsPage';
 import { SponsorPage } from './components/SponsorPage';
 import { ThemeSelectorModal } from './components/ThemeSelectorModal';
+import { SleepTimerModal } from './components/SleepTimerModal';
+import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
+import { VinylPlayerModal } from './components/VinylPlayerModal';
+import { MultiRoomCastModal } from './components/MultiRoomCastModal';
+import { TrackInspectorModal } from './components/TrackInspectorModal';
 import { useTheme } from './context/ThemeContext';
-import { Song, Playlist, XiaomiDevice, MiotConfig, CastLog, User, SecurityStatus, DeviceCommandState } from './types';
+import { Song, Playlist, XiaomiDevice, MiotConfig, CastLog, User, SecurityStatus, DeviceCommandState, SleepTimerConfig, ABLoopConfig, AudioEngineSettings } from './types';
 import { INITIAL_SONGS, INITIAL_PLAYLISTS, INITIAL_XIAOMI_DEVICES } from './data/mockSongs';
 import { apiFetch, setStoredAuthToken, getAuthToken } from './utils/api';
+import { formatTime } from './utils/lyricParser';
 import { CheckCircle2, AlertCircle, Radio, X } from 'lucide-react';
 
 export default function App() {
@@ -150,6 +156,40 @@ export default function App() {
   const [isSubsonicModalOpen, setIsSubsonicModalOpen] = useState(false);
   const [isNavidromeModalOpen, setIsNavidromeModalOpen] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
+  const [isSleepTimerModalOpen, setIsSleepTimerModalOpen] = useState(false);
+  const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState(false);
+  const [isVinylOpen, setIsVinylOpen] = useState(false);
+  const [isMultiRoomOpen, setIsMultiRoomOpen] = useState(false);
+  const [inspectorSong, setInspectorSong] = useState<Song | null>(null);
+  const [abLoop, setAbLoop] = useState<ABLoopConfig>({ a: null, b: null, enabled: false });
+  const [audioSettings, setAudioSettings] = useState<AudioEngineSettings>(() => {
+    try {
+      const saved = localStorage.getItem('tinglan_audio_settings');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return {
+      crossfadeDuration: 3,
+      replayGainEnabled: true,
+      eqBands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    };
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('tinglan_audio_settings', JSON.stringify(audioSettings));
+    } catch {}
+  }, [audioSettings]);
+
+  const isCrossfadingRef = useRef(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState<number>(1.0);
+  const [sleepTimer, setSleepTimer] = useState<SleepTimerConfig>({
+    enabled: false,
+    remainingSeconds: 0,
+    initialMinutes: 0,
+    stopAtEndOfSong: false,
+    smoothFadeOut: true,
+  });
+  const sleepTimerFadeInitialVolRef = useRef<number | null>(null);
   const [toastMessage, setToastMessage] = useState<{ id: number; title: string; desc?: string; type: 'success' | 'info' | 'error'; duration?: number } | null>(null);
 
   // Auto-dismiss toast notification:
@@ -204,6 +244,127 @@ export default function App() {
     });
   };
 
+  const fadeAudioOut = (durationMs: number): Promise<void> => {
+    return new Promise((resolve) => {
+      if (!audioRef.current || durationMs <= 0) {
+        resolve();
+        return;
+      }
+      const startVol = audioRef.current.volume;
+      const startTime = Date.now();
+      const interval = setInterval(() => {
+        if (!audioRef.current) {
+          clearInterval(interval);
+          resolve();
+          return;
+        }
+        const elapsed = Date.now() - startTime;
+        const progress = Math.min(1, elapsed / durationMs);
+        audioRef.current.volume = Math.max(0, startVol * (1 - progress));
+        if (progress >= 1) {
+          clearInterval(interval);
+          resolve();
+        }
+      }, 40);
+    });
+  };
+
+  const fadeAudioIn = (targetVol: number, durationMs: number): void => {
+    if (!audioRef.current || durationMs <= 0) {
+      if (audioRef.current) audioRef.current.volume = targetVol;
+      return;
+    }
+    audioRef.current.volume = 0;
+    const startTime = Date.now();
+    const interval = setInterval(() => {
+      if (!audioRef.current) {
+        clearInterval(interval);
+        return;
+      }
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(1, elapsed / durationMs);
+      audioRef.current.volume = Math.min(targetVol, targetVol * progress);
+      if (progress >= 1) {
+        clearInterval(interval);
+      }
+    }, 40);
+  };
+
+  const handleToggleABLoop = () => {
+    if (abLoop.enabled) {
+      setAbLoop({ a: null, b: null, enabled: false });
+      showToast('已关闭 A-B 区间复读', undefined, 'info');
+    } else if (abLoop.a === null) {
+      const now = currentTime;
+      setAbLoop({ a: now, b: null, enabled: false });
+      showToast(`已设定 A 点: ${formatTime(now)}`, '请继续播放至复读终点后再次点击定 B 点', 'info');
+    } else if (abLoop.b === null) {
+      const now = currentTime;
+      if (now <= abLoop.a) {
+        showToast('B 点必须大于 A 点', '请在当前播放时间晚于 A 点时设定', 'error');
+        return;
+      }
+      setAbLoop({ a: abLoop.a, b: now, enabled: true });
+      showToast('A-B 区间复读已开启', `循环区间: ${formatTime(abLoop.a)} 至 ${formatTime(now)}`, 'success');
+    } else {
+      setAbLoop({ a: null, b: null, enabled: false });
+    }
+  };
+
+  // Sleep Timer Countdown & Smooth Fadeout Effect
+  useEffect(() => {
+    if (!sleepTimer.enabled || sleepTimer.stopAtEndOfSong) return;
+
+    const interval = setInterval(() => {
+      setSleepTimer(prev => {
+        if (!prev.enabled || prev.stopAtEndOfSong) return prev;
+        if (prev.remainingSeconds <= 1) {
+          // Timer finished: stop audio
+          setIsPlaying(false);
+          if (audioRef.current) {
+            audioRef.current.pause();
+          }
+          if (isCasting && activeDevice) {
+            handleControlDevice(activeDevice.did, 'pause');
+          }
+          // Restore volume if smooth fadeout altered it
+          if (sleepTimerFadeInitialVolRef.current !== null) {
+            setVolume(sleepTimerFadeInitialVolRef.current);
+            if (audioRef.current) audioRef.current.volume = sleepTimerFadeInitialVolRef.current;
+            sleepTimerFadeInitialVolRef.current = null;
+          }
+          showToast('睡眠定时器已触发', '定时播放已结束，已为您自动停止音乐播放', 'info');
+          return { ...prev, enabled: false, remainingSeconds: 0 };
+        }
+
+        // Smooth fade out in the last 60 seconds
+        if (prev.smoothFadeOut && prev.remainingSeconds <= 60 && audioRef.current) {
+          if (sleepTimerFadeInitialVolRef.current === null) {
+            sleepTimerFadeInitialVolRef.current = volume;
+          }
+          const fraction = Math.max(0, (prev.remainingSeconds - 1) / 60);
+          const fadedVolume = (sleepTimerFadeInitialVolRef.current || 0.75) * fraction;
+          audioRef.current.volume = Math.max(0, Math.min(1, fadedVolume));
+        }
+
+        return { ...prev, remainingSeconds: prev.remainingSeconds - 1 };
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [sleepTimer.enabled, sleepTimer.stopAtEndOfSong, isCasting, activeDevice, volume]);
+
+  const fetchDevices = () => {
+    apiFetch('/api/miot/devices')
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (Array.isArray(data)) {
+          setDevices(data);
+        }
+      })
+      .catch(() => {});
+  };
+
   const loadAllAppData = () => {
     // 1. Fetch MIoT Config
     apiFetch('/api/miot/config')
@@ -217,14 +378,7 @@ export default function App() {
       .catch(() => {});
 
     // 2. Fetch Devices
-    apiFetch('/api/miot/devices')
-      .then(res => res.ok ? res.json() : null)
-      .then(data => {
-        if (Array.isArray(data)) {
-          setDevices(data);
-        }
-      })
-      .catch(() => {});
+    fetchDevices();
 
     // 3. Fetch Songs from backend storage
     apiFetch('/api/songs')
@@ -556,7 +710,11 @@ export default function App() {
         ? song.url 
         : `/api/stream/${encodeURIComponent(song.id)}`;
       if (audioRef.current) {
-        audioRef.current.volume = volume;
+        if (audioSettings.crossfadeDuration > 0) {
+          audioRef.current.volume = 0;
+        } else {
+          audioRef.current.volume = volume;
+        }
         // Check if src needs update without triggering redundant reload
         if (!audioRef.current.src || !audioRef.current.src.includes(encodeURIComponent(song.id))) {
           audioRef.current.src = playSrc;
@@ -567,12 +725,22 @@ export default function App() {
           playPromise
             .then(() => {
               setIsPlaying(true);
+              isCrossfadingRef.current = false;
+              if (audioSettings.crossfadeDuration > 0) {
+                fadeAudioIn(volume, Math.min(audioSettings.crossfadeDuration * 1000, 3000));
+              }
             })
             .catch((e: any) => {
+              isCrossfadingRef.current = false;
               if (e && e.name === 'AbortError') {
                 // Recover immediately once buffer is ready
                 const handleCanPlay = () => {
-                  audioRef.current?.play().then(() => setIsPlaying(true)).catch(() => {});
+                  audioRef.current?.play().then(() => {
+                    setIsPlaying(true);
+                    if (audioSettings.crossfadeDuration > 0) {
+                      fadeAudioIn(volume, Math.min(audioSettings.crossfadeDuration * 1000, 3000));
+                    }
+                  }).catch(() => {});
                   audioRef.current?.removeEventListener('canplay', handleCanPlay);
                 };
                 audioRef.current?.addEventListener('canplay', handleCanPlay);
@@ -584,6 +752,13 @@ export default function App() {
       }
       setIsPlaying(true);
     }
+  };
+
+  const handleCrossfadeToNext = async () => {
+    if (audioSettings.crossfadeDuration > 0 && !isCasting) {
+      await fadeAudioOut(Math.min(audioSettings.crossfadeDuration * 1000, 3000));
+    }
+    handleNextSong();
   };
 
   const handlePlayAll = (targetSongs: Song[], startIndex: number = 0, autoCastToSpeaker?: boolean) => {
@@ -643,6 +818,21 @@ export default function App() {
       return;
     }
     handlePlayAll(targetSongs, 0, true);
+  };
+
+  const handleDirectCastSong = (song: Song) => {
+    if (!activeDevice) {
+      showToast('未选择播放设备', '请先在顶部或音箱面板中选择一台小米音箱', 'error');
+      return;
+    }
+    setCurrentSong(song);
+    setCurrentTime(0);
+    setDuration(song.duration || 200);
+    setIsPlaying(true);
+    setIsCasting(true);
+    if (audioRef.current) audioRef.current.pause();
+    const queueToUse = playQueue.length > 0 ? playQueue : songs;
+    castSongToDevice(song, activeDevice, queueToUse);
   };
 
   const handleNextSong = () => {
@@ -726,6 +916,17 @@ export default function App() {
       if (audioRef.current) {
         audioRef.current.currentTime = time;
       }
+    }
+  };
+
+  const volumeDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const handleVolumeChange = (newVolume: number) => {
+    setVolume(newVolume);
+    if (isCasting && activeDevice) {
+      if (volumeDebounceTimerRef.current) clearTimeout(volumeDebounceTimerRef.current);
+      volumeDebounceTimerRef.current = setTimeout(() => {
+        handleControlDevice(activeDevice.did, 'volume', Math.round(newVolume * 100));
+      }, 300);
     }
   };
 
@@ -1395,6 +1596,220 @@ export default function App() {
     showToast('歌单已删除', `歌单《${targetPl?.name || ''}》已成功移除`, 'info');
   };
 
+  const handleRenamePlaylist = async (playlistId: string, newName: string) => {
+    setPlaylists(prev => prev.map(pl => pl.id === playlistId ? { ...pl, name: newName } : pl));
+    try {
+      await apiFetch(`/api/playlists/${playlistId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newName })
+      });
+    } catch (e) {}
+    showToast('歌单重命名成功', `已将歌单更名为《${newName}》`, 'success');
+  };
+
+  const handleBatchPlay = (selectedSongs: Song[]) => {
+    if (selectedSongs.length === 0) return;
+    handlePlayAll(selectedSongs, 0, false);
+    showToast('批量播放', `已载入选中的 ${selectedSongs.length} 首歌曲开始播放`, 'success');
+  };
+
+  const handleBatchCast = (selectedSongs: Song[]) => {
+    if (selectedSongs.length === 0) return;
+    if (!activeDevice) {
+      showToast('请先选择目标音箱', '可在上方“智能音箱”选项卡中扫描或选择小米音箱', 'error');
+      return;
+    }
+    handlePlayAll(selectedSongs, 0, true);
+    showToast('批量投播', `已将选中的 ${selectedSongs.length} 首歌曲投播至【${activeDevice.name}】`, 'success');
+  };
+
+  const handleBatchAddToQueue = (selectedSongs: Song[]) => {
+    if (selectedSongs.length === 0) return;
+    setPlayQueue(prev => {
+      const existingIds = new Set(prev.map(s => s.id));
+      const toAdd = selectedSongs.filter(s => !existingIds.has(s.id));
+      const nextQueue = [...prev, ...toAdd];
+      try {
+        localStorage.setItem('tinglan_play_queue', JSON.stringify(nextQueue));
+      } catch {}
+      return nextQueue;
+    });
+    showToast('已加入播放队列', `已将 ${selectedSongs.length} 首歌曲追加至当前队列末尾`, 'success');
+  };
+
+  const handleBatchAddToPlaylist = async (songIds: string[], playlistId: string) => {
+    setPlaylists(prev => prev.map(pl => {
+      if (pl.id === playlistId) {
+        const set = new Set(pl.songIds);
+        songIds.forEach(id => set.add(id));
+        return { ...pl, songIds: Array.from(set) };
+      }
+      return pl;
+    }));
+    try {
+      await apiFetch(`/api/playlists/${playlistId}/songs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ songIds })
+      });
+    } catch (e) {}
+    const targetPl = playlists.find(p => p.id === playlistId);
+    showToast('已加入歌单', `已将 ${songIds.length} 首歌曲批量存入《${targetPl?.name || '指定歌单'}》`, 'success');
+  };
+
+  const handleBatchRemoveFromPlaylist = async (songIds: string[], playlistId: string) => {
+    const toRemove = new Set(songIds);
+    setPlaylists(prev => prev.map(pl => {
+      if (pl.id === playlistId) {
+        return { ...pl, songIds: pl.songIds.filter(id => !toRemove.has(id)) };
+      }
+      return pl;
+    }));
+    const targetPl = playlists.find(p => p.id === playlistId);
+    if (targetPl) {
+      const remaining = targetPl.songIds.filter(id => !toRemove.has(id));
+      try {
+        await apiFetch(`/api/playlists/${playlistId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ songIds: remaining })
+        });
+      } catch (e) {}
+    }
+    showToast('已移出歌单', `已从当前歌单中移出 ${songIds.length} 首歌曲`, 'info');
+  };
+
+  const handlePlaybackSpeedChange = (speed: number) => {
+    setPlaybackSpeed(speed);
+    if (audioRef.current) {
+      audioRef.current.playbackRate = speed;
+    }
+    showToast('倍速调整', `当前播放速度调整为 ${speed}x`, 'info');
+  };
+
+  // Global Keyboard Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.tagName === 'SELECT' ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+
+      switch (e.code) {
+        case 'Space':
+          e.preventDefault();
+          handlePlayPause();
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          if (e.shiftKey) {
+            handleNextSong();
+          } else {
+            handleSeek(Math.min(duration, currentTime + 5));
+          }
+          break;
+        case 'ArrowLeft':
+          e.preventDefault();
+          if (e.shiftKey) {
+            handlePrevSong();
+          } else {
+            handleSeek(Math.max(0, currentTime - 5));
+          }
+          break;
+        case 'ArrowUp':
+          e.preventDefault();
+          handleVolumeChange(Math.min(1, volume + 0.05));
+          break;
+        case 'ArrowDown':
+          e.preventDefault();
+          handleVolumeChange(Math.max(0, volume - 0.05));
+          break;
+        case 'KeyM':
+          e.preventDefault();
+          handleVolumeChange(volume > 0 ? 0 : 0.75);
+          break;
+        case 'KeyL':
+          e.preventDefault();
+          setActiveTab(prev => prev === 'lyrics' ? 'library' : 'lyrics');
+          break;
+        case 'KeyS':
+          e.preventDefault();
+          setIsShuffle(prev => !prev);
+          break;
+        case 'KeyR':
+          e.preventDefault();
+          handleCycleRepeat();
+          break;
+        case 'KeyC':
+          e.preventDefault();
+          handleToggleCast();
+          break;
+        case 'KeyV':
+          e.preventDefault();
+          setIsVinylOpen(prev => !prev);
+          break;
+        case 'Slash':
+          if (e.shiftKey) { // '?' key
+            e.preventDefault();
+            setIsShortcutsModalOpen(prev => !prev);
+          }
+          break;
+        default:
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handlePlayPause, handleNextSong, handlePrevSong, handleSeek, handleVolumeChange, handleCycleRepeat, handleToggleCast, duration, currentTime, volume]);
+
+  // MediaSession API Integration
+  useEffect(() => {
+    if ('mediaSession' in navigator && currentSong) {
+      try {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: currentSong.title,
+          artist: currentSong.artist,
+          album: currentSong.album || '听澜音乐',
+          artwork: [
+            { src: currentSong.coverUrl || '/placeholder.svg', sizes: '96x96', type: 'image/jpeg' },
+            { src: currentSong.coverUrl || '/placeholder.svg', sizes: '128x128', type: 'image/jpeg' },
+            { src: currentSong.coverUrl || '/placeholder.svg', sizes: '256x256', type: 'image/jpeg' },
+            { src: currentSong.coverUrl || '/placeholder.svg', sizes: '512x512', type: 'image/jpeg' },
+          ],
+        });
+
+        navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+
+        navigator.mediaSession.setActionHandler('play', () => {
+          handlePlayPause();
+        });
+        navigator.mediaSession.setActionHandler('pause', () => {
+          handlePlayPause();
+        });
+        navigator.mediaSession.setActionHandler('previoustrack', () => {
+          handlePrevSong();
+        });
+        navigator.mediaSession.setActionHandler('nexttrack', () => {
+          handleNextSong();
+        });
+        navigator.mediaSession.setActionHandler('seekto', (details) => {
+          if (details.seekTime !== undefined) {
+            handleSeek(details.seekTime);
+          }
+        });
+      } catch (err) {
+        console.warn('MediaSession API setup error:', err);
+      }
+    }
+  }, [currentSong, isPlaying, handlePlayPause, handlePrevSong, handleNextSong, handleSeek]);
+
   const handleClearAllSongs = async () => {
     try {
       const res = await apiFetch('/api/songs', { method: 'DELETE' });
@@ -1550,18 +1965,56 @@ export default function App() {
             if ((window as any).__tinglanAudioCtx && (window as any).__tinglanAudioCtx.state === 'suspended') {
               (window as any).__tinglanAudioCtx.resume().catch(() => {});
             }
+            if (audioRef.current) {
+              audioRef.current.playbackRate = playbackSpeed;
+            }
           }}
           onTimeUpdate={() => {
             if (audioRef.current) {
-              setCurrentTime(audioRef.current.currentTime);
+              const cur = audioRef.current.currentTime;
+              setCurrentTime(cur);
+
+              // A-B Loop Logic: Seamless loop back to A when reaching B
+              if (abLoop.enabled && abLoop.a !== null && abLoop.b !== null && abLoop.b > abLoop.a) {
+                if (cur >= abLoop.b) {
+                  audioRef.current.currentTime = abLoop.a;
+                  return;
+                }
+              }
+
+              // Crossfade auto-advance near track end
+              if (
+                !isCasting &&
+                audioSettings.crossfadeDuration > 0 &&
+                repeatMode !== 'one' &&
+                duration > 0 &&
+                cur >= duration - audioSettings.crossfadeDuration &&
+                cur < duration - 0.5 &&
+                !isCrossfadingRef.current
+              ) {
+                isCrossfadingRef.current = true;
+                handleCrossfadeToNext();
+              }
             }
           }}
           onLoadedMetadata={() => {
             if (audioRef.current) {
               setDuration(audioRef.current.duration || currentSong?.duration || 200);
+              audioRef.current.playbackRate = playbackSpeed;
             }
           }}
           onEnded={() => {
+            if (sleepTimer.enabled && sleepTimer.stopAtEndOfSong) {
+              setSleepTimer(prev => ({ ...prev, enabled: false, remainingSeconds: 0 }));
+              setIsPlaying(false);
+              if (audioRef.current) audioRef.current.pause();
+              if (isCasting && activeDevice) {
+                handleControlDevice(activeDevice.did, 'pause');
+              }
+              showToast('睡眠定时器已触发', '当前歌曲已播放完毕，已为您自动停止音乐播放', 'info');
+              return;
+            }
+
             if (repeatMode === 'one') {
               if (audioRef.current) {
                 audioRef.current.currentTime = 0;
@@ -1597,16 +2050,7 @@ export default function App() {
               isPlaying={isPlaying}
               onPlaySong={handlePlaySong}
               onPlayAll={handlePlayAll}
-              onCastSongToXiaomi={(song) => {
-                setCurrentSong(song);
-                setCurrentTime(0);
-                setDuration(song.duration || 200);
-                setIsPlaying(true);
-                setIsCasting(true);
-                if (audioRef.current) audioRef.current.pause();
-                const queueToUse = playQueue.length > 0 ? playQueue : songs;
-                castSongToDevice(song, activeDevice, queueToUse);
-              }}
+              onCastSongToXiaomi={handleDirectCastSong}
               onCastAllToXiaomi={handleCastAllToXiaomi}
               onToggleFavorite={handleToggleFavorite}
               activeDevice={activeDevice}
@@ -1615,10 +2059,17 @@ export default function App() {
               onScanMusicDir={handleScanMusicDir}
               isScanning={isScanning}
               onCreatePlaylist={handleCreatePlaylist}
+              onRenamePlaylist={handleRenamePlaylist}
               onToggleSongInPlaylist={handleToggleSongInPlaylist}
               onDeletePlaylist={handleDeletePlaylist}
               onClearAllSongs={handleClearAllSongs}
               onOpenNavidromeModal={() => setIsNavidromeModalOpen(true)}
+              onBatchPlay={handleBatchPlay}
+              onBatchCast={handleBatchCast}
+              onBatchAddToQueue={handleBatchAddToQueue}
+              onBatchAddToPlaylist={handleBatchAddToPlaylist}
+              onBatchRemoveFromPlaylist={handleBatchRemoveFromPlaylist}
+              onInspectSong={(song) => setInspectorSong(song)}
             />
           )}
 
@@ -1712,7 +2163,7 @@ export default function App() {
           onPrev={handlePrevSong}
           onSeek={handleSeek}
           volume={volume}
-          onVolumeChange={setVolume}
+          onVolumeChange={handleVolumeChange}
           activeDevice={activeDevice}
           isCasting={isCasting}
           commandState={commandState}
@@ -1726,6 +2177,11 @@ export default function App() {
           onOpenEQ={() => setIsEQModalOpen(true)}
           onOpenQueue={() => setIsQueueDrawerOpen(true)}
           onOpenSubsonic={() => setIsSubsonicModalOpen(true)}
+          sleepTimer={sleepTimer}
+          onOpenSleepTimer={() => setIsSleepTimerModalOpen(true)}
+          onOpenShortcuts={() => setIsShortcutsModalOpen(true)}
+          playbackSpeed={playbackSpeed}
+          onPlaybackSpeedChange={handlePlaybackSpeedChange}
           queueCount={playQueue.length}
           speakerVolume={activeDevice?.status?.volume ?? 40}
           onSpeakerVolumeChange={(targetVol) => {
@@ -1733,6 +2189,13 @@ export default function App() {
               handleControlDevice(activeDevice.did, 'volume', targetVol);
             }
           }}
+          onOpenVinyl={() => setIsVinylOpen(true)}
+          onOpenMultiRoom={() => setIsMultiRoomOpen(true)}
+          onOpenInspector={() => {
+            if (currentSong) setInspectorSong(currentSong);
+          }}
+          abLoop={abLoop}
+          onToggleABLoop={handleToggleABLoop}
         />
 
         {/* Upload Song Modal */}
@@ -1748,6 +2211,8 @@ export default function App() {
           onClose={() => setIsEQModalOpen(false)}
           audioRef={audioRef}
           isPlaying={isPlaying}
+          audioSettings={audioSettings}
+          onAudioSettingsChange={setAudioSettings}
         />
 
         {/* Play Queue Drawer */}
@@ -1819,6 +2284,91 @@ export default function App() {
           onClose={() => setIsNavidromeModalOpen(false)}
           onSongsSynced={fetchSongsFromBackend}
           onPlaylistsSynced={fetchPlaylistsFromBackend}
+        />
+
+        {/* Sleep Timer Configuration Modal */}
+        <SleepTimerModal
+          isOpen={isSleepTimerModalOpen}
+          onClose={() => setIsSleepTimerModalOpen(false)}
+          config={sleepTimer}
+          onSaveConfig={(newConfig) => {
+            setSleepTimer(newConfig);
+            if (newConfig.enabled) {
+              if (newConfig.stopAtEndOfSong) {
+                showToast('睡眠定时器已设定', '播放完当前歌曲后将自动暂停', 'success');
+              } else {
+                showToast('睡眠定时器已开启', `设定为 ${newConfig.initialMinutes} 分钟后停止播放`, 'success');
+              }
+            } else {
+              showToast('睡眠定时器已关闭', '已取消自动停止播放设定', 'info');
+            }
+          }}
+        />
+
+        {/* Keyboard Shortcuts Cheatsheet Modal */}
+        <KeyboardShortcutsModal
+          isOpen={isShortcutsModalOpen}
+          onClose={() => setIsShortcutsModalOpen(false)}
+        />
+
+        {/* Fullscreen Immersive Vinyl Player Modal */}
+        <VinylPlayerModal
+          isOpen={isVinylOpen}
+          onClose={() => setIsVinylOpen(false)}
+          currentSong={currentSong}
+          isPlaying={isPlaying}
+          currentTime={currentTime}
+          duration={duration}
+          onPlayPause={handlePlayPause}
+          onNext={handleNextSong}
+          onPrev={handlePrevSong}
+          onSeek={handleSeek}
+          volume={volume}
+          onVolumeChange={handleVolumeChange}
+          isShuffle={isShuffle}
+          onToggleShuffle={() => setIsShuffle(prev => !prev)}
+          repeatMode={repeatMode}
+          onCycleRepeat={handleCycleRepeat}
+          isCasting={isCasting}
+          activeDevice={activeDevice}
+          onToggleCast={handleToggleCast}
+          abLoop={abLoop}
+          onSetABLoop={(newLoop) => {
+            setAbLoop(newLoop);
+            if (newLoop.enabled) {
+              showToast('A-B 区间复读已开启', `循环区间: ${formatTime(newLoop.a || 0)} 至 ${formatTime(newLoop.b || 0)}`, 'success');
+            } else if (newLoop.a !== null && newLoop.b === null) {
+              showToast(`已设定 A 点: ${formatTime(newLoop.a)}`, '请继续播放至复读终点后定 B 点', 'info');
+            } else {
+              showToast('已清除 A-B 区间复读', undefined, 'info');
+            }
+          }}
+          playbackSpeed={playbackSpeed}
+          onPlaybackSpeedChange={handlePlaybackSpeedChange}
+          onOpenEQ={() => setIsEQModalOpen(true)}
+          onOpenInspector={() => {
+            if (currentSong) setInspectorSong(currentSong);
+          }}
+        />
+
+        {/* Multi-Room Speaker Group Cast Modal */}
+        <MultiRoomCastModal
+          isOpen={isMultiRoomOpen}
+          onClose={() => setIsMultiRoomOpen(false)}
+          devices={devices}
+          currentSong={currentSong}
+          onShowToast={(title, desc, type) => showToast(title, desc, type)}
+          onRefreshDevices={fetchDevices}
+        />
+
+        {/* Audio Track Technical Inspector Modal */}
+        <TrackInspectorModal
+          isOpen={!!inspectorSong}
+          onClose={() => setInspectorSong(null)}
+          song={inspectorSong}
+          onPlaySong={(s) => handlePlaySong(s)}
+          onCastSong={(s) => handleDirectCastSong(s)}
+          activeDevice={activeDevice}
         />
       </div>
 
