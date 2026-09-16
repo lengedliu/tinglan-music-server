@@ -1874,9 +1874,7 @@ if ((miotConfig as any).passToken) {
         });
         if (resolveResult.xiaoAiDevices && resolveResult.xiaoAiDevices.length > 0) {
           xiaomiDevices = resolveResult.xiaoAiDevices;
-          if (!miotConfig.activeDeviceId || !xiaomiDevices.some(d => d.did === miotConfig.activeDeviceId)) {
-            miotConfig.activeDeviceId = xiaomiDevices[0].did;
-          }
+          ensureValidActiveDeviceId();
           saveJson(DEVICES_FILE, xiaomiDevices);
           saveJson(CONFIG_FILE, miotConfig);
           console.log(`[Discovery] Auto-restored ${xiaomiDevices.length} XiaoAi speakers from cloud`);
@@ -2023,6 +2021,54 @@ function sanitizeMiotConfig(config: any) {
     serviceToken: hasToken ? `${String(serviceToken).slice(0, 4)}••••••••` : '',
     miUserMasked: config.miUser ? (config.miUser.length > 4 ? `${config.miUser.slice(0, 2)}***${config.miUser.slice(-2)}` : '***') : ''
   };
+}
+
+/**
+ * Ensures miotConfig.activeDeviceId remains valid and points to a confirmed speaker device
+ * Prevents arbitrary resetting back to synthetic or fallback devices when refreshing
+ */
+function ensureValidActiveDeviceId() {
+  if (!xiaomiDevices || xiaomiDevices.length === 0) {
+    return;
+  }
+  const current = miotConfig.activeDeviceId ? String(miotConfig.activeDeviceId).trim() : '';
+
+  if (current) {
+    // 1. Exact match by did, deviceID, cloudDid, or hardwareDeviceId
+    const matched = xiaomiDevices.find(d => 
+      String(d.did).trim() === current || 
+      (d.deviceID && String(d.deviceID).trim() === current) || 
+      (d.cloudDid && String(d.cloudDid).trim() === current) ||
+      ((d as any).hardwareDeviceId && String((d as any).hardwareDeviceId).trim() === current)
+    );
+
+    if (matched) {
+      if (matched.did !== current && !matched.did.startsWith('did-') && !matched.did.startsWith('detected_')) {
+        miotConfig.activeDeviceId = matched.did;
+        saveJson(CONFIG_FILE, miotConfig);
+      }
+      return;
+    }
+
+    // 2. If current was a synthetic DID or was an IP, check if any device has that same IP or MAC or substring
+    const matchedByProp = xiaomiDevices.find(d => 
+      (d.did && current.includes(d.did)) ||
+      (d.deviceID && current.includes(d.deviceID)) ||
+      (d.cloudDid && current.includes(d.cloudDid))
+    );
+    if (matchedByProp) {
+      miotConfig.activeDeviceId = matchedByProp.did;
+      saveJson(CONFIG_FILE, miotConfig);
+      return;
+    }
+  }
+
+  // 3. If no activeDeviceId or activeDeviceId was not found, fallback to first available real device (prioritizing non-synthetic)
+  const preferredDev = xiaomiDevices.find(d => !d.did.startsWith('did-') && !d.did.startsWith('detected_')) || xiaomiDevices[0];
+  if (preferredDev && (!miotConfig.activeDeviceId || !xiaomiDevices.some(d => d.did === miotConfig.activeDeviceId))) {
+    miotConfig.activeDeviceId = preferredDev.did;
+    saveJson(CONFIG_FILE, miotConfig);
+  }
 }
 
 let castLogs: Array<{
@@ -3085,6 +3131,54 @@ app.post('/api/miot/config', (req: Request, res: Response) => {
   res.json({ success: true, config: sanitizeMiotConfig(miotConfig) });
 });
 
+// Set Active / Default Target Device
+app.post('/api/miot/active-device', (req: Request, res: Response) => {
+  if (!checkMiotAdminPermission(req, res)) return;
+
+  const { did } = req.body || {};
+  if (!did) {
+    return res.status(400).json({ success: false, error: '缺少音箱 DID 参数' });
+  }
+
+  const cleanDid = String(did).trim();
+  miotConfig.activeDeviceId = cleanDid;
+  saveJson(CONFIG_FILE, miotConfig);
+
+  try {
+    voiceCommandService.updateConfig({ targetDeviceId: cleanDid });
+  } catch {}
+
+  if (miotConfig.userId && (miotConfig.serviceToken || (miotConfig as any).micoServiceToken)) {
+    const activeToken = (miotConfig as any).micoServiceToken || miotConfig.serviceToken;
+    try {
+      minaWsClient.connect(miotConfig.userId, activeToken, cleanDid);
+    } catch {}
+  }
+
+  const targetDev = xiaomiDevices.find(d => 
+    String(d.did).trim() === cleanDid || 
+    (d.deviceID && String(d.deviceID).trim() === cleanDid) ||
+    (d.cloudDid && String(d.cloudDid).trim() === cleanDid)
+  );
+
+  castLogs.unshift({
+    id: `log-${Date.now()}`,
+    timestamp: new Date().toLocaleTimeString(),
+    type: 'sync',
+    message: `已设置默认目标音箱: ${targetDev?.name || cleanDid}`,
+    detail: `DID: ${cleanDid} | IP: ${targetDev?.ip || '未指定'} | 型号: ${targetDev?.model || 'XiaoAi'}`,
+    success: true
+  });
+  if (castLogs.length > 50) castLogs.pop();
+
+  res.json({
+    success: true,
+    activeDeviceId: cleanDid,
+    device: targetDev ? sanitizeDevice(targetDev) : null,
+    config: sanitizeMiotConfig(miotConfig)
+  });
+});
+
 // Helper to extract clean userId, serviceToken, and passToken even if raw cookie strings or .mi.token JSON are passed
 function parseServiceTokenAndUserId(inputUid: string, inputToken: string, inputPassToken?: string): { userId: string; serviceToken: string; passToken: string; cUserId?: string } {
   let userId = String(inputUid || '').trim();
@@ -3448,9 +3542,7 @@ app.post('/api/miot/login', async (req: Request, res: Response) => {
       syncedDevices = resolveResult.xiaoAiDevices;
       if (syncedDevices && syncedDevices.length > 0) {
         xiaomiDevices = syncedDevices;
-        if (!miotConfig.activeDeviceId || !xiaomiDevices.some(d => d.did === miotConfig.activeDeviceId)) {
-          miotConfig.activeDeviceId = xiaomiDevices[0].did;
-        }
+        ensureValidActiveDeviceId();
         saveJson(DEVICES_FILE, xiaomiDevices);
         saveJson(CONFIG_FILE, miotConfig);
       }
@@ -3532,9 +3624,7 @@ app.post('/api/miot/login', async (req: Request, res: Response) => {
 
   if (authResult.devices && authResult.devices.length > 0) {
     xiaomiDevices = authResult.devices;
-    if (!miotConfig.activeDeviceId || !xiaomiDevices.some(d => d.did === miotConfig.activeDeviceId)) {
-      miotConfig.activeDeviceId = xiaomiDevices[0].did;
-    }
+    ensureValidActiveDeviceId();
   } else {
     xiaomiDevices = [];
     miotConfig.activeDeviceId = '';
@@ -3722,9 +3812,7 @@ app.post('/api/miot/passport/qrcode/check', async (req: Request, res: Response) 
       devices = resolveResult.xiaoAiDevices || [];
       if (devices && devices.length > 0) {
         xiaomiDevices = devices;
-        if (!miotConfig.activeDeviceId || !xiaomiDevices.some(d => d.did === miotConfig.activeDeviceId)) {
-          miotConfig.activeDeviceId = xiaomiDevices[0].did;
-        }
+        ensureValidActiveDeviceId();
       }
       saveJson(DEVICES_FILE, xiaomiDevices);
       saveJson(CONFIG_FILE, miotConfig);
@@ -3976,10 +4064,7 @@ app.post('/api/miot/devices/scan-subnet', async (req: Request, res: Response) =>
 
     if (result.xiaoAiDevices.length > 0) {
       xiaomiDevices = result.xiaoAiDevices;
-      if (!miotConfig.activeDeviceId || !xiaomiDevices.some(d => d.did === miotConfig.activeDeviceId)) {
-        miotConfig.activeDeviceId = xiaomiDevices[0].did;
-        saveJson(CONFIG_FILE, miotConfig);
-      }
+      ensureValidActiveDeviceId();
       saveJson(DEVICES_FILE, xiaomiDevices);
     }
 
@@ -4270,10 +4355,7 @@ app.post('/api/miot/devices/resolve', async (req: Request, res: Response) => {
 
     if (result.xiaoAiDevices.length > 0) {
       xiaomiDevices = result.xiaoAiDevices;
-      if (!miotConfig.activeDeviceId || !xiaomiDevices.some(d => d.did === miotConfig.activeDeviceId)) {
-        miotConfig.activeDeviceId = xiaomiDevices[0].did;
-        saveJson(CONFIG_FILE, miotConfig);
-      }
+      ensureValidActiveDeviceId();
       saveJson(DEVICES_FILE, xiaomiDevices);
     }
 
@@ -4318,10 +4400,7 @@ app.post('/api/miot/devices/scan', async (req: Request, res: Response) => {
 
     if (result.xiaoAiDevices.length > 0) {
       xiaomiDevices = result.xiaoAiDevices;
-      if (!miotConfig.activeDeviceId || !xiaomiDevices.some(d => d.did === miotConfig.activeDeviceId)) {
-        miotConfig.activeDeviceId = xiaomiDevices[0].did;
-        saveJson(CONFIG_FILE, miotConfig);
-      }
+      ensureValidActiveDeviceId();
       saveJson(DEVICES_FILE, xiaomiDevices);
     }
 

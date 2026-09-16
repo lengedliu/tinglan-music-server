@@ -125,7 +125,12 @@ export default function App() {
 
   // Xiaomi Speaker & MIoT state
   const [devices, setDevices] = useState<XiaomiDevice[]>([]);
-  const [activeDeviceId, setActiveDeviceId] = useState<string>('');
+  const [activeDeviceId, setActiveDeviceId] = useState<string>(() => {
+    try {
+      return localStorage.getItem('tinglan_active_device_did') || '';
+    } catch {}
+    return '';
+  });
   const [isCasting, setIsCasting] = useState<boolean>(() => {
     try {
       return localStorage.getItem('tinglan_is_casting') === 'true';
@@ -360,6 +365,18 @@ export default function App() {
       .then(data => {
         if (Array.isArray(data)) {
           setDevices(data);
+          if (data.length > 0) {
+            setActiveDeviceId(prev => {
+              if (prev && data.some(d => d.did === prev)) return prev;
+              try {
+                const localSaved = localStorage.getItem('tinglan_active_device_did');
+                if (localSaved && data.some(d => d.did === localSaved)) return localSaved;
+              } catch {}
+              return miotConfig.activeDeviceId && data.some(d => d.did === miotConfig.activeDeviceId)
+                ? miotConfig.activeDeviceId
+                : data[0].did;
+            });
+          }
         }
       })
       .catch(() => {});
@@ -372,7 +389,12 @@ export default function App() {
       .then(data => {
         if (data) {
           setMiotConfig(prev => ({ ...prev, ...data }));
-          if (data.activeDeviceId) setActiveDeviceId(data.activeDeviceId);
+          if (data.activeDeviceId) {
+            setActiveDeviceId(data.activeDeviceId);
+            try {
+              localStorage.setItem('tinglan_active_device_did', data.activeDeviceId);
+            } catch {}
+          }
         }
       })
       .catch(() => {});
@@ -1435,6 +1457,29 @@ export default function App() {
       });
   };
 
+  const handleSelectDevice = async (did: string) => {
+    const cleanDid = String(did).trim();
+    if (!cleanDid) return;
+    setActiveDeviceId(cleanDid);
+    setMiotConfig(prev => ({ ...prev, activeDeviceId: cleanDid }));
+    try {
+      localStorage.setItem('tinglan_active_device_did', cleanDid);
+    } catch {}
+
+    const target = devices.find(d => d.did === cleanDid);
+    showToast('已设为默认音箱', `当前目标：${target?.name || cleanDid}`, 'info');
+
+    try {
+      await apiFetch('/api/miot/active-device', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ did: cleanDid })
+      });
+    } catch (err) {
+      console.warn('Failed to persist activeDeviceId:', err);
+    }
+  };
+
   const handleUpdateConfig = (newConfig: Partial<MiotConfig>) => {
     const updated = { ...miotConfig, ...newConfig };
     setMiotConfig(updated);
@@ -1453,8 +1498,11 @@ export default function App() {
         setIsScanning(false);
         if (data.devices) {
           setDevices(data.devices);
-          if (data.devices.length > 0 && (!activeDeviceId || !data.devices.some((d: XiaomiDevice) => d.did === activeDeviceId))) {
-            setActiveDeviceId(data.activeDeviceId || data.devices[0].did);
+          if (data.activeDeviceId) {
+            setActiveDeviceId(data.activeDeviceId);
+            try {
+              localStorage.setItem('tinglan_active_device_did', data.activeDeviceId);
+            } catch {}
           }
         }
         if (data.cloudSyncedCount > 0) {
@@ -2095,10 +2143,7 @@ export default function App() {
             <XiaomiSpeakerPanel
               devices={devices}
               activeDevice={activeDevice}
-              onSelectDevice={(did) => {
-                setActiveDeviceId(did);
-                showToast('已切换目标音箱', `当前目标：${devices.find(d => d.did === did)?.name}`, 'info');
-              }}
+              onSelectDevice={handleSelectDevice}
               onControlDevice={handleControlDevice}
               onSendTts={handleSendTts}
               miotConfig={miotConfig}

@@ -5,34 +5,36 @@
  */
 
 // Common PinYin character map covering top Chinese song titles, artists, and common words
-const PINYIN_DICT: Record<string, string> = {
-  '一': 'yi', '二': 'er', '三': 'san', '四': 'si', '五': 'wu', '六': 'liu', '七': 'qi', '八': 'ba', '九': 'jiu', '十': 'shi', '百': 'bai', '千': 'qian', '万': 'wan',
-  '晴': 'qing', '天': 'tian', '周': 'zhou', '杰': 'jie', '伦': 'lun', '夜': 'ye', '的': 'de', '第': 'di', '章': 'zhang', '青': 'qing', '花': 'hua', '瓷': 'ci',
-  '告': 'gao', '白': 'bai', '气': 'qi', '球': 'qiu', '稻': 'dao', '香': 'xiang', '爱': 'ai', '在': 'zai', '西': 'xi', '元': 'yuan', '前': 'qian', '枫': 'feng',
-  '起': 'qi', '风': 'feng', '了': 'le', '峰': 'feng', '戚': 'qi', '年': 'nian', '念': 'nian', '陈': 'chen', '奕': 'yi', '迅': 'xun', '浮': 'fu', '夸': 'kua',
-  '孤': 'gu', '勇': 'yong', '者': 'zhe', '红': 'hong', '豆': 'dou', '王': 'wang', '菲': 'fei', '传': 'chuan', '奇': 'qi', '匆': 'cong', '匆': 'cong', '那': 'na',
-  '林': 'lin', '俊': 'jun', '杰': 'jie', '江': 'jiang', '南': 'nan', '修': 'xiu', '炼': 'lian', '情': 'qing', '歌': 'ge', '不': 'bu', '为': 'wei', '谁': 'shui',
-  '而': 'er', '作': 'zuo', '可': 'ke', '惜': 'xi', '没': 'mei', '如': 'ru', '果': 'guo', '学': 'xue', '友': 'you', '吻': 'wen', '别': 'bie', '遥': 'yao',
-  '远': 'yuan', '她': 'ta', '李': 'li', '荣': 'rong', '浩': 'hao', '年': 'nian', '少': 'shao', '有': 'you', '李': 'li', '克': 'ke', '勤': 'qin', '月': 'yue',
-  '半': 'ban', '小': 'xiao', '曲': 'qu', '红': 'hong', '日': 'ri', '邓': 'deng', '紫': 'zi', '棋': 'qi', '泡': 'pao', '沫': 'mo', '光': 'guang',
-  '莫': 'mo', '文': 'wen', '蔚': 'wei', '阴': 'yin', '盛': 'sheng', '夏': 'xia', '果': 'guo', '慢': 'man', '冷': 'leng', '暖': 'nuan', '孙': 'sun', '燕': 'yan',
-  '姿': 'zi', '遇': 'yu', '见': 'jian', '绿': 'lv', '我': 'wo', '怀': 'huai', '念': 'nian', '梁': 'liang', '静': 'jing', '茹': 'ru', '勇': 'yong',
-  '气': 'qi', '暖': 'nuan', '宁': 'ning', '夏': 'xia', '情': 'qing', '书': 'shu', '会': 'hui', '呼': 'hu', '吸': 'xi', '痛': 'tong', '张': 'zhang',
-  '惠': 'hui', '妹': 'mei', '听': 'ting', '海': 'hai', '记': 'ji', '得': 'de', '人': 'ren', '质': 'zhi', '薛': 'xue', '之': 'zhi', '谦': 'qian',
-  '演': 'yan', '员': 'yuan', '丑': 'chou', '八': 'ba', '怪': 'guai', '绅': 'shen', '士': 'shi', '认': 'ren', '真': 'zhen', '雪': 'xue', '下': 'xia',
-  '五': 'wu', '月': 'yue', '天': 'tian', '知': 'zhi', '足': 'zu', '温': 'wen', '柔': 'rou', '倔': 'jue', '强': 'qiang', '后': 'hou', '来': 'lai',
-  '刘': 'liu', '若': 'ruo', '英': 'ying', '很': 'hen', '想': 'xiang', '成': 'cheng', '全': 'quan', '朴': 'pu', '树': 'shu', '平': 'ping', '凡': 'fan',
-  '路': 'lu', '生': 'sheng', '夏': 'xia', '花': 'hua', '白': 'bai', '桦': 'hua', '树': 'shu', '许': 'xu', '巍': 'wei', '蓝': 'lan', '莲': 'lian',
-  '曾': 'zeng', '经': 'jing', '你': 'ni', '故': 'gu', '乡': 'xiang', '执': 'zhi', '着': 'zhe', '汪': 'wang', '峰': 'feng', '怒': 'nu', '放': 'fang',
-  '存': 'cun', '飞': 'fei', '得': 'de', '更': 'geng', '高': 'gao', '春': 'chun', '天': 'tian', '里': 'li', '海': 'hai', '阔': 'kuo', '空': 'kong',
-  '光': 'guang', '辉': 'hui', '岁': 'sui', '喜': 'xi', '欢': 'huan', '真': 'zhen', '的': 'de', '重': 'chong', '庆': 'qing', '成': 'cheng', '都': 'du',
-  '赵': 'zhao', '雷': 'lei', '南': 'nan', '山': 'shan', '少年': 'shaonian', '消': 'xiao', '愁': 'chou', '毛': 'mao', '不': 'bu', '易': 'yi', '像': 'xiang',
-  '像': 'xiang', '借': 'jie', '无': 'wu', '问': 'wen', '西': 'xi', '东': 'dong', '体': 'ti', '面': 'mian', '于': 'yu', '文': 'wen', '文': 'wen',
-  '说': 'shuo', '散': 'san', '就': 'jiu', '袁': 'yuan', '娅': 'ya', '维': 'wei', '芒': 'mang', '种': 'zhong', '音': 'yin', '乐': 'yue', '华': 'hua',
-  '语': 'yu', '国': 'guo', '粤': 'yue', '英': 'ying', '韩': 'han', '日': 'ri', '无': 'wu', '损': 'sun', '现': 'xian', '场': 'chang', '大': 'da',
-  '高': 'gao', '低': 'di', '重': 'zhong', '低': 'di', '吉': 'ji', '他': 'ta', '贝': 'bei', '斯': 'si', '鼓': 'gu', '电': 'dian', '摇': 'yao', '滚': 'gun',
-  '民': 'min', '谣': 'yao', '流': 'liu', '行': 'xing', '古': 'gu', '风': 'feng', '纯': 'chun', '配': 'pei', '电': 'dian', '视': 'shi', '剧': 'ju'
-};
+const PINYIN_RAW_PAIRS: Array<[string, string]> = [
+  ['一', 'yi'], ['二', 'er'], ['三', 'san'], ['四', 'si'], ['五', 'wu'], ['六', 'liu'], ['七', 'qi'], ['八', 'ba'], ['九', 'jiu'], ['十', 'shi'], ['百', 'bai'], ['千', 'qian'], ['万', 'wan'],
+  ['晴', 'qing'], ['天', 'tian'], ['周', 'zhou'], ['杰', 'jie'], ['伦', 'lun'], ['夜', 'ye'], ['的', 'de'], ['第', 'di'], ['章', 'zhang'], ['青', 'qing'], ['花', 'hua'], ['瓷', 'ci'],
+  ['告', 'gao'], ['白', 'bai'], ['气', 'qi'], ['球', 'qiu'], ['稻', 'dao'], ['香', 'xiang'], ['爱', 'ai'], ['在', 'zai'], ['西', 'xi'], ['元', 'yuan'], ['前', 'qian'], ['枫', 'feng'],
+  ['起', 'qi'], ['风', 'feng'], ['了', 'le'], ['峰', 'feng'], ['戚', 'qi'], ['年', 'nian'], ['念', 'nian'], ['陈', 'chen'], ['奕', 'yi'], ['迅', 'xun'], ['浮', 'fu'], ['夸', 'kua'],
+  ['孤', 'gu'], ['勇', 'yong'], ['者', 'zhe'], ['红', 'hong'], ['豆', 'dou'], ['王', 'wang'], ['菲', 'fei'], ['传', 'chuan'], ['奇', 'qi'], ['匆', 'cong'], ['那', 'na'],
+  ['林', 'lin'], ['俊', 'jun'], ['杰', 'jie'], ['江', 'jiang'], ['南', 'nan'], ['修', 'xiu'], ['炼', 'lian'], ['情', 'qing'], ['歌', 'ge'], ['不', 'bu'], ['为', 'wei'], ['谁', 'shui'],
+  ['而', 'er'], ['作', 'zuo'], ['可', 'ke'], ['惜', 'xi'], ['没', 'mei'], ['如', 'ru'], ['果', 'guo'], ['学', 'xue'], ['友', 'you'], ['吻', 'wen'], ['别', 'bie'], ['遥', 'yao'],
+  ['远', 'yuan'], ['她', 'ta'], ['李', 'li'], ['荣', 'rong'], ['浩', 'hao'], ['少', 'shao'], ['有', 'you'], ['克', 'ke'], ['勤', 'qin'], ['月', 'yue'],
+  ['半', 'ban'], ['小', 'xiao'], ['曲', 'qu'], ['日', 'ri'], ['邓', 'deng'], ['紫', 'zi'], ['棋', 'qi'], ['泡', 'pao'], ['沫', 'mo'], ['光', 'guang'],
+  ['莫', 'mo'], ['文', 'wen'], ['蔚', 'wei'], ['阴', 'yin'], ['盛', 'sheng'], ['夏', 'xia'], ['慢', 'man'], ['冷', 'leng'], ['暖', 'nuan'], ['孙', 'sun'], ['燕', 'yan'],
+  ['姿', 'zi'], ['遇', 'yu'], ['见', 'jian'], ['绿', 'lv'], ['我', 'wo'], ['怀', 'huai'], ['梁', 'liang'], ['静', 'jing'], ['茹', 'ru'],
+  ['宁', 'ning'], ['书', 'shu'], ['会', 'hui'], ['呼', 'hu'], ['吸', 'xi'], ['痛', 'tong'], ['张', 'zhang'],
+  ['惠', 'hui'], ['妹', 'mei'], ['听', 'ting'], ['海', 'hai'], ['记', 'ji'], ['得', 'de'], ['人', 'ren'], ['质', 'zhi'], ['薛', 'xue'], ['之', 'zhi'], ['谦', 'qian'],
+  ['演', 'yan'], ['员', 'yuan'], ['丑', 'chou'], ['怪', 'guai'], ['绅', 'shen'], ['士', 'shi'], ['认', 'ren'], ['真', 'zhen'], ['雪', 'xue'], ['下', 'xia'],
+  ['知', 'zhi'], ['足', 'zu'], ['温', 'wen'], ['柔', 'rou'], ['倔', 'jue'], ['强', 'qiang'], ['后', 'hou'], ['来', 'lai'],
+  ['刘', 'liu'], ['若', 'ruo'], ['英', 'ying'], ['很', 'hen'], ['想', 'xiang'], ['成', 'cheng'], ['全', 'quan'], ['朴', 'pu'], ['树', 'shu'], ['平', 'ping'], ['凡', 'fan'],
+  ['路', 'lu'], ['生', 'sheng'], ['桦', 'hua'], ['许', 'xu'], ['巍', 'wei'], ['蓝', 'lan'], ['莲', 'lian'],
+  ['曾', 'zeng'], ['经', 'jing'], ['你', 'ni'], ['故', 'gu'], ['乡', 'xiang'], ['执', 'zhi'], ['着', 'zhe'], ['汪', 'wang'], ['怒', 'nu'], ['放', 'fang'],
+  ['存', 'cun'], ['飞', 'fei'], ['更', 'geng'], ['高', 'gao'], ['春', 'chun'], ['里', 'li'], ['阔', 'kuo'], ['空', 'kong'],
+  ['辉', 'hui'], ['岁', 'sui'], ['喜', 'xi'], ['欢', 'huan'], ['重', 'chong'], ['庆', 'qing'], ['都', 'du'],
+  ['赵', 'zhao'], ['雷', 'lei'], ['山', 'shan'], ['少年', 'shaonian'], ['消', 'xiao'], ['愁', 'chou'], ['毛', 'mao'], ['易', 'yi'], ['像', 'xiang'],
+  ['借', 'jie'], ['无', 'wu'], ['问', 'wen'], ['东', 'dong'], ['体', 'ti'], ['面', 'mian'], ['于', 'yu'],
+  ['说', 'shuo'], ['散', 'san'], ['就', 'jiu'], ['袁', 'yuan'], ['娅', 'ya'], ['维', 'wei'], ['芒', 'mang'], ['种', 'zhong'], ['音', 'yin'], ['乐', 'yue'], ['华', 'hua'],
+  ['语', 'yu'], ['国', 'guo'], ['粤', 'yue'], ['韩', 'han'], ['损', 'sun'], ['现', 'xian'], ['场', 'chang'], ['大', 'da'],
+  ['低', 'di'], ['吉', 'ji'], ['他', 'ta'], ['贝', 'bei'], ['斯', 'si'], ['鼓', 'gu'], ['电', 'dian'], ['摇', 'yao'], ['滚', 'gun'],
+  ['民', 'min'], ['谣', 'yao'], ['流', 'liu'], ['行', 'xing'], ['古', 'gu'], ['纯', 'chun'], ['配', 'pei'], ['视', 'shi'], ['剧', 'ju']
+];
+
+const PINYIN_DICT: Record<string, string> = Object.fromEntries(PINYIN_RAW_PAIRS);
 
 /**
  * Convert string to pinyin string and initials
