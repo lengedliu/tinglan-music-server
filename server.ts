@@ -1627,6 +1627,81 @@ let xiaomiDevices: any[] = rawXiaomiDevices.map((d: any) => {
 });
 let miotConfig = loadJson(CONFIG_FILE, DEFAULT_CONFIG);
 
+// Dynamically refresh Navidrome song and playlist credentials across stored records
+function refreshNavidromeSongCredentials(): { songsUpdated: number; playlistsUpdated: number } {
+  if (!navidromeConfig.serverUrl || !navidromeConfig.username) {
+    return { songsUpdated: 0, playlistsUpdated: 0 };
+  }
+  const srvUrl = String(navidromeConfig.serverUrl || '').trim().replace(/\/+$/, '');
+  const passQuery = getSubsonicPassAuthQuery(navidromeConfig.username, navidromeConfig.password);
+  let songsUpdated = 0;
+
+  for (const song of storedSongs) {
+    const isNavi = (song.id && String(song.id).startsWith('navidrome-')) ||
+                   (song.url && (/rest\/stream/i.test(song.url) || /rest\/stream\.view/i.test(song.url)));
+    if (isNavi) {
+      let rawId = '';
+      if (song.id && String(song.id).startsWith('navidrome-')) {
+        rawId = String(song.id).replace(/^navidrome-/, '');
+      } else if (song.url) {
+        const m = song.url.match(/[?&]id=([^&]+)/);
+        if (m) rawId = decodeURIComponent(m[1]);
+      }
+      if (rawId) {
+        song.url = `${srvUrl}/rest/stream?id=${encodeURIComponent(rawId)}&${passQuery}`;
+        // Also update coverArt if it was from Navidrome
+        if (song.coverUrl && (/rest\/getCoverArt/i.test(song.coverUrl) || song.coverUrl.includes(':4533') || song.coverUrl.includes(srvUrl))) {
+          let coverId = rawId;
+          const cm = song.coverUrl.match(/[?&]id=([^&]+)/);
+          if (cm) coverId = decodeURIComponent(cm[1]);
+          song.coverUrl = `${srvUrl}/rest/getCoverArt?id=${encodeURIComponent(coverId)}&${passQuery}`;
+        }
+        songsUpdated++;
+      }
+    }
+  }
+
+  if (songsUpdated > 0) {
+    saveJson(SONGS_FILE, storedSongs);
+    console.log(`[Navidrome] 🔄 已自动使用最新凭据更新 ${songsUpdated} 首历史导入歌曲的拉流与封面鉴权`);
+  }
+
+  let playlistsUpdated = 0;
+  for (const pl of storedPlaylists) {
+    const isNaviPl = (pl.id && String(pl.id).startsWith('navidrome-pl-')) ||
+                     (pl.coverUrl && (/rest\/getCoverArt/i.test(pl.coverUrl) || pl.coverUrl.includes(':4533') || pl.coverUrl.includes(srvUrl)));
+    if (isNaviPl) {
+      let coverId = '';
+      if (pl.coverUrl) {
+        const cm = pl.coverUrl.match(/[?&]id=([^&]+)/);
+        if (cm) coverId = decodeURIComponent(cm[1]);
+      }
+      if (!coverId && pl.id && String(pl.id).startsWith('navidrome-pl-')) {
+        coverId = String(pl.id).replace(/^navidrome-pl-/, '');
+      }
+      if (coverId) {
+        pl.coverUrl = `${srvUrl}/rest/getCoverArt?id=${encodeURIComponent(coverId)}&${passQuery}`;
+        playlistsUpdated++;
+      }
+    }
+  }
+
+  if (playlistsUpdated > 0) {
+    saveJson(PLAYLISTS_FILE, storedPlaylists);
+    console.log(`[Navidrome] 🔄 已自动使用最新凭据更新 ${playlistsUpdated} 个歌单封面鉴权`);
+  }
+
+  return { songsUpdated, playlistsUpdated };
+}
+
+if (navidromeConfig.serverUrl && navidromeConfig.username && navidromeConfig.password) {
+  try {
+    refreshNavidromeSongCredentials();
+  } catch (err) {
+    console.warn('[Navidrome] Initial credential refresh warning:', err);
+  }
+}
+
 // Safe active stream IP tracker with TTL to eliminate unbounded memory growth
 const activeStreamIpsTracker = new Map<string, number>();
 const activeStreamIps = {
@@ -5846,22 +5921,42 @@ const streamAudioHandler = async (req: Request, res: Response) => {
   // If the audio file does not exist on local disk, but belongs to Navidrome or has a remote stream URL,
   // proxy the stream directly with transparent Range (HTTP 206) & Content-Type forwarding so speakers play immediately!
   let remoteStreamUrl: string | null = null;
+  const isNavidromeTrack = cleanSongId.startsWith('navidrome-') ||
+    (foundSong?.id && String(foundSong.id).startsWith('navidrome-')) ||
+    (foundSong?.url && (/rest\/stream/i.test(foundSong.url) || /rest\/stream\.view/i.test(foundSong.url)));
+
   if (!localFilePath) {
-    if (foundSong && foundSong.url && /^https?:\/\//i.test(foundSong.url) && !foundSong.url.includes('/api/stream/')) {
+    if (isNavidromeTrack && navidromeConfig.serverUrl && navidromeConfig.username) {
+      if (isSafeRemoteStreamUrl(navidromeConfig.serverUrl)) {
+        let rawNaviId = '';
+        if (cleanSongId.startsWith('navidrome-')) {
+          rawNaviId = cleanSongId.replace(/^navidrome-/, '');
+        } else if (foundSong?.id && String(foundSong.id).startsWith('navidrome-')) {
+          rawNaviId = String(foundSong.id).replace(/^navidrome-/, '');
+        } else if (foundSong?.url) {
+          const m = foundSong.url.match(/[?&]id=([^&]+)/);
+          if (m) rawNaviId = decodeURIComponent(m[1]);
+        }
+        if (rawNaviId) {
+          // Dynamic authorization: always construct live URL using CURRENT navidrome credentials!
+          const authQuery = navidromeConfig.password
+            ? getSubsonicPassAuthQuery(navidromeConfig.username, navidromeConfig.password)
+            : getSubsonicAuthQuery(navidromeConfig.username, navidromeConfig.password);
+          remoteStreamUrl = `${navidromeConfig.serverUrl.replace(/\/+$/, '')}/rest/stream?id=${encodeURIComponent(rawNaviId)}&${authQuery}`;
+        }
+      } else {
+        console.warn(`[Security Alert] Blocked unsafe Navidrome serverUrl: ${navidromeConfig.serverUrl}`);
+        return res.status(403).json({ error: 'Unsafe Navidrome server address is forbidden' });
+      }
+    }
+
+    // Fallback: If not dynamically resolved as Navidrome or no active config, check foundSong.url
+    if (!remoteStreamUrl && foundSong && foundSong.url && /^https?:\/\//i.test(foundSong.url) && !foundSong.url.includes('/api/stream/')) {
       if (isSafeRemoteStreamUrl(foundSong.url)) {
         remoteStreamUrl = foundSong.url;
       } else {
         console.warn(`[Security Alert] Blocked unsafe remote stream URL (SSRF): ${foundSong.url}`);
         return res.status(403).json({ error: 'Unsafe remote stream URL is forbidden' });
-      }
-    } else if (cleanSongId.startsWith('navidrome-') && navidromeConfig.serverUrl && navidromeConfig.username) {
-      if (isSafeRemoteStreamUrl(navidromeConfig.serverUrl)) {
-        const rawNaviId = cleanSongId.replace(/^navidrome-/, '');
-        const authQuery = getSubsonicAuthQuery(navidromeConfig.username, navidromeConfig.password);
-        remoteStreamUrl = `${navidromeConfig.serverUrl}/rest/stream.view?id=${rawNaviId}&${authQuery}`;
-      } else {
-        console.warn(`[Security Alert] Blocked unsafe Navidrome serverUrl: ${navidromeConfig.serverUrl}`);
-        return res.status(403).json({ error: 'Unsafe Navidrome server address is forbidden' });
       }
     }
   }
@@ -5922,11 +6017,47 @@ const streamAudioHandler = async (req: Request, res: Response) => {
       }
 
       if (!remoteRes.ok && remoteRes.status !== 206) {
+        if (isNavidromeTrack && navidromeConfig.serverUrl && navidromeConfig.username && (remoteRes.status === 401 || remoteRes.status === 403 || remoteRes.status === 404)) {
+          // Fallback to MD5 token authentication or stream.view
+          try {
+            let rawNaviId = cleanSongId.replace(/^navidrome-/, '');
+            if (!rawNaviId && foundSong?.id) rawNaviId = String(foundSong.id).replace(/^navidrome-/, '');
+            if (!rawNaviId && foundSong?.url) {
+              const m = foundSong.url.match(/[?&]id=([^&]+)/);
+              if (m) rawNaviId = decodeURIComponent(m[1]);
+            }
+            if (rawNaviId) {
+              const srvUrl = navidromeConfig.serverUrl.replace(/\/+$/, '');
+              const altAuthQuery = getSubsonicAuthQuery(navidromeConfig.username, navidromeConfig.password);
+              const altUrl = `${srvUrl}/rest/stream.view?id=${encodeURIComponent(rawNaviId)}&${altAuthQuery}`;
+              console.log(`[StreamServer] 🔄 尝试备用 Subsonic MD5 Token 鉴权拉流: ${altUrl.replace(/([?&]t=)[^&]+/, '$1****')}`);
+              const altRes = await fetch(altUrl, {
+                method: req.method === 'HEAD' ? 'GET' : (req.method || 'GET'),
+                headers: proxyHeaders,
+                signal: abortController.signal
+              });
+              if (altRes.ok || altRes.status === 206) {
+                remoteRes = altRes;
+                remoteStreamUrl = altUrl;
+              }
+            }
+          } catch (altErr) {
+            console.warn('[StreamServer] Alternate stream attempt failed:', altErr);
+          }
+        }
+      }
+
+      if (!remoteRes.ok && remoteRes.status !== 206) {
         console.warn(`[StreamServer] ⚠️ Navidrome 远端音频流响应异常: HTTP ${remoteRes.status}`);
         return res.status(remoteRes.status).json({
           error: 'Remote audio stream error',
           message: `Navidrome 远端服务器响应状态错误 (HTTP ${remoteRes.status})，请检查曲目或 Navidrome 账号配置`
         });
+      }
+
+      // Update in-memory song record if dynamic stream was refreshed successfully
+      if (foundSong && remoteStreamUrl && foundSong.url !== remoteStreamUrl && isNavidromeTrack) {
+        foundSong.url = remoteStreamUrl;
       }
 
       const contentType = remoteRes.headers.get('content-type') || 'audio/mpeg';
@@ -6686,7 +6817,8 @@ app.post('/api/navidrome/config', (req: Request, res: Response) => {
     serverVersion: navidromeConfig.serverVersion || ''
   };
   saveJson(NAVIDROME_FILE, navidromeConfig);
-  res.json({ success: true, config: sanitizeNavidromeConfig(navidromeConfig) });
+  const refreshStats = refreshNavidromeSongCredentials();
+  res.json({ success: true, config: sanitizeNavidromeConfig(navidromeConfig), refreshStats });
 });
 
 // Test Navidrome connection
@@ -6777,12 +6909,18 @@ app.post('/api/navidrome/test', async (req: Request, res: Response) => {
         serverVersion: detectedServerVer 
       };
       saveJson(NAVIDROME_FILE, navidromeConfig);
+      const refreshStats = refreshNavidromeSongCredentials();
+
+      const refreshMsg = refreshStats.songsUpdated > 0 
+        ? `，已同步更新 ${refreshStats.songsUpdated} 首已导入歌曲的播放凭据` 
+        : '';
 
       return res.json({
         success: true,
-        message: `成功连通 Navidrome 服务器！(检测到 API 协议版本: v${detectedApiVer})`,
+        message: `成功连通 Navidrome 服务器！(检测到 API 协议版本: v${detectedApiVer})${refreshMsg}`,
         version: detectedServerVer,
         apiVersion: detectedApiVer,
+        refreshStats,
         debugLogs
       });
     } else {
@@ -6935,6 +7073,7 @@ app.post('/api/navidrome/sync', async (req: Request, res: Response) => {
         serverVersion: navidromeConfig.serverVersion || ''
       };
       saveJson(NAVIDROME_FILE, navidromeConfig);
+      refreshNavidromeSongCredentials();
     }
 
     return res.json({

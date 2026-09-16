@@ -387,6 +387,11 @@ export const NavidromeModal: React.FC<NavidromeModalProps> = ({
               <div className="space-y-0.5">
                 <p className="font-bold">{testResult.success ? 'Navidrome 连接成功！' : '连接测试未通过'}</p>
                 <p className="opacity-90 font-mono text-[11px]">{testResult.message}</p>
+                {testResult.refreshStats && testResult.refreshStats.songsUpdated > 0 && (
+                  <p className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">
+                    ✓ 已自动刷新 {testResult.refreshStats.songsUpdated} 首历史导入歌曲的流媒体凭据，改密后直接播放即可！
+                  </p>
+                )}
                 {testResult.version && (
                   <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-mono">Server Engine: {testResult.version}</p>
                 )}

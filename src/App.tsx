@@ -508,7 +508,10 @@ export default function App() {
       } else {
         if (audioRef.current) {
           audioRef.current.volume = volume;
-          const playSrc = (currentSong.url && !currentSong.url.includes('pixabay')) ? currentSong.url : `/api/stream/${encodeURIComponent(currentSong.id)}`;
+          const isNavi = Boolean((currentSong.id && currentSong.id.startsWith('navidrome-')) || (currentSong.url && currentSong.url.includes('/rest/stream')));
+          const playSrc = (currentSong.url && !currentSong.url.includes('pixabay') && !isNavi) 
+            ? currentSong.url 
+            : `/api/stream/${encodeURIComponent(currentSong.id)}`;
           if (!audioRef.current.src || !audioRef.current.src.includes(currentSong.id)) {
             audioRef.current.src = playSrc;
           }
@@ -548,7 +551,10 @@ export default function App() {
       castSongToDevice(song, activeDevice, newQueue);
     } else {
       // In Local Playback Mode: load and play HTML5 audio directly through browser/computer speakers
-      const playSrc = (song.url && !song.url.includes('pixabay')) ? song.url : `/api/stream/${encodeURIComponent(song.id)}`;
+      const isNavi = Boolean((song.id && song.id.startsWith('navidrome-')) || (song.url && song.url.includes('/rest/stream')));
+      const playSrc = (song.url && !song.url.includes('pixabay') && !isNavi) 
+        ? song.url 
+        : `/api/stream/${encodeURIComponent(song.id)}`;
       if (audioRef.current) {
         audioRef.current.volume = volume;
         // Check if src needs update without triggering redundant reload
@@ -1040,7 +1046,10 @@ export default function App() {
 
       // If playback was active, seamlessly resume on local browser audio
       if (currentSong && isPlaying) {
-        const playSrc = (currentSong.url && !currentSong.url.includes('pixabay')) ? currentSong.url : `/api/stream/${currentSong.id}`;
+        const isNavi = Boolean((currentSong.id && currentSong.id.startsWith('navidrome-')) || (currentSong.url && currentSong.url.includes('/rest/stream')));
+        const playSrc = (currentSong.url && !currentSong.url.includes('pixabay') && !isNavi) 
+          ? currentSong.url 
+          : `/api/stream/${encodeURIComponent(currentSong.id)}`;
         if (audioRef.current) {
           audioRef.current.src = playSrc;
           audioRef.current.currentTime = currentTime;
