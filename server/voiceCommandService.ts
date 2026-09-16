@@ -3,6 +3,7 @@ import path from 'path';
 import { Song, Playlist } from '../src/types';
 import { generateMinaRequestId, buildMinaHeaders } from './xiaomiPassport';
 import { computeSongMatchScore } from './pinyinHelper';
+import { xiaomiCircuitBreaker } from './circuitBreaker';
 
 export interface VoiceCommandRule {
   id: string;
@@ -400,6 +401,20 @@ export class VoiceCommandService {
     if (!this.isRunning) return;
 
     let nextInterval = 2500;
+
+    // Check circuit breaker before polling
+    const canReq = xiaomiCircuitBreaker.canRequest('mina_poll');
+    if (!canReq.allowed) {
+      const waitMs = (canReq.cooldownRemainingSec || 30) * 1000;
+      nextInterval = Math.max(15000, waitMs);
+      this.currentActualIntervalMs = nextInterval;
+      console.log(`[VoiceCommandService] 🛡️ 熔断保护/滑块拦截生效中，语音轮询暂停 ${Math.ceil(nextInterval / 1000)} 秒 (${canReq.reason || '等待冷却'})`);
+      if (this.isRunning) {
+        this.timer = setTimeout(() => this.pollLoop(), nextInterval);
+      }
+      return;
+    }
+
     try {
       await this.pollLatestConversations();
       this.consecutiveErrors = 0;
@@ -408,7 +423,7 @@ export class VoiceCommandService {
       this.currentActualIntervalMs = nextInterval;
     } catch (err: any) {
       this.consecutiveErrors++;
-      const backoff = Math.min(20000, 3000 * Math.pow(1.3, Math.min(this.consecutiveErrors, 5)));
+      const backoff = Math.min(30000, 3000 * Math.pow(1.4, Math.min(this.consecutiveErrors, 5)));
       nextInterval = backoff;
     }
 
@@ -443,14 +458,20 @@ export class VoiceCommandService {
         });
 
         if (!res.ok) {
-          if (res.status === 401) {
-            console.warn('[VoiceCommandService] ⚠️ Mina 云端鉴权过期 (401 Unauthorized)');
+          if (res.status === 401 || res.status === 429 || res.status === 403) {
+            xiaomiCircuitBreaker.recordFailure(`Mina Cloud HTTP ${res.status}`, res.status);
+            console.warn(`[VoiceCommandService] ⚠️ Mina 云端响应异常 (HTTP ${res.status})，已记录至风控熔断器`);
           }
           continue;
         }
 
         const json: any = await res.json();
         if (!json) continue;
+
+        if (json.code === 70016 || json.code === 87001 || json.captchaUrl) {
+          xiaomiCircuitBreaker.recordFailure('Geetest captcha required', 403, json);
+          return [];
+        }
 
         let records: any[] = [];
         if (json.data) {
@@ -468,6 +489,7 @@ export class VoiceCommandService {
         }
 
         if (Array.isArray(records)) {
+          xiaomiCircuitBreaker.recordSuccess();
           return records;
         }
       } catch (err: any) {
@@ -476,6 +498,7 @@ export class VoiceCommandService {
     }
 
     if (lastError) {
+      xiaomiCircuitBreaker.recordFailure(lastError);
       throw lastError;
     }
     return [];

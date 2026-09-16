@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import QRCode from 'qrcode';
 import fs from 'fs';
 import path from 'path';
+import { xiaomiCircuitBreaker } from './circuitBreaker';
 
 let cachedClientDeviceId = '';
 
@@ -264,9 +265,18 @@ export class XiaomiPassport {
     }
 
     try {
+      const canReq = xiaomiCircuitBreaker.canRequest('passport_login');
+      if (!canReq.allowed) {
+        return {
+          success: false,
+          error: `登录请求被安全频控保护拦截: ${canReq.reason || '正在冷却中'}。请稍后重试或切换至【扫码登录】。`
+        };
+      }
+
       // 1. Get login metadata
       const params = await this.getServiceLoginParams(sid);
       if (!params._sign || !params.qs) {
+        xiaomiCircuitBreaker.recordFailure('未能从小米认证服务器获取登录签名');
         return { success: false, error: '未能从小米认证服务器获取登录签名，请检查网络连通性' };
       }
 
@@ -311,6 +321,7 @@ export class XiaomiPassport {
       try {
         data = JSON.parse(cleanJson);
       } catch (parseErr) {
+        xiaomiCircuitBreaker.recordFailure(`小米认证响应解析异常: ${rawText.slice(0, 100)}`, res.status);
         return { success: false, error: `小米认证响应解析异常: ${rawText.slice(0, 100)}` };
       }
 
@@ -321,10 +332,13 @@ export class XiaomiPassport {
         } else if (data.code === 70002) {
           errorMsg = '该小米账号不存在 (错误码: 70002)，请检查输入';
         } else if (data.code === 87001) {
-          errorMsg = '触发了小米安全图形验证码，请在输入验证码后重试，或使用【二维码扫码】/【Token 直连】模式';
+          errorMsg = '触发了小米安全图形验证码/滑块挑战，请在输入验证码后重试，或使用【二维码扫码】/【Token 直连】模式';
         } else if (data.notificationUrl) {
           errorMsg = '触发了小米官方二次安全验证 (2FA)。推荐使用【扫码登录】或直接粘贴【ServiceToken】直连';
         }
+
+        // Record risk-control or captcha challenges
+        xiaomiCircuitBreaker.recordFailure(errorMsg, res.status, data);
 
         return {
           success: false,
@@ -366,12 +380,15 @@ export class XiaomiPassport {
       }
 
       if (!userId || !serviceToken) {
+        xiaomiCircuitBreaker.recordFailure('未获取到有效授权令牌');
         return {
           success: false,
           code: 87002,
           error: '小米安全风控拦截：未获取到有效授权令牌 (serviceToken)。建议使用【扫码登录】模式！'
         };
       }
+
+      xiaomiCircuitBreaker.recordSuccess();
 
       return {
         success: true,
