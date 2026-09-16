@@ -302,7 +302,7 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
                 <Mic className="w-6 h-6" />
               </div>
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <h3 className="text-lg font-bold text-white tracking-tight">小爱音箱语音口令与点歌引擎</h3>
                   <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold border transition ${
                     status?.isRunning
@@ -311,9 +311,29 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
                   }`}>
                     {status?.isRunning ? '● 语音捕获运行中' : '○ 已停止'}
                   </span>
+                  {status?.isRunning && (
+                    <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold border ${
+                      status.pollingMode === 'burst'
+                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/40 animate-pulse'
+                        : status.pollingMode === 'idle' || status.pollingMode === 'standby'
+                        ? 'bg-blue-500/15 text-blue-300 border-blue-500/30'
+                        : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                    }`}>
+                      {status.pollingMode === 'burst'
+                        ? `⚡ 极速捕获 (800ms${status.burstRemainingSec ? ` · 剩${status.burstRemainingSec}s` : ''})`
+                        : status.pollingMode === 'idle'
+                        ? '💤 闲时节流巡检 (4.5s)'
+                        : status.pollingMode === 'standby'
+                        ? '🌙 深度待机 (6.5s)'
+                        : `常规巡检 (${((status.pollIntervalMs || 2500) / 1000).toFixed(1)}s)`}
+                    </span>
+                  )}
+                  <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-purple-500/15 text-purple-300 border border-purple-500/30">
+                    拼音/同音错别字容错
+                  </span>
                 </div>
                 <p className="text-xs text-zinc-400 mt-1 max-w-2xl leading-relaxed">
-                  实时捕获小爱音箱对话（对音箱说“小爱同学，来首稻香”），自适应解析歌手与曲目，智能劫持并投播至私有高保真曲库。
+                  实时捕获小爱音箱对话（对音箱说“小爱同学，来首稻香”），自适应解析歌手与曲目，智能抢播熔断并投播至私有高保真曲库。
                 </p>
               </div>
             </div>
@@ -349,7 +369,7 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
               onClick={handlePollNow}
               disabled={isPollingNow}
               className="px-4 py-2.5 rounded-2xl bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-medium border border-white/10 flex items-center justify-center gap-2 transition cursor-pointer shrink-0"
-              title="立即向小爱云端发起对话查询"
+              title="立即向小爱云端发起对话查询并激活动态加速"
             >
               <RefreshCw className={`w-3.5 h-3.5 text-[#FF6700] ${isPollingNow ? 'animate-spin' : ''}`} />
               <span>{isPollingNow ? '正在拉取...' : '立即同步音箱对话'}</span>
@@ -418,22 +438,45 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
             </select>
           </div>
 
-          {/* Polling Interval */}
+          {/* Adaptive Dynamic Polling Switch */}
           <div className="space-y-1.5">
             <label className="text-zinc-400 font-medium flex items-center gap-1.5">
               <Activity className="w-3.5 h-3.5 text-blue-400" />
-              <span>云端巡检轮询频率</span>
+              <span>自适应动态调频 (降载75%)</span>
             </label>
-            <select
-              value={config?.pollIntervalMs || 3000}
-              onChange={(e) => handleUpdateConfig({ pollIntervalMs: Number(e.target.value) })}
-              className="w-full bg-zinc-950 border border-white/10 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-[#FF6700] cursor-pointer"
+            <button
+              type="button"
+              onClick={() => handleUpdateConfig({ adaptivePollingEnabled: !(config?.adaptivePollingEnabled !== false) })}
+              className={`w-full py-2 px-3 rounded-xl border flex items-center justify-between transition cursor-pointer ${
+                config?.adaptivePollingEnabled !== false
+                  ? 'bg-blue-500/10 border-blue-500/30 text-blue-300'
+                  : 'bg-zinc-950 border-white/10 text-zinc-400'
+              }`}
             >
-              <option value={2000}>极速响应 (2秒/次)</option>
-              <option value={3000}>均衡推荐 (3秒/次)</option>
-              <option value={5000}>省流模式 (5秒/次)</option>
-              <option value={8000}>低频待机 (8秒/次)</option>
-            </select>
+              <span>{config?.adaptivePollingEnabled !== false ? '已开启 (突发800ms/闲时退避)' : '固定频率模式'}</span>
+              <span className={`w-2 h-2 rounded-full ${config?.adaptivePollingEnabled !== false ? 'bg-blue-400 animate-pulse' : 'bg-zinc-600'}`} />
+            </button>
+          </div>
+
+          {/* Early Interception */}
+          <div className="space-y-1.5">
+            <label className="text-zinc-400 font-medium flex items-center gap-1.5">
+              <Zap className="w-3.5 h-3.5 text-amber-400" />
+              <span>抢播快速熔断 (截断官方音源)</span>
+            </label>
+            <button
+              type="button"
+              onClick={() => handleUpdateConfig({ earlyInterceptionEnabled: !(config?.earlyInterceptionEnabled !== false) })}
+              className={`w-full py-2 px-3 rounded-xl border flex items-center justify-between transition cursor-pointer ${
+                config?.earlyInterceptionEnabled !== false
+                  ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+                  : 'bg-zinc-950 border-white/10 text-zinc-400'
+              }`}
+              title="命中私有音乐指令时立即静音/暂停官方音频，避免声音打架重叠"
+            >
+              <span>{config?.earlyInterceptionEnabled !== false ? '已启用 (防双音重叠)' : '关闭快速截断'}</span>
+              <span className={`w-2 h-2 rounded-full ${config?.earlyInterceptionEnabled !== false ? 'bg-amber-400' : 'bg-zinc-600'}`} />
+            </button>
           </div>
 
           {/* TTS Response Toggle */}
@@ -454,19 +497,6 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
               <span>{config?.ttsFeedbackEnabled ? '已开启应答朗读' : '静默点歌 (不应答)'}</span>
               <span className={`w-2 h-2 rounded-full ${config?.ttsFeedbackEnabled ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-600'}`} />
             </button>
-          </div>
-
-          {/* Status Metrics */}
-          <div className="space-y-1.5">
-            <label className="text-zinc-400 font-medium flex items-center gap-1.5">
-              <ShieldCheck className="w-3.5 h-3.5 text-purple-400" />
-              <span>规则与日志统计</span>
-            </label>
-            <div className="w-full bg-zinc-950/80 border border-white/5 rounded-xl px-3 py-2 text-zinc-300 flex items-center justify-between">
-              <span>生效规则: {config?.rules.filter(r => r.enabled).length || 0} 条</span>
-              <span className="text-zinc-500">|</span>
-              <span>捕获日志: {logs.length} 条</span>
-            </div>
           </div>
         </div>
 

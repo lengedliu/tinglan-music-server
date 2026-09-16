@@ -288,6 +288,8 @@ export interface VoiceListenerConfig {
   pollIntervalMs: number;
   targetDeviceId?: string;
   ttsFeedbackEnabled: boolean;
+  adaptivePollingEnabled?: boolean;
+  earlyInterceptionEnabled?: boolean;
   rules: VoiceCommandRule[];
 }
 
@@ -296,6 +298,12 @@ export interface VoiceListenerStatus {
   enabled: boolean;
   isLoggedIn?: boolean;
   pollIntervalMs: number;
+  configuredPollIntervalMs?: number;
+  pollingMode?: 'burst' | 'active' | 'idle' | 'standby';
+  burstRemainingSec?: number;
+  timeSinceLastDialogueSec?: number | null;
+  adaptivePollingEnabled?: boolean;
+  earlyInterceptionEnabled?: boolean;
   targetDeviceId: string | null;
   rulesCount: number;
   logsCount: number;

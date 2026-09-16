@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { Song, Playlist } from '../src/types';
 import { generateMinaRequestId, buildMinaHeaders } from './xiaomiPassport';
+import { computeSongMatchScore } from './pinyinHelper';
 
 export interface VoiceCommandRule {
   id: string;
@@ -32,6 +33,8 @@ export interface VoiceListenerConfig {
   pollIntervalMs: number;
   targetDeviceId?: string;
   ttsFeedbackEnabled: boolean;
+  adaptivePollingEnabled?: boolean;
+  earlyInterceptionEnabled?: boolean;
   rules: VoiceCommandRule[];
 }
 
@@ -51,7 +54,7 @@ const DEFAULT_RULES: VoiceCommandRule[] = [
   {
     id: 'rule_control_pause',
     name: '语音暂停/停止',
-    triggerPhrases: ['暂停音乐', '别放了', '先别唱了', '停止播放', '闭嘴', '暂停', '停止', '安静', '别播了'],
+    triggerPhrases: ['暂停音乐', '别放了', '先别唱了', '停止播放', '闭嘴', '暂停', '停止', '安静', '别播了', '不要放了', '不听了'],
     actionType: 'control_command',
     controlAction: 'pause',
     ttsFeedback: '已暂停',
@@ -60,7 +63,7 @@ const DEFAULT_RULES: VoiceCommandRule[] = [
   {
     id: 'rule_control_next',
     name: '语音切歌 (下一首)',
-    triggerPhrases: ['切歌', '换一首', '不要这首', '下一曲', '下一首', '下个歌', '跳过这首', '下一个'],
+    triggerPhrases: ['切歌', '换一首', '不要这首', '下一曲', '下一首', '下个歌', '跳过这首', '下一个', '换首歌', '换首'],
     actionType: 'control_command',
     controlAction: 'next',
     ttsFeedback: '好的，下一首',
@@ -69,7 +72,7 @@ const DEFAULT_RULES: VoiceCommandRule[] = [
   {
     id: 'rule_control_prev',
     name: '语音切歌 (上一首)',
-    triggerPhrases: ['上一首', '上一曲', '重播上一首', '回到上一首', '上一个歌', '上一个'],
+    triggerPhrases: ['上一首', '上一曲', '重播上一首', '回到上一首', '上一个歌', '上一个', '倒回去'],
     actionType: 'control_command',
     controlAction: 'prev',
     ttsFeedback: '好的，上一首',
@@ -97,7 +100,7 @@ const DEFAULT_RULES: VoiceCommandRule[] = [
   {
     id: 'rule_play_favorites',
     name: '播放我喜欢的音乐',
-    triggerPhrases: ['播放收藏', '放我喜欢的歌', '我喜欢的歌', '播放我喜欢', '放收藏', '听我喜欢的歌', '放我喜欢的音乐', '播放红心歌曲'],
+    triggerPhrases: ['播放收藏', '放我喜欢的歌', '我喜欢的歌', '播放我喜欢', '放收藏', '听我喜欢的歌', '放我喜欢的音乐', '播放红心歌曲', '放红心'],
     actionType: 'play_playlist',
     targetPlaylistId: 'favorites',
     ttsFeedback: '好的，为您播放喜欢的音乐',
@@ -106,7 +109,7 @@ const DEFAULT_RULES: VoiceCommandRule[] = [
   {
     id: 'rule_play_random',
     name: '随机播放全部',
-    triggerPhrases: ['随便放点歌', '随机播放', '随心听', '随便听听', '随便放首歌', '来点音乐', '随便放', '随便播', '随便放点'],
+    triggerPhrases: ['随便放点歌', '随机播放', '随心听', '随便听听', '随便放首歌', '来点音乐', '随便放', '随便播', '随便放点', '放点音乐'],
     actionType: 'play_random_all',
     ttsFeedback: '好的，为您随机播放音乐',
     enabled: true
@@ -114,7 +117,7 @@ const DEFAULT_RULES: VoiceCommandRule[] = [
   {
     id: 'rule_play_default_playlist',
     name: '播放当前/默认歌单',
-    triggerPhrases: ['播放本地歌单', '放本地歌', '播放私房歌', '播放我的歌单', '播放默认歌单', '放歌单'],
+    triggerPhrases: ['播放本地歌单', '放本地歌', '播放私房歌', '播放我的歌单', '播放默认歌单', '放歌单', '播放歌曲库'],
     actionType: 'play_playlist',
     targetPlaylistId: 'default',
     ttsFeedback: '好的，正在播放歌单',
@@ -124,7 +127,7 @@ const DEFAULT_RULES: VoiceCommandRule[] = [
   {
     id: 'rule_search_song',
     name: '智能搜歌点歌',
-    triggerPhrases: ['点歌', '来一首', '放一首', '我想听', '播放歌曲', '来首', '放首', '听', '放', '播', '搜'],
+    triggerPhrases: ['点歌', '来一首', '放一首', '我想听', '播放歌曲', '来首', '放首', '听', '放', '播', '搜', '来一曲', '放一曲'],
     actionType: 'play_song_search',
     ttsFeedback: '好的，为您播放 {title}',
     enabled: true
@@ -136,8 +139,10 @@ export class VoiceCommandService {
 
   private config: VoiceListenerConfig = {
     enabled: true,
-    pollIntervalMs: 3000,
+    pollIntervalMs: 2500,
     ttsFeedbackEnabled: true,
+    adaptivePollingEnabled: true,
+    earlyInterceptionEnabled: true,
     rules: DEFAULT_RULES
   };
 
@@ -151,12 +156,18 @@ export class VoiceCommandService {
   private lastSeenQueryTime = 0;
   private recentCommands: Map<string, number> = new Map();
 
+  // Adaptive polling state
+  private lastDialogueDetectedTime = 0;
+  private burstPollingUntil = 0;
+  private currentActualIntervalMs = 2500;
+
   // External bindings provided by server.ts
   private getSongsFn: (() => Song[]) | null = null;
   private getPlaylistsFn: (() => Playlist[]) | null = null;
   private playSongFn: ((song: Song, playlistName?: string, deviceId?: string) => Promise<boolean>) | null = null;
   private playPlaylistFn: ((playlistId: string, deviceId?: string) => Promise<boolean>) | null = null;
   private controlPlaybackFn: ((action: 'next' | 'prev' | 'pause' | 'stop' | 'resume' | 'volume_up' | 'volume_down', deviceId?: string) => Promise<boolean | { success: boolean; song?: any; message?: string }>) | null = null;
+  private earlyStopFn: ((deviceId?: string) => Promise<any>) | null = null;
   private sendTtsFn: ((deviceId: string, text: string) => Promise<any>) | null = null;
   private getAuthInfoFn: (() => { userId?: string; serviceToken?: string; devices: any[] }) | null = null;
 
@@ -177,7 +188,6 @@ export class VoiceCommandService {
         const raw = fs.readFileSync(VOICE_CONFIG_FILE, 'utf8');
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed === 'object') {
-          // Merge rules so newly added system rules are included
           const loadedRules: VoiceCommandRule[] = Array.isArray(parsed.rules) ? parsed.rules : [];
           const existingIds = new Set(loadedRules.map(r => r.id));
           const mergedRules = [...loadedRules];
@@ -215,6 +225,7 @@ export class VoiceCommandService {
     playSong: (song: Song, playlistName?: string, deviceId?: string) => Promise<boolean>;
     playPlaylist: (playlistId: string, deviceId?: string) => Promise<boolean>;
     controlPlayback: (action: 'next' | 'prev' | 'pause' | 'stop' | 'resume' | 'volume_up' | 'volume_down', deviceId?: string) => Promise<boolean | { success: boolean; song?: Song | null; message?: string }>;
+    earlyStop?: (deviceId?: string) => Promise<any>;
     sendTts: (deviceId: string, text: string) => Promise<any>;
     getAuthInfo: () => { userId?: string; serviceToken?: string; devices: any[] };
   }) {
@@ -223,6 +234,7 @@ export class VoiceCommandService {
     this.playSongFn = options.playSong;
     this.playPlaylistFn = options.playPlaylist;
     this.controlPlaybackFn = options.controlPlayback;
+    this.earlyStopFn = options.earlyStop || null;
     this.sendTtsFn = options.sendTts;
     this.getAuthInfoFn = options.getAuthInfo;
 
@@ -259,10 +271,10 @@ export class VoiceCommandService {
     this.isRunning = true;
     this.config.enabled = true;
     this.saveConfig();
-    // Baseline timestamp 5s in the past to prevent reprocessing old records
     this.lastProcessedTimestamp = Date.now() - 5000;
+    this.boostToBurstMode(20000);
     this.pollLoop();
-    console.log('[VoiceCommandService] 🎙️ 小爱语音口令自适应捕获引擎已启动');
+    console.log('[VoiceCommandService] 🎙️ 小爱语音口令自适应捕获引擎已启动 (含拼音容错与自适应动态退避)');
   }
 
   public stop() {
@@ -276,14 +288,55 @@ export class VoiceCommandService {
     console.log('[VoiceCommandService] ⏸️ 小爱语音口令引擎已暂停');
   }
 
+  /**
+   * Boost polling to high-speed burst mode (800ms) for responsiveness
+   */
+  public boostToBurstMode(durationMs = 45000) {
+    const now = Date.now();
+    this.lastDialogueDetectedTime = now;
+    this.burstPollingUntil = Math.max(this.burstPollingUntil, now + durationMs);
+  }
+
+  /**
+   * Calculate current polling interval based on activity level
+   */
+  private computeDynamicInterval(): { intervalMs: number; mode: 'burst' | 'active' | 'idle' | 'standby' } {
+    if (this.config.adaptivePollingEnabled === false) {
+      return { intervalMs: this.config.pollIntervalMs || 2500, mode: 'active' };
+    }
+
+    const now = Date.now();
+    if (now < this.burstPollingUntil) {
+      return { intervalMs: 800, mode: 'burst' };
+    }
+
+    const timeSinceLastDialogue = now - this.lastDialogueDetectedTime;
+    if (timeSinceLastDialogue < 180000) { // < 3 minutes
+      return { intervalMs: 2000, mode: 'active' };
+    } else if (timeSinceLastDialogue < 600000) { // 3 ~ 10 minutes
+      return { intervalMs: 4500, mode: 'idle' };
+    } else { // > 10 minutes deep standby
+      return { intervalMs: 6500, mode: 'standby' };
+    }
+  }
+
   public getStatus() {
     const auth = this.getAuthInfoFn ? this.getAuthInfoFn() : null;
     const hasAuth = Boolean(auth && auth.userId && auth.serviceToken);
+    const dynamic = this.computeDynamicInterval();
+    const now = Date.now();
+
     return {
       isRunning: this.isRunning,
       enabled: this.config.enabled,
       isLoggedIn: hasAuth,
-      pollIntervalMs: this.config.pollIntervalMs,
+      pollIntervalMs: dynamic.intervalMs,
+      configuredPollIntervalMs: this.config.pollIntervalMs,
+      pollingMode: dynamic.mode,
+      burstRemainingSec: Math.max(0, Math.round((this.burstPollingUntil - now) / 1000)),
+      timeSinceLastDialogueSec: this.lastDialogueDetectedTime > 0 ? Math.round((now - this.lastDialogueDetectedTime) / 1000) : null,
+      adaptivePollingEnabled: this.config.adaptivePollingEnabled !== false,
+      earlyInterceptionEnabled: this.config.earlyInterceptionEnabled !== false,
       targetDeviceId: this.config.targetDeviceId || null,
       rulesCount: this.config.rules.length,
       logsCount: this.dialogueLogs.length,
@@ -300,6 +353,8 @@ export class VoiceCommandService {
     const clean = query.trim();
     if (!clean) return;
 
+    this.boostToBurstMode(45000);
+
     // Suppress duplicates within 3s window
     if (this.lastSeenQuery === clean && now - this.lastSeenQueryTime < 3000) {
       return;
@@ -315,6 +370,7 @@ export class VoiceCommandService {
    * Manual or periodic poll trigger returning execution report
    */
   public async pollNow(): Promise<{ success: boolean; message: string; recordsFound: number; lastQuery?: string }> {
+    this.boostToBurstMode(30000);
     if (!this.getAuthInfoFn) {
       return { success: false, message: '未挂载小米音箱认证服务', recordsFound: 0 };
     }
@@ -343,20 +399,21 @@ export class VoiceCommandService {
   private async pollLoop() {
     if (!this.isRunning) return;
 
+    let nextInterval = 2500;
     try {
       await this.pollLatestConversations();
       this.consecutiveErrors = 0;
+      const dynamic = this.computeDynamicInterval();
+      nextInterval = dynamic.intervalMs;
+      this.currentActualIntervalMs = nextInterval;
     } catch (err: any) {
       this.consecutiveErrors++;
-      const backoff = Math.min(15000, this.config.pollIntervalMs * Math.pow(1.3, Math.min(this.consecutiveErrors, 5)));
-      if (this.isRunning) {
-        this.timer = setTimeout(() => this.pollLoop(), backoff);
-      }
-      return;
+      const backoff = Math.min(20000, 3000 * Math.pow(1.3, Math.min(this.consecutiveErrors, 5)));
+      nextInterval = backoff;
     }
 
     if (this.isRunning) {
-      this.timer = setTimeout(() => this.pollLoop(), this.config.pollIntervalMs);
+      this.timer = setTimeout(() => this.pollLoop(), nextInterval);
     }
   }
 
@@ -368,10 +425,6 @@ export class VoiceCommandService {
     const requestId = generateMinaRequestId();
     const cleanHardware = (hardware || 'L16A').replace(/[^a-zA-Z0-9_-]/g, '');
 
-    // List of viable XiaoAi conversation endpoints:
-    // 1. Primary endpoint used by xiaogpt, MiGPT, and XiaoAi OpenAPI
-    // 2. Generic userprofile conversation endpoint
-    // 3. Admin v2 conversation records
     const candidateUrls = [
       `https://userprofile.mina.mi.com/device_profile/v2/conversation?source=dialogu&hardware=${encodeURIComponent(cleanHardware)}&timestamp=${timestamp}&limit=${limit}`,
       `https://userprofile.mina.mi.com/device_profile/v2/conversation?source=dialogu&timestamp=${timestamp}&limit=${limit}`,
@@ -390,13 +443,15 @@ export class VoiceCommandService {
         });
 
         if (!res.ok) {
+          if (res.status === 401) {
+            console.warn('[VoiceCommandService] ⚠️ Mina 云端鉴权过期 (401 Unauthorized)');
+          }
           continue;
         }
 
         const json: any = await res.json();
         if (!json) continue;
 
-        // Parse records array from varying response formats
         let records: any[] = [];
         if (json.data) {
           let parsedData = json.data;
@@ -452,7 +507,6 @@ export class VoiceCommandService {
 
     const latestRecord = records[0];
     const recordId = String(latestRecord.recordId || latestRecord.id || `${latestRecord.time}_${latestRecord.query}`);
-    // Support time in seconds or milliseconds
     const rawTime = Number(latestRecord.time || 0);
     const recordTime = rawTime > 1e11 ? rawTime : rawTime * 1000;
     const query = String(latestRecord.query || latestRecord.text || '').trim();
@@ -469,13 +523,15 @@ export class VoiceCommandService {
       this.lastProcessedTimestamp = recordTime;
     }
 
+    this.boostToBurstMode(45000);
+
     console.log(`[VoiceCommandService] 🎙️ 音箱云端捕获新语音: “${query}” (设备: ${deviceName})`);
     await this.processVoiceQuery(query, deviceId, deviceName, 'speaker_mina_poll');
     return records;
   }
 
   /**
-   * Process and match voice query against rules with intelligent priority
+   * Process and match voice query against rules with intelligent priority and phonetics
    */
   public async processVoiceQuery(
     query: string,
@@ -488,11 +544,12 @@ export class VoiceCommandService {
       return { matched: false, summary: '语音内容为空' };
     }
 
-    // 1. Clean wake words & punctuation
-    // XiaoAi commonly prepends "小爱同学", "小爱", "帮我", "请帮我", "给我"
+    this.boostToBurstMode(45000);
+
+    // 1. Clean wake words, polite prefixes & punctuation
     let cleanQuery = rawQuery
       .replace(/^[，。！？!?~\s]+|[，。！？!?~\s]+$/g, '')
-      .replace(/^(小爱同学|小爱|给我|帮我|请帮我|麻烦|我想|我想听听|我想听|请|立刻|马上)[\s，,。！!:]*/i, '')
+      .replace(/^(小爱同学|小爱|给我|帮我|请帮我|麻烦|我想|我想听听|我想听|请|立刻|马上|能不能|麻烦你)[\s，,。！!:]*/i, '')
       .trim();
 
     if (!cleanQuery) cleanQuery = rawQuery;
@@ -516,20 +573,17 @@ export class VoiceCommandService {
 
     // Sort rules by specificity (control & playlist commands have higher priority than generic search)
     const enabledRules = [...this.config.rules.filter(r => r.enabled)].sort((a, b) => {
-      // rule_search_song should come last so specific commands match first
       if (a.actionType === 'play_song_search' && b.actionType !== 'play_song_search') return 1;
       if (b.actionType === 'play_song_search' && a.actionType !== 'play_song_search') return -1;
       return 0;
     });
 
     for (const rule of enabledRules) {
-      // Sort phrases by descending length so "播放本地歌单" matches before "播放" or "放"
       const sortedPhrases = [...rule.triggerPhrases].sort((a, b) => b.length - a.length);
 
       const matchedPhrase = sortedPhrases.find(phrase => {
         const p = phrase.toLowerCase().trim();
         if (!p) return false;
-        // For single-character triggers like "放", "播", "听", require them to be at the beginning of the cleaned command
         if (p.length === 1) {
           return cleanQuery.startsWith(p);
         }
@@ -544,6 +598,11 @@ export class VoiceCommandService {
         param = cleanQuery.slice(phraseIdx + matchedPhrase.length).trim();
       }
       param = param.replace(/^(一下|一首|点|首|首歌曲|首歌|关于|音乐)/, '').trim();
+
+      // Early Interception: Instant early stop to prevent official audio overlap
+      if (this.config.earlyInterceptionEnabled !== false && this.earlyStopFn && rule.actionType !== 'control_command') {
+        this.earlyStopFn(deviceId).catch(() => {});
+      }
 
       try {
         const result = await this.executeRuleAction(rule, param, deviceId);
@@ -603,10 +662,12 @@ export class VoiceCommandService {
         }
 
         const cleanParam = param.trim();
-        const targetSong = this.fuzzyFindSong(songs, cleanParam);
-        if (!targetSong) {
+        const matchResult = this.fuzzyFindSongWithScore(songs, cleanParam);
+        if (!matchResult || !matchResult.song) {
           throw new Error(`曲库中未检索到与「${cleanParam || '推荐'}」匹配的曲目`);
         }
+
+        const targetSong = matchResult.song;
 
         if (this.config.ttsFeedbackEnabled && rule.ttsFeedback && deviceId && this.sendTtsFn) {
           const tts = rule.ttsFeedback.replace('{title}', `${targetSong.title}`);
@@ -620,7 +681,7 @@ export class VoiceCommandService {
 
         return {
           success: true,
-          summary: `已点播曲目:《${targetSong.title}》- ${targetSong.artist || '本地曲目'}`
+          summary: `已点播曲目:《${targetSong.title}》- ${targetSong.artist || '本地曲目'} (匹配评分: ${matchResult.score}分)`
         };
       }
 
@@ -716,73 +777,52 @@ export class VoiceCommandService {
   }
 
   /**
-   * Smart Song Matcher supporting:
-   * - "歌手 的 歌名" (e.g. "周杰伦的夜的第七章")
-   * - Title keywords (e.g. "月半小夜曲")
-   * - Artist keywords (e.g. "李克勤", "周杰伦")
-   * - Suffix cleaning (e.g. "的歌", "这首歌")
+   * Advanced Multi-Tiered Fuzzy & Phonetic Song Search Engine
    */
-  private fuzzyFindSong(songs: Song[], rawKeyword: string): Song | null {
+  public fuzzyFindSongWithScore(songs: Song[], rawKeyword: string): { song: Song; score: number } | null {
     if (songs.length === 0) return null;
     if (!rawKeyword || !rawKeyword.trim()) {
-      return songs[0];
+      return { song: songs[0], score: 50 };
     }
 
     let kw = rawKeyword.toLowerCase().trim();
-    kw = kw.replace(/^(一下|一首|点|首|首歌曲|首歌|关于)/, '').trim();
-    kw = kw.replace(/(的歌|这首歌|这首|歌曲|那首歌)$/, '').trim();
+    kw = kw.replace(/^(一下|一首|点|首|首歌曲|首歌|关于|给我放|帮我放|我想听)/, '').trim();
+    kw = kw.replace(/(的歌|这首歌|这首|歌曲|那首歌|唱的歌|唱的)$/, '').trim();
 
-    if (!kw) return songs[0];
+    if (!kw) return { song: songs[0], score: 50 };
 
-    // 1. Check "歌手 的 歌名" or "歌手 歌名"
-    if (kw.includes('的')) {
-      const parts = kw.split('的').map(s => s.trim()).filter(Boolean);
+    // 1. Handle "歌手唱的歌名" or "歌手的歌名"
+    if (kw.includes('唱的') || kw.includes('的')) {
+      const splitToken = kw.includes('唱的') ? '唱的' : '的';
+      const parts = kw.split(splitToken).map(s => s.trim()).filter(Boolean);
       if (parts.length >= 2) {
         const [artistPart, titlePart] = parts;
-        // Both artist and title match
         const bothMatch = songs.find(s =>
           (s.artist || '').toLowerCase().includes(artistPart) && s.title.toLowerCase().includes(titlePart)
         );
-        if (bothMatch) return bothMatch;
-
-        // Title matches
-        const titleMatch = songs.find(s => s.title.toLowerCase().includes(titlePart));
-        if (titleMatch) return titleMatch;
-
-        // Artist matches
-        const artistMatch = songs.find(s => (s.artist || '').toLowerCase().includes(artistPart));
-        if (artistMatch) return artistMatch;
+        if (bothMatch) return { song: bothMatch, score: 100 };
       }
     }
 
-    // 2. Exact title match (ignoring parenthetical suffixes like "(Acoustic Night)")
-    const exactTitle = songs.find(s => {
-      const norm = s.title.toLowerCase().replace(/\s*[\(\[（【].*?[\)\]）】]/g, '').trim();
-      return norm === kw || s.title.toLowerCase() === kw;
-    });
-    if (exactTitle) return exactTitle;
+    // 2. Score all songs with pinyin, edit distance, and phonetic algorithms
+    let bestSong: Song | null = null;
+    let bestScore = 0;
 
-    // 3. Contains title
-    const matchTitle = songs.find(s => s.title.toLowerCase().includes(kw));
-    if (matchTitle) return matchTitle;
+    for (const song of songs) {
+      const score = computeSongMatchScore(song, kw);
+      if (score > bestScore) {
+        bestScore = score;
+        bestSong = song;
+      }
+      // Early return if 100% exact match
+      if (score >= 100) {
+        return { song, score };
+      }
+    }
 
-    // 4. Match artist
-    const matchArtist = songs.find(s => (s.artist || '').toLowerCase().includes(kw));
-    if (matchArtist) return matchArtist;
-
-    // 5. Match album or lyrics
-    const matchAny = songs.find(s => {
-      const full = `${s.title} ${s.artist || ''} ${s.album || ''}`.toLowerCase();
-      return full.includes(kw);
-    });
-    if (matchAny) return matchAny;
-
-    // 6. Suffix / partial title match
-    const partialMatch = songs.find(s => {
-      const norm = s.title.toLowerCase().replace(/\s*[\(\[（【].*?[\)\]）】]/g, '').trim();
-      return kw.includes(norm) && norm.length >= 2;
-    });
-    if (partialMatch) return partialMatch;
+    if (bestSong && bestScore >= 60) {
+      return { song: bestSong, score: bestScore };
+    }
 
     return null;
   }

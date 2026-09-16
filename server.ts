@@ -7695,6 +7695,13 @@ async function startServer() {
       }
       return false;
     },
+    earlyStop: async (deviceId?: string) => {
+      const targetDev = xiaomiDevices.find(d => d.did === deviceId) || xiaomiDevices.find(d => d.did === miotConfig.activeDeviceId) || xiaomiDevices[0];
+      if (!targetDev) return;
+      // Instantly pause / silence speaker to intercept official music playback
+      queueEngine.pause();
+      await xiaomiAdapter.setPlaybackOperation(targetDev, 'pause', (p, m, msg, tDid, r) => callMinaCloudApi(p, m, msg, tDid, r), (ip, tk, m, p, t) => sendMiioCommand(ip, tk, m, p, t), miotConfig).catch(() => {});
+    },
     sendTts: async (deviceId, text) => {
       const targetDev = xiaomiDevices.find(d => d.did === deviceId) || xiaomiDevices[0];
       if (!targetDev) return { success: false };
