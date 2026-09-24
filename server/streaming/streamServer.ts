@@ -4,6 +4,7 @@ import { Request, Response } from 'express';
 import { MusicEngine } from '../core/musicEngine.js';
 import { FfmpegTranscoder } from './ffmpegTranscoder.js';
 import { DeviceManager } from '../xiaomi/deviceManager.js';
+import { transcodeSemaphorePool } from './transcodeSemaphore.js';
 
 export interface StreamEvent {
   timestamp: string;
@@ -71,8 +72,9 @@ export class StreamServer {
 
   /**
    * Express middleware / route handler for streaming audio with RFC 7233 HTTP 206 Partial Content
+   * and TranscodeSemaphorePool Hardware Resource Protection
    */
-  public handleStream = (req: Request, res: Response) => {
+  public handleStream = async (req: Request, res: Response) => {
     const rawSongId = req.params.songId || req.params.filename || '';
     const songId = decodeURIComponent(rawSongId);
     const cleanSongId = songId.replace(/\.(wav|mp3|flac|m4a|ogg|aac|opus|ape|dsf|dff)$/i, '');
@@ -127,16 +129,31 @@ export class StreamServer {
       return res.status(404).send('Audio track not found in music engine catalog');
     }
 
-    // Standardize audio stream: hardware speakers require Standard MP3 44.1kHz CBR 320k
     const reqUserAgent = String(req.headers['user-agent'] || '');
     const isHardwareSpeaker = /stagefright|Lavf|gstreamer|xm_player|mico|xiaomi|vlc|mediaplayer/i.test(reqUserAgent);
-    const requestedAsMp3 = String(req.url).includes('.mp3') || String(songId).endsWith('.mp3') || String(req.url).startsWith('/stream/');
+    const isBrowserClient = /Mozilla|Chrome|Safari|Firefox|Edg|AppleWebKit/i.test(reqUserAgent) && !isHardwareSpeaker;
+    const clientIp = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1').replace('::ffff:', '');
+    const matchedDev = this.deviceManager.getByIp(clientIp);
+    const resolvedDid = matchedDev?.did || '';
+    const resolvedModel = matchedDev?.model || 'wifispeaker';
 
-    if (matchedExt !== '.mp3' || requestedAsMp3 || isHardwareSpeaker) {
-      const transcodeResult = this.transcoder.ensureStandardMp3(localFilePath, cleanSongId);
-      if (transcodeResult.success && fs.existsSync(transcodeResult.filePath)) {
-        localFilePath = transcodeResult.filePath;
-        matchedExt = transcodeResult.format;
+    // 4. Standardize audio stream: hardware speakers require Standard MP3 unless native lossless pass-through (Strategy B)
+    if (matchedExt !== '.mp3') {
+      const cachedMp3 = this.transcoder.getCachedMp3(localFilePath, cleanSongId);
+      if (cachedMp3) {
+        localFilePath = cachedMp3;
+        matchedExt = '.mp3';
+      } else {
+        // Use Semaphore concurrency control
+        const transcodeResult = await this.transcoder.ensureStandardMp3Async(localFilePath, cleanSongId, {
+          deviceModel: resolvedModel,
+          userAgent: reqUserAgent,
+          clientIp
+        });
+        if (transcodeResult.success && fs.existsSync(transcodeResult.filePath)) {
+          localFilePath = transcodeResult.filePath;
+          matchedExt = transcodeResult.format;
+        }
       }
     }
 
@@ -169,17 +186,11 @@ export class StreamServer {
       return res.end();
     }
 
-    const isBrowserClient = /Mozilla|Chrome|Safari|Firefox|Edg|AppleWebKit/i.test(reqUserAgent) && !isHardwareSpeaker;
-    const clientIp = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1').replace('::ffff:', '');
     const isPartial = Boolean(range);
     const nowStr = new Date().toLocaleTimeString();
     const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
     const host = (req.headers['x-forwarded-host'] as string) || req.headers.host || `localhost:${this.port}`;
     const fullRequestedUrl = `${proto}://${host}${req.originalUrl || req.url}`;
-
-    const matchedDev = this.deviceManager.getByIp(clientIp);
-    const resolvedDid = matchedDev?.did || '';
-    const resolvedModel = matchedDev?.model || 'wifispeaker';
 
     if (!isBrowserClient && clientIp && clientIp !== '127.0.0.1' && clientIp !== 'localhost') {
       this.activeStreamIps.add(clientIp);
@@ -207,7 +218,7 @@ export class StreamServer {
       timestamp: nowStr,
       type: 'sync',
       message: isBrowserClient ? `网页端试听拉取音频流: ${songId}` : `音箱硬件拉取音频流: ${songId}`,
-      detail: `${isPartial ? 'HTTP 206 Partial Content (Range)' : 'HTTP 200 OK (Full Stream)'} | 拉流URL: ${fullRequestedUrl} | 来自: ${clientIp} (${isBrowserClient ? '浏览器' : '音箱终端'})`,
+      detail: `${isPartial ? 'HTTP 206 Partial Content (Range)' : 'HTTP 200 OK (Full Stream)'} | 格式: ${matchedExt} | 来自: ${clientIp} (${isBrowserClient ? '浏览器' : '音箱终端'})`,
       success: true,
       ip: clientIp,
       isBrowser: isBrowserClient,

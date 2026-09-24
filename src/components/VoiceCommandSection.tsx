@@ -91,6 +91,7 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
     fetchVoiceStatus();
     // Refresh status & logs every 3 seconds
     pollTimerRef.current = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       fetchVoiceStatus();
     }, 3000);
 

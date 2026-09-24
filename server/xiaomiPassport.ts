@@ -177,6 +177,7 @@ export interface QrCodeStatusResult {
 export class XiaomiPassport {
   private userAgent = 'APP/com.xiaomi.mihome APPV/6.0.103 iosPassportSDK/3.9.0 iOS/14.4';
   private webUserAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+  private inFlightLogins = new Map<string, Promise<any>>();
 
   /**
    * Parse Cookie strings or raw auth input to extract userId, serviceToken, ssecurity, passToken
@@ -264,6 +265,27 @@ export class XiaomiPassport {
       return { success: false, error: '请输入小米账号与密码' };
     }
 
+    const flightKey = `pwd:${user.trim()}:${sid}:${options?.captchaCode || ''}`;
+    const inFlight = this.inFlightLogins.get(flightKey);
+    if (inFlight) {
+      console.log(`🔒 [XiaomiPassport] Sharing in-flight login request for account: ${user.trim().slice(0, 3)}*** (${sid})`);
+      return inFlight;
+    }
+
+    const loginPromise = this.doLoginWithPassword(user, pass, sid, options).finally(() => {
+      this.inFlightLogins.delete(flightKey);
+    });
+
+    this.inFlightLogins.set(flightKey, loginPromise);
+    return loginPromise;
+  }
+
+  private async doLoginWithPassword(
+    user: string,
+    pass: string,
+    sid = 'micoapi',
+    options?: { captchaCode?: string; captchaIck?: string }
+  ): Promise<XiaomiPassportResult> {
     try {
       const canReq = xiaomiCircuitBreaker.canRequest('passport_login');
       if (!canReq.allowed) {
@@ -569,6 +591,27 @@ export class XiaomiPassport {
    * 3. Follow redirect location with clientSign to extract serviceToken
    */
   public async fetchAdditionalStsToken(
+    userId: string,
+    passToken: string,
+    targetSid: 'xiaomiio' | 'micoapi',
+    cUserId?: string
+  ): Promise<{ serviceToken?: string; ssecurity?: string; userId?: string; error?: string }> {
+    const flightKey = `sts:${userId}:${targetSid}`;
+    const inFlight = this.inFlightLogins.get(flightKey);
+    if (inFlight) {
+      console.log(`🔒 [XiaomiPassport] Sharing in-flight STS token request for ${targetSid} (userId=${userId.slice(0, 3)}***)`);
+      return inFlight;
+    }
+
+    const stsPromise = this.doFetchAdditionalStsToken(userId, passToken, targetSid, cUserId).finally(() => {
+      this.inFlightLogins.delete(flightKey);
+    });
+
+    this.inFlightLogins.set(flightKey, stsPromise);
+    return stsPromise;
+  }
+
+  private async doFetchAdditionalStsToken(
     userId: string,
     passToken: string,
     targetSid: 'xiaomiio' | 'micoapi',

@@ -59,6 +59,7 @@ import {
 import { XiaomiDevice, MiotConfig, CastLog, Song, DeviceCommandState, Playlist } from '../types';
 import { apiFetch, getAuthToken } from '../utils/api';
 import { VoiceCommandSection } from './VoiceCommandSection';
+import { LogTerminalTab } from './speaker/LogTerminalTab';
 import { useTheme } from '../context/ThemeContext';
 import QRCode from 'qrcode';
 
@@ -292,6 +293,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
   // SSE Live Event listener and WebSocket status polling
   useEffect(() => {
     const fetchWsStatus = async () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       try {
         const res = await apiFetch('/api/miot/ws/status');
         if (res.ok) {
@@ -335,6 +337,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
   }, []);
 
   const fetchStreamStatus = async () => {
+    if (typeof document !== 'undefined' && document.hidden) return;
     try {
       const res = await apiFetch('/api/miot/stream-status');
       if (res.ok) {
@@ -1548,8 +1551,8 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                   : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-white/5'
             }`}
           >
-            <Terminal className={`w-4 h-4 ${activeSubTab === 'logs' && isLight ? 'text-white' : 'text-zinc-400'}`} />
-            <span>MIoT 指令日志 ({castLogs.length})</span>
+            <Terminal className={`w-4 h-4 ${activeSubTab === 'logs' && isLight ? 'text-white' : 'text-emerald-400'}`} />
+            <span>全链路诊断日志系统 ({castLogs.length})</span>
           </button>
         </div>
       </div>

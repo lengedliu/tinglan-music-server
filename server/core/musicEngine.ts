@@ -75,6 +75,14 @@ export class MusicEngine {
     return this.songs;
   }
 
+  public setSongs(songs: Song[]): void {
+    this.songs = songs;
+  }
+
+  public reload(): void {
+    this.loadSongs();
+  }
+
   public getById(id: string): Song | undefined {
     const cleanId = (id || '').replace(/\.(wav|mp3|flac|m4a|ogg|aac|opus|ape|dsf|dff)$/i, '');
     const decodedId = decodeURIComponent(id || '');
@@ -89,14 +97,14 @@ export class MusicEngine {
     this.songs.unshift(song);
     this.saveSongs();
 
-    // Trigger background warm transcode to standard MP3
+    // Trigger background warm transcode to standard MP3 under semaphore
     if (song.localFilename) {
       const fullPath = path.isAbsolute(song.localFilename)
         ? song.localFilename
         : path.join(this.musicDir, song.localFilename);
       setTimeout(() => {
         try {
-          this.transcoder.ensureStandardMp3(fullPath, song.id);
+          this.transcoder.ensureStandardMp3Async(fullPath, song.id).catch(() => {});
         } catch {}
       }, 50);
     }

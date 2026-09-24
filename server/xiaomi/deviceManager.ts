@@ -106,6 +106,10 @@ export class DeviceManager {
     return this.devices;
   }
 
+  public reload(): void {
+    this.loadDevices();
+  }
+
   public getByDid(did: string): XiaomiDevice | undefined {
     return this.devices.find(d => d.did === did);
   }

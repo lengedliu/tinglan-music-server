@@ -44,8 +44,15 @@ import {
   StreamServer,
   DeviceManager,
   XiaomiAdapter,
-  lyricsService
+  AdaptiveHeartbeatEngine,
+  lyricsService,
+  transcodeSemaphorePool
 } from './server/index.js';
+import { createQueueRouter } from './server/routes/queueRoutes.js';
+import { createSongsRouter, createPlaylistsRouter } from './server/routes/musicRoutes.js';
+import { createAuthRouter, createSecurityRouter } from './server/routes/authRoutes.js';
+import { createDbRouter } from './server/routes/dbRoutes.js';
+import { createNavidromeRouter } from './server/routes/navidromeRoutes.js';
 
 const dynamicRequire = typeof require !== 'undefined'
   ? require
@@ -65,6 +72,66 @@ const API_KEY = process.env.API_KEY || '';
 
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ extended: true, limit: '100mb' }));
+
+// CSRF & LAN Origin Protection Middleware (P2 security)
+// Protects the home server from malicious external cross-site requests (e.g. drive-by CSRF attacks on speakers)
+app.use((req, res, next) => {
+  // Safe read-only methods don't mutate state
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+    return next();
+  }
+
+  const origin = (req.headers['origin'] || req.headers['referer'] || '') as string;
+  if (!origin) {
+    // Non-browser local tools (curl, scripts, hardware speaker direct calls) do not send Origin/Referer
+    return next();
+  }
+
+  try {
+    const originUrl = new URL(origin);
+    const hostHeader = (req.headers['x-forwarded-host'] || req.headers['host'] || '') as string;
+    const cleanHost = hostHeader.split(':')[0].toLowerCase();
+    const originHost = originUrl.hostname.toLowerCase();
+
+    // 1. Same-origin or same-host match
+    if (originHost === cleanHost || originUrl.host.toLowerCase() === hostHeader.toLowerCase()) {
+      return next();
+    }
+
+    // 2. Localhost and loopback
+    if (originHost === 'localhost' || originHost === '127.0.0.1' || originHost === '::1') {
+      return next();
+    }
+
+    // 3. RFC 1918 Private LAN ranges (192.168.x.x, 10.x.x.x, 172.16.x.x - 172.31.x.x)
+    if (
+      /^192\.168\.\d{1,3}\.\d{1,3}$/.test(originHost) ||
+      /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(originHost) ||
+      /^172\.(1[6-9]|2[0-9]|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(originHost) ||
+      /^.*\.local$/.test(originHost)
+    ) {
+      return next();
+    }
+
+    // 4. Cloud preview / AI Studio deployment domains
+    if (
+      originHost.endsWith('.run.app') ||
+      originHost.endsWith('.google.com') ||
+      originHost.endsWith('.aistudio.google.com')
+    ) {
+      return next();
+    }
+
+    // Untrusted external origin attempting a state-mutating POST/PUT/DELETE
+    console.warn(`🛡️ [CSRF Protection] Blocked cross-origin ${req.method} request to ${req.path} from untrusted origin: ${origin}`);
+    return res.status(403).json({
+      error: 'Cross-Site Request Blocked',
+      message: '跨站请求伪造保护（CSRF Protection）已拦截来自非受信任外部网站的控制指令。'
+    });
+  } catch {
+    return next();
+  }
+});
 
 // Directories
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
@@ -99,6 +166,9 @@ export const streamServer = new StreamServer(MUSIC_DIR, musicEngine, ffmpegTrans
 
 // 6. xiaomi-adapter: Multi-tier Cast Dispatcher (UBUS / MIoT / miIO / DLNA)
 export const xiaomiAdapter = new XiaomiAdapter(deviceManager);
+
+// 7. adaptive-heartbeat-engine: Smart Adaptive Heartbeat & Self-Healing State Synchronizer
+export const adaptiveHeartbeatEngine = new AdaptiveHeartbeatEngine(deviceManager);
 
 const audioTranscoder = ffmpegTranscoder;
 
@@ -329,6 +399,17 @@ function executeAtomicFileWrite(filePath: string, dataToWrite: any): void {
 
 function saveJson(filePath: string, data: any, immediate = false): void {
   pendingSaveJsonData.set(filePath, data);
+
+  // Synchronously keep core module instances in lockstep with in-memory state
+  try {
+    if (filePath === SONGS_FILE && Array.isArray(data)) {
+      musicEngine.setSongs(data);
+    } else if (filePath === PLAYLISTS_FILE && Array.isArray(data)) {
+      playlistEngine.setPlaylists(data);
+    } else if (filePath === DEVICES_FILE && Array.isArray(data)) {
+      deviceManager.setDevices(data);
+    }
+  } catch {}
 
   const doWrite = () => {
     const toWrite = pendingSaveJsonData.get(filePath);
@@ -781,813 +862,67 @@ function authMiddleware(req: Request, res: Response, next: any) {
 
 app.use('/api', authMiddleware);
 
-// ---------------- USER AUTHENTICATION & DATABASE ROUTES ----------------
-
-// Authentication & System Security Status Check (Public)
-app.get('/api/auth/status', (req: Request, res: Response) => {
-  securitySettings = loadJson(SECURITY_FILE, securitySettings);
-  const clientIp = getClientIp(req);
-  const isLan = isPrivateOrLocalIp(clientIp);
-  const authRequired = isAuthRequiredForRequest(req);
-  const allowRegistration = typeof securitySettings.allowRegistration === 'boolean' ? securitySettings.allowRegistration : true;
-
-  res.json({
-    success: true,
-    authRequired,
-    globalRequireAuth: Boolean(securitySettings.requireAuth),
-    requireAuth: Boolean(securitySettings.requireAuth),
-    authScope: securitySettings.authScope || 'all',
-    allowRegistration,
-    allowUserMiotControl: securitySettings.allowUserMiotControl !== false,
-    allowUserMiotTts: Boolean(securitySettings.allowUserMiotTts),
-    clientIp,
-    isLan,
-    hasDefaultAdmin: storedUsers.some(u => u.username === 'admin'),
-    userCount: storedUsers.length,
-    status: {
-      success: true,
-      authRequired,
-      globalRequireAuth: Boolean(securitySettings.requireAuth),
-      requireAuth: Boolean(securitySettings.requireAuth),
-      authScope: securitySettings.authScope || 'all',
-      allowRegistration,
-      allowUserMiotControl: securitySettings.allowUserMiotControl !== false,
-      allowUserMiotTts: Boolean(securitySettings.allowUserMiotTts),
-      clientIp,
-      isLan,
-      hasDefaultAdmin: storedUsers.some(u => u.username === 'admin'),
-      userCount: storedUsers.length
-    },
-    settings: {
-      ...securitySettings,
-      allowRegistration
-    }
-  });
-});
-
-// System Security Settings Query (Public GET)
-app.get('/api/system/security', (req: Request, res: Response) => {
-  securitySettings = loadJson(SECURITY_FILE, securitySettings);
-  const clientIp = getClientIp(req);
-  const isLan = isPrivateOrLocalIp(clientIp);
-  const isAuthRequired = isAuthRequiredForRequest(req);
-  const allowRegistration = typeof securitySettings.allowRegistration === 'boolean' ? securitySettings.allowRegistration : true;
-
-  res.json({
-    success: true,
-    authRequired: isAuthRequired,
-    globalRequireAuth: Boolean(securitySettings.requireAuth),
-    requireAuth: Boolean(securitySettings.requireAuth),
-    authScope: securitySettings.authScope || 'all',
-    allowRegistration,
-    allowUserMiotControl: securitySettings.allowUserMiotControl !== false,
-    allowUserMiotTts: Boolean(securitySettings.allowUserMiotTts),
-    clientIp,
-    isLan,
-    settings: {
-      ...securitySettings,
-      allowRegistration
-    },
-    status: {
-      success: true,
-      authRequired: isAuthRequired,
-      globalRequireAuth: Boolean(securitySettings.requireAuth),
-      requireAuth: Boolean(securitySettings.requireAuth),
-      authScope: securitySettings.authScope || 'all',
-      allowRegistration,
-      allowUserMiotControl: securitySettings.allowUserMiotControl !== false,
-      allowUserMiotTts: Boolean(securitySettings.allowUserMiotTts),
-      clientIp,
-      isLan,
-      hasDefaultAdmin: storedUsers.some(u => u.username === 'admin'),
-      userCount: storedUsers.length
-    },
-    clientInfo: {
-      ip: clientIp,
-      isLan,
-      isAuthRequired
-    },
-    hasDefaultAdmin: storedUsers.some(u => u.username === 'admin'),
-    userCount: storedUsers.length
-  });
-});
-
-// Update System Security Settings
-app.post('/api/system/security', (req: Request, res: Response) => {
-  try {
-    const { requireAuth, authScope, allowRegistration, allowUserMiotControl, allowUserMiotTts } = req.body;
-    
-    // Changing security settings requires admin privileges
-    const clientUser = (req as any).user;
-    if (!clientUser || clientUser.role !== 'admin') {
-      return res.status(403).json({ success: false, error: '权限不足：仅管理员允许修改系统安全与注册设置' });
-    }
-
-    if (typeof requireAuth === 'boolean') {
-      securitySettings.requireAuth = requireAuth;
-    }
-    if (authScope === 'all' || authScope === 'wan_only') {
-      securitySettings.authScope = authScope;
-    }
-    if (typeof allowRegistration === 'boolean') {
-      securitySettings.allowRegistration = allowRegistration;
-    }
-    if (typeof allowUserMiotControl === 'boolean') {
-      securitySettings.allowUserMiotControl = allowUserMiotControl;
-    }
-    if (typeof allowUserMiotTts === 'boolean') {
-      securitySettings.allowUserMiotTts = allowUserMiotTts;
-    }
-    securitySettings.updatedAt = new Date().toISOString();
-    saveJson(SECURITY_FILE, securitySettings, true);
-
-    const clientIp = getClientIp(req);
-    const isLan = isPrivateOrLocalIp(clientIp);
-    const isAuthRequired = isAuthRequiredForRequest(req);
-    const currentAllowReg = typeof securitySettings.allowRegistration === 'boolean' ? securitySettings.allowRegistration : true;
-
-    res.json({
-      success: true,
-      message: '系统安全策略与注册配置已成功更新！',
-      settings: securitySettings,
-      authRequired: isAuthRequired,
-      globalRequireAuth: Boolean(securitySettings.requireAuth),
-      requireAuth: Boolean(securitySettings.requireAuth),
-      authScope: securitySettings.authScope || 'all',
-      allowRegistration: currentAllowReg,
-      allowUserMiotControl: securitySettings.allowUserMiotControl !== false,
-      allowUserMiotTts: Boolean(securitySettings.allowUserMiotTts),
-      clientIp,
-      isLan,
-      status: {
-        success: true,
-        authRequired: isAuthRequired,
-        globalRequireAuth: Boolean(securitySettings.requireAuth),
-        requireAuth: Boolean(securitySettings.requireAuth),
-        authScope: securitySettings.authScope || 'all',
-        allowRegistration: currentAllowReg,
-        allowUserMiotControl: securitySettings.allowUserMiotControl !== false,
-        allowUserMiotTts: Boolean(securitySettings.allowUserMiotTts),
-        clientIp,
-        isLan,
-        hasDefaultAdmin: storedUsers.some(u => u.username === 'admin'),
-        userCount: storedUsers.length
-      },
-      clientInfo: {
-        ip: clientIp,
-        isLan,
-        isAuthRequired
-      }
-    });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message || '更新安全设置失败' });
-  }
-});
-
-// Change Password (supports /api/auth/change-password and /api/auth/change-admin-password)
-const handleChangePassword = async (req: Request, res: Response) => {
-  try {
-    const clientUser = (req as any).user;
-    if (!clientUser) {
-      return res.status(401).json({ success: false, error: '未登录：请先登录后再修改密码', requireLogin: true });
-    }
-
-    const { newPassword, oldPassword, username } = req.body;
-    if (!newPassword || String(newPassword).length < 6) {
-      return res.status(400).json({ success: false, error: '新密码不能少于 6 位' });
-    }
-
-    // Determine target username (defaults to currently authenticated user)
-    const targetUsername = (username ? String(username).trim() : clientUser.username).toLowerCase();
-    const isSelf = clientUser.username.toLowerCase() === targetUsername || clientUser.userId === targetUsername;
-
-    // Only administrators can modify other users' passwords
-    if (!isSelf && clientUser.role !== 'admin') {
-      return res.status(403).json({ success: false, error: '权限不足：仅管理员可以修改其他用户的密码' });
-    }
-
-    storedUsers = loadJson(USERS_FILE, storedUsers);
-    const userIndex = storedUsers.findIndex(u => u.username.toLowerCase() === targetUsername || u.id === targetUsername);
-    if (userIndex < 0) {
-      return res.status(404).json({ success: false, error: `用户「${targetUsername}」不存在` });
-    }
-
-    const targetUser = storedUsers[userIndex];
-
-    // If changing own password, verify old password for authentication safety
-    if (isSelf && targetUser.passwordHash) {
-      if (!oldPassword) {
-        return res.status(400).json({ success: false, error: '请输入当前旧密码以验证身份' });
-      }
-      const isOldMatch = await bcrypt.compare(String(oldPassword), targetUser.passwordHash);
-      if (!isOldMatch) {
-        return res.status(400).json({ success: false, error: '原密码验证失败，请输入正确的旧密码' });
-      }
-    }
-
-    const passwordHash = await bcrypt.hash(String(newPassword), 10);
-    targetUser.passwordHash = passwordHash;
-    targetUser.updatedAt = new Date().toISOString();
-    saveJson(USERS_FILE, storedUsers);
-
-    // Sync to SQLite if available
-    if (sqliteDb) {
-      try {
-        sqliteDb.run(
-          `UPDATE users SET password_hash = ? WHERE LOWER(username) = LOWER(?) OR id = ?`,
-          [passwordHash, targetUser.username, targetUser.id]
-        );
-      } catch (dbErr) {
-        console.warn('Could not sync password update to SQLite', dbErr);
-      }
-    }
-
-    return res.json({
-      success: true,
-      message: `用户「${targetUser.username}」的密码已成功修改！`
-    });
-  } catch (err: any) {
-    return res.status(500).json({ success: false, error: err.message || '修改密码失败' });
-  }
-};
-
-app.post('/api/auth/change-password', handleChangePassword);
-app.post('/api/auth/change-admin-password', handleChangePassword);
-
-// Register User (Subject to allowRegistration switch)
-app.post('/api/auth/register', async (req: Request, res: Response) => {
-  try {
+// ---------------- AUTHENTICATION & SECURITY DOMAIN ROUTERS (Phase 1 Decoupling) ----------------
+app.use("/api/auth", createAuthRouter({
+  getSecuritySettings: () => {
     securitySettings = loadJson(SECURITY_FILE, securitySettings);
-    if (securitySettings.allowRegistration === false) {
-      return res.status(403).json({
-        success: false,
-        error: '系统当前已关闭开放注册功能。如需账号，请联系管理员直接分配。'
-      });
-    }
-
-    const { username, email, password } = req.body;
-    if (!username || !password) {
-      return res.status(400).json({ success: false, error: '请填写用户名和密码' });
-    }
-    if (String(password).length < 6) {
-      return res.status(400).json({ success: false, error: '密码长度不能少于 6 位' });
-    }
-
-    const trimmedUser = String(username).trim();
+    return securitySettings;
+  },
+  setSecuritySettings: (settings) => {
+    securitySettings = settings;
+    saveJson(SECURITY_FILE, securitySettings, true);
+  },
+  getStoredUsers: () => {
     storedUsers = loadJson(USERS_FILE, storedUsers);
-    if (storedUsers.some(u => u.username.toLowerCase() === trimmedUser.toLowerCase())) {
-      return res.status(400).json({ success: false, error: '该用户名已被注册，请更换其他名称' });
-    }
-
-    const passwordHash = await bcrypt.hash(password, 10);
-    const newUser = {
-      id: `usr-${Date.now()}`,
-      username: trimmedUser,
-      email: email ? String(email).trim() : `${trimmedUser}@tinglan.audio`,
-      passwordHash,
-      role: 'user',
-      status: 'active',
-      avatarUrl: getDefaultUserAvatar('user', trimmedUser),
-      createdAt: new Date().toISOString()
-    };
-
-    storedUsers.push(newUser);
+    return storedUsers;
+  },
+  setStoredUsers: (users) => {
+    storedUsers = users;
     saveJson(USERS_FILE, storedUsers);
+  },
+  getClientIp,
+  isPrivateOrLocalIp,
+  isAuthRequiredForRequest,
+  checkLoginRateLimit,
+  recordLoginAttempt,
+  getDefaultUserAvatar,
+  jwtSecret: JWT_SECRET,
+  sqliteDb
+}));
 
-    // Sync to SQLite if active
-    if (sqliteDb) {
-      sqliteDb.run(`
-        INSERT OR REPLACE INTO users (id, username, email, password_hash, role, avatar_url, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `, [newUser.id, newUser.username, newUser.email, newUser.passwordHash, newUser.role, newUser.avatarUrl, newUser.createdAt]);
-    }
-
-    const token = jwt.sign(
-      { userId: newUser.id, username: newUser.username, role: newUser.role },
-      JWT_SECRET,
-      { expiresIn: '30d' }
-    );
-
-    const { passwordHash: _, ...userWithoutPassword } = newUser;
-    return res.json({
-      success: true,
-      message: '账号注册成功！',
-      user: userWithoutPassword,
-      token
-    });
-  } catch (err: any) {
-    return res.status(500).json({ success: false, error: `注册异常: ${err.message}` });
-  }
-});
-
-// Login User with Rate Limiting
-app.post('/api/auth/login', async (req: Request, res: Response) => {
-  const clientIp = getClientIp(req);
-  try {
-    const rateCheck = checkLoginRateLimit(clientIp);
-    if (!rateCheck.allowed) {
-      return res.status(429).json({
-        success: false,
-        error: `登录失败次数过多，为保护账号安全，该 IP 已临时锁定，请在 ${rateCheck.remainingLockSeconds} 秒后再试`
-      });
-    }
-
-    const usernameOrEmail = req.body.usernameOrEmail || req.body.username;
-    const { password } = req.body;
-    if (!usernameOrEmail || !password) {
-      return res.status(400).json({ success: false, error: '请输入用户名/邮箱与密码' });
-    }
-
+app.use("/api/system", createSecurityRouter({
+  getSecuritySettings: () => {
+    securitySettings = loadJson(SECURITY_FILE, securitySettings);
+    return securitySettings;
+  },
+  setSecuritySettings: (settings) => {
+    securitySettings = settings;
+    saveJson(SECURITY_FILE, securitySettings, true);
+  },
+  getStoredUsers: () => {
     storedUsers = loadJson(USERS_FILE, storedUsers);
-    const query = String(usernameOrEmail).trim().toLowerCase();
-    const user = storedUsers.find(u => u.username.toLowerCase() === query || u.email.toLowerCase() === query);
+    return storedUsers;
+  },
+  getClientIp,
+  isPrivateOrLocalIp,
+  isAuthRequiredForRequest
+}));
 
-    if (!user) {
-      recordLoginAttempt(clientIp, false);
-      return res.status(401).json({ success: false, error: '用户不存在或密码错误' });
-    }
-
-    if (user.status === 'disabled') {
-      return res.status(403).json({ success: false, error: '该账号已被管理员禁用，请联系管理员恢复' });
-    }
-
-    const isMatch = await bcrypt.compare(password, user.passwordHash);
-    if (!isMatch) {
-      recordLoginAttempt(clientIp, false);
-      return res.status(401).json({ success: false, error: '用户不存在或密码错误' });
-    }
-
-    // Reset attempt tracker on success
-    recordLoginAttempt(clientIp, true);
-
-    // Update last login timestamp
-    user.lastLoginAt = new Date().toISOString();
-    saveJson(USERS_FILE, storedUsers);
-
-    const token = jwt.sign(
-      { userId: user.id, username: user.username, role: user.role },
-      JWT_SECRET,
-      { expiresIn: '30d' }
-    );
-
-    const { passwordHash: _, ...userWithoutPassword } = user;
-    return res.json({
-      success: true,
-      message: '登录成功！',
-      user: userWithoutPassword,
-      token
-    });
-  } catch (err: any) {
-    return res.status(500).json({ success: false, error: `登录异常: ${err.message}` });
-  }
-});
-
-// Get Current Profile
-app.get('/api/auth/me', (req: Request, res: Response) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-  if (!token) {
-    return res.status(401).json({ success: false, user: null });
-  }
-
-  try {
-    const decoded: any = jwt.verify(token, JWT_SECRET);
+// ---------------- DATABASE DOMAIN ROUTER (Phase 1 Decoupling) ----------------
+app.use("/api/db", createDbRouter({
+  getActiveDbConfig: () => activeDbConfig,
+  setActiveDbConfig: (config) => {
+    activeDbConfig = config;
+    saveJson(DB_CONFIG_FILE, activeDbConfig);
+  },
+  getStoredUsers: () => {
     storedUsers = loadJson(USERS_FILE, storedUsers);
-    const user = storedUsers.find(u => u.id === decoded.userId);
-    if (!user) {
-      return res.status(404).json({ success: false, user: null });
-    }
-    const { passwordHash: _, ...userWithoutPassword } = user;
-    return res.json({ success: true, user: userWithoutPassword });
-  } catch (e) {
-    return res.status(401).json({ success: false, user: null });
-  }
-});
-
-// ---------------- USER MANAGEMENT ENDPOINTS (ADMIN) ----------------
-
-// List All Users
-app.get('/api/auth/users', (req: Request, res: Response) => {
-  const clientUser = (req as any).user;
-  if (!clientUser || clientUser.role !== 'admin') {
-    return res.status(403).json({ success: false, error: '权限不足：仅管理员可以查看系统用户列表' });
-  }
-
-  storedUsers = loadJson(USERS_FILE, storedUsers);
-  const sanitized = storedUsers.map(({ passwordHash, ...rest }) => ({
-    ...rest,
-    status: rest.status || 'active',
-    role: rest.role || 'user'
-  })).sort((a, b) => {
-    if (a.role === 'admin' && b.role !== 'admin') return -1;
-    if (b.role === 'admin' && a.role !== 'admin') return 1;
-    return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
-  });
-  return res.json({ success: true, users: sanitized, total: sanitized.length });
-});
-
-// Admin Create New User
-app.post('/api/auth/users', async (req: Request, res: Response) => {
-  try {
-    const clientUser = (req as any).user;
-    if (!clientUser || clientUser.role !== 'admin') {
-      return res.status(403).json({ success: false, error: '权限不足：仅管理员可以添加用户' });
-    }
-
-    const { username, email, password, role, status } = req.body;
-    if (!username || !password) {
-      return res.status(400).json({ success: false, error: '请提供用户名和初始密码' });
-    }
-    if (String(password).length < 6) {
-      return res.status(400).json({ success: false, error: '密码长度不能少于 6 位' });
-    }
-
-    const trimmedUser = String(username).trim();
-    storedUsers = loadJson(USERS_FILE, storedUsers);
-    if (storedUsers.some(u => u.username.toLowerCase() === trimmedUser.toLowerCase())) {
-      return res.status(400).json({ success: false, error: '该用户名已存在，请使用其他名称' });
-    }
-
-    const passwordHash = await bcrypt.hash(String(password), 10);
-    const userRole = role === 'admin' ? 'admin' : 'user';
-    const userStatus = status === 'disabled' ? 'disabled' : 'active';
-    const newUser = {
-      id: `usr-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      username: trimmedUser,
-      email: email ? String(email).trim() : `${trimmedUser}@tinglan.audio`,
-      passwordHash,
-      role: userRole,
-      status: userStatus,
-      avatarUrl: getDefaultUserAvatar(userRole, trimmedUser),
-      createdAt: new Date().toISOString()
-    };
-
-    storedUsers.push(newUser);
-    saveJson(USERS_FILE, storedUsers);
-
-    if (sqliteDb) {
-      sqliteDb.run(`
-        INSERT OR REPLACE INTO users (id, username, email, password_hash, role, avatar_url, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `, [newUser.id, newUser.username, newUser.email, newUser.passwordHash, newUser.role, newUser.avatarUrl, newUser.createdAt]);
-    }
-
-    const { passwordHash: _, ...userWithoutPassword } = newUser;
-    return res.json({
-      success: true,
-      message: `用户「${trimmedUser}」创建成功！`,
-      user: userWithoutPassword
-    });
-  } catch (err: any) {
-    return res.status(500).json({ success: false, error: `添加用户失败: ${err.message}` });
-  }
-});
-
-// Admin Update User (role, email, status, optional password)
-app.put('/api/auth/users/:id', async (req: Request, res: Response) => {
-  try {
-    const clientUser = (req as any).user;
-    if (!clientUser || clientUser.role !== 'admin') {
-      return res.status(403).json({ success: false, error: '权限不足：仅管理员可以修改用户信息' });
-    }
-
-    const { id } = req.params;
-    const { email, role, status, password, avatarUrl } = req.body;
-
-    storedUsers = loadJson(USERS_FILE, storedUsers);
-    const userIndex = storedUsers.findIndex(u => u.id === id);
-    if (userIndex < 0) {
-      return res.status(404).json({ success: false, error: '目标用户不存在' });
-    }
-
-    const targetUser = storedUsers[userIndex];
-
-    // Protection: If demoting or disabling self, ensure not the last admin
-    if (targetUser.role === 'admin' && (role === 'user' || status === 'disabled')) {
-      const otherAdmins = storedUsers.filter(u => u.id !== id && u.role === 'admin' && u.status !== 'disabled');
-      if (otherAdmins.length === 0) {
-        return res.status(400).json({ success: false, error: '操作被阻止：系统必须保留至少一个处于启用状态的管理员账号' });
-      }
-    }
-
-    if (email) targetUser.email = String(email).trim();
-    if (role === 'admin' || role === 'user') targetUser.role = role;
-    if (status === 'active' || status === 'disabled') targetUser.status = status;
-    if (avatarUrl) targetUser.avatarUrl = avatarUrl;
-    if (password && String(password).length >= 6) {
-      targetUser.passwordHash = await bcrypt.hash(String(password), 10);
-    }
-    targetUser.updatedAt = new Date().toISOString();
-
-    saveJson(USERS_FILE, storedUsers);
-
-    if (sqliteDb) {
-      sqliteDb.run(`
-        UPDATE users SET email = ?, role = ?, password_hash = ? WHERE id = ?
-      `, [targetUser.email, targetUser.role, targetUser.passwordHash, targetUser.id]);
-    }
-
-    const { passwordHash: _, ...userWithoutPassword } = targetUser;
-    return res.json({
-      success: true,
-      message: `用户「${targetUser.username}」信息更新成功！`,
-      user: userWithoutPassword
-    });
-  } catch (err: any) {
-    return res.status(500).json({ success: false, error: `修改用户失败: ${err.message}` });
-  }
-});
-
-// Admin Delete User
-app.delete('/api/auth/users/:id', (req: Request, res: Response) => {
-  try {
-    const clientUser = (req as any).user;
-    if (!clientUser || clientUser.role !== 'admin') {
-      return res.status(403).json({ success: false, error: '权限不足：仅管理员可以删除用户' });
-    }
-
-    const { id } = req.params;
-    storedUsers = loadJson(USERS_FILE, storedUsers);
-    const targetUser = storedUsers.find(u => u.id === id);
-    if (!targetUser) {
-      return res.status(404).json({ success: false, error: '目标用户不存在' });
-    }
-
-    // Protection: cannot delete self
-    if (clientUser && clientUser.userId === id) {
-      return res.status(400).json({ success: false, error: '无法删除当前正在登录的账号' });
-    }
-
-    // Protection: cannot delete the last admin
-    if (targetUser.role === 'admin') {
-      const otherAdmins = storedUsers.filter(u => u.id !== id && u.role === 'admin');
-      if (otherAdmins.length === 0) {
-        return res.status(400).json({ success: false, error: '无法删除系统中唯一的管理员账号' });
-      }
-    }
-
-    storedUsers = storedUsers.filter(u => u.id !== id);
-    saveJson(USERS_FILE, storedUsers);
-
-    if (sqliteDb) {
-      sqliteDb.run(`DELETE FROM users WHERE id = ?`, [id]);
-    }
-
-    return res.json({
-      success: true,
-      message: `用户「${targetUser.username}」已成功删除！`
-    });
-  } catch (err: any) {
-    return res.status(500).json({ success: false, error: `删除用户失败: ${err.message}` });
-  }
-});
-
-// Admin Reset User Password
-app.post('/api/auth/users/:id/reset-password', async (req: Request, res: Response) => {
-  try {
-    const clientUser = (req as any).user;
-    if (!clientUser || clientUser.role !== 'admin') {
-      return res.status(403).json({ success: false, error: '权限不足：仅管理员可以重置密码' });
-    }
-
-    const { id } = req.params;
-    const { newPassword } = req.body;
-    if (!newPassword || String(newPassword).length < 6) {
-      return res.status(400).json({ success: false, error: '新密码不能少于 6 位' });
-    }
-
-    storedUsers = loadJson(USERS_FILE, storedUsers);
-    const targetUser = storedUsers.find(u => u.id === id);
-    if (!targetUser) {
-      return res.status(404).json({ success: false, error: '目标用户不存在' });
-    }
-
-    targetUser.passwordHash = await bcrypt.hash(String(newPassword), 10);
-    targetUser.updatedAt = new Date().toISOString();
-    saveJson(USERS_FILE, storedUsers);
-
-    if (sqliteDb) {
-      sqliteDb.run(`UPDATE users SET password_hash = ? WHERE id = ?`, [targetUser.passwordHash, id]);
-    }
-
-    return res.json({
-      success: true,
-      message: `用户「${targetUser.username}」的密码已成功重置！`
-    });
-  } catch (err: any) {
-    return res.status(500).json({ success: false, error: `重置密码失败: ${err.message}` });
-  }
-});
-
-// Admin Toggle User Active / Disabled Status
-app.post('/api/auth/users/:id/toggle-status', (req: Request, res: Response) => {
-  try {
-    const clientUser = (req as any).user;
-    if (!clientUser || clientUser.role !== 'admin') {
-      return res.status(403).json({ success: false, error: '权限不足：仅管理员可以操作账号状态' });
-    }
-
-    const { id } = req.params;
-    storedUsers = loadJson(USERS_FILE, storedUsers);
-    const targetUser = storedUsers.find(u => u.id === id);
-    if (!targetUser) {
-      return res.status(404).json({ success: false, error: '目标用户不存在' });
-    }
-
-    const nextStatus = targetUser.status === 'disabled' ? 'active' : 'disabled';
-
-    // Protection: cannot disable self or last admin
-    if (nextStatus === 'disabled') {
-      if (clientUser && clientUser.userId === id) {
-        return res.status(400).json({ success: false, error: '无法禁用当前正在操作的自身账号' });
-      }
-      if (targetUser.role === 'admin') {
-        const otherAdmins = storedUsers.filter(u => u.id !== id && u.role === 'admin' && u.status !== 'disabled');
-        if (otherAdmins.length === 0) {
-          return res.status(400).json({ success: false, error: '无法禁用系统中唯一的活跃管理员账号' });
-        }
-      }
-    }
-
-    targetUser.status = nextStatus;
-    targetUser.updatedAt = new Date().toISOString();
-    saveJson(USERS_FILE, storedUsers);
-
-    return res.json({
-      success: true,
-      message: `用户「${targetUser.username}」状态已变更为: ${nextStatus === 'active' ? '正常启用' : '已停用'}`,
-      status: nextStatus
-    });
-  } catch (err: any) {
-    return res.status(500).json({ success: false, error: `更改用户状态失败: ${err.message}` });
-  }
-});
-
-// Get Database Status
-app.get('/api/db/status', (req: Request, res: Response) => {
-  const engineNames: Record<string, string> = {
-    sqlite: 'SQLite 3 (嵌入式轻量库 - 默认启用)',
-    postgres: 'PostgreSQL (远程关系库 - 实验性连通)',
-    mysql: 'MySQL (远程关系库 - 实验性连通)'
-  };
-
-  storedUsers = loadJson(USERS_FILE, storedUsers);
-  const currentSongs = loadJson<any[]>(SONGS_FILE, DEFAULT_SONGS);
-  const currentPlaylists = loadJson<any[]>(PLAYLISTS_FILE, []);
-
-  function sanitizeDbConfig(cfg: typeof activeDbConfig) {
-    return {
-      engine: cfg.engine,
-      postgresConfig: cfg.postgresConfig ? {
-        ...cfg.postgresConfig,
-        password: cfg.postgresConfig.password ? '••••••••' : '',
-        hasPassword: Boolean(cfg.postgresConfig.password)
-      } : undefined,
-      mysqlConfig: cfg.mysqlConfig ? {
-        ...cfg.mysqlConfig,
-        password: cfg.mysqlConfig.password ? '••••••••' : '',
-        hasPassword: Boolean(cfg.mysqlConfig.password)
-      } : undefined
-    };
-  }
-
-  return res.json({
-    success: true,
-    config: sanitizeDbConfig(activeDbConfig),
-    status: {
-      engine: activeDbConfig.engine,
-      isConnected: true,
-      engineName: engineNames[activeDbConfig.engine] || 'SQLite 3',
-      tablesCount: sqliteDb ? 3 : 0,
-      totalUsers: storedUsers.length,
-      totalSongs: currentSongs.length,
-      totalPlaylists: currentPlaylists.length
-    }
-  });
-});
-
-// Test Database Connection
-app.post('/api/db/test', async (req: Request, res: Response) => {
-  const { engine, postgresConfig, mysqlConfig } = req.body;
-
-  if (engine === 'sqlite') {
-    return res.json({ success: true, message: 'SQLite3 本地数据库运行良好！' });
-  }
-
-  if (engine === 'postgres') {
-    if (!postgresConfig?.host) {
-      return res.status(400).json({ success: false, error: '缺少 PostgreSQL 主机地址' });
-    }
-    try {
-      const rawPgPass = postgresConfig.password || '';
-      const actualPgPass = (rawPgPass === '••••••••' || rawPgPass === '********' || !rawPgPass)
-        ? (activeDbConfig.postgresConfig?.password || '')
-        : rawPgPass;
-
-      const pool = new pg.Pool({
-        host: postgresConfig.host,
-        port: Number(postgresConfig.port) || 5432,
-        user: postgresConfig.user || 'postgres',
-        password: actualPgPass,
-        database: postgresConfig.database || 'tinglan_db',
-        connectionTimeoutMillis: 5000
-      });
-      const client = await pool.connect();
-      await client.query('SELECT 1');
-      client.release();
-      await pool.end();
-      return res.json({ success: true, message: `成功连接至 PostgreSQL (${postgresConfig.host}:${postgresConfig.port || 5432})` });
-    } catch (err: any) {
-      return res.status(400).json({ success: false, error: `PostgreSQL 连接失败: ${err.message}` });
-    }
-  }
-
-  if (engine === 'mysql') {
-    if (!mysqlConfig?.host) {
-      return res.status(400).json({ success: false, error: '缺少 MySQL 主机地址' });
-    }
-    try {
-      const rawMyPass = mysqlConfig.password || '';
-      const actualMyPass = (rawMyPass === '••••••••' || rawMyPass === '********' || !rawMyPass)
-        ? (activeDbConfig.mysqlConfig?.password || '')
-        : rawMyPass;
-
-      const connection = await mysql.createConnection({
-        host: mysqlConfig.host,
-        port: Number(mysqlConfig.port) || 3306,
-        user: mysqlConfig.user || 'root',
-        password: actualMyPass,
-        database: mysqlConfig.database || 'tinglan_db',
-        connectTimeout: 5000
-      });
-      await connection.ping();
-      await connection.end();
-      return res.json({ success: true, message: `成功连接至 MySQL (${mysqlConfig.host}:${mysqlConfig.port || 3306})` });
-    } catch (err: any) {
-      return res.status(400).json({ success: false, error: `MySQL 连接失败: ${err.message}` });
-    }
-  }
-
-  return res.status(400).json({ success: false, error: '未知数据库引擎' });
-});
-
-// Save & Switch Active Database Engine (Admin Only)
-app.post('/api/db/switch', async (req: Request, res: Response) => {
-  const clientUser = (req as any).user;
-  if (!clientUser || clientUser.role !== 'admin') {
-    return res.status(403).json({ success: false, error: '权限不足：仅管理员可以切换数据库引擎' });
-  }
-
-  const { engine, postgresConfig, mysqlConfig } = req.body;
-  
-  if (!['sqlite', 'postgres', 'mysql'].includes(engine)) {
-    return res.status(400).json({ success: false, error: '不支援的数据库引擎类型' });
-  }
-
-  activeDbConfig.engine = engine;
-  if (postgresConfig) {
-    const rawPass = postgresConfig.password || '';
-    const actualPass = (rawPass === '••••••••' || rawPass === '********' || !rawPass)
-      ? (activeDbConfig.postgresConfig?.password || '')
-      : rawPass;
-    activeDbConfig.postgresConfig = {
-      ...postgresConfig,
-      password: actualPass
-    };
-  }
-  if (mysqlConfig) {
-    const rawPass = mysqlConfig.password || '';
-    const actualPass = (rawPass === '••••••••' || rawPass === '********' || !rawPass)
-      ? (activeDbConfig.mysqlConfig?.password || '')
-      : rawPass;
-    activeDbConfig.mysqlConfig = {
-      ...mysqlConfig,
-      password: actualPass
-    };
-  }
-
-  saveJson(DB_CONFIG_FILE, activeDbConfig);
-
-  const safeConfig = {
-    engine: activeDbConfig.engine,
-    postgresConfig: activeDbConfig.postgresConfig ? {
-      ...activeDbConfig.postgresConfig,
-      password: activeDbConfig.postgresConfig.password ? '••••••••' : '',
-      hasPassword: Boolean(activeDbConfig.postgresConfig.password)
-    } : undefined,
-    mysqlConfig: activeDbConfig.mysqlConfig ? {
-      ...activeDbConfig.mysqlConfig,
-      password: activeDbConfig.mysqlConfig.password ? '••••••••' : '',
-      hasPassword: Boolean(activeDbConfig.mysqlConfig.password)
-    } : undefined
-  };
-
-  return res.json({
-    success: true,
-    message: `已成功保存配置并切换活动数据库引擎为 ${engine.toUpperCase()}！`,
-    config: safeConfig
-  });
-});
+    return storedUsers;
+  },
+  getStoredSongs: () => (typeof storedSongs !== "undefined" ? storedSongs : []),
+  getStoredPlaylists: () => (typeof storedPlaylists !== "undefined" ? storedPlaylists : []),
+  sqliteDb
+}));
 
 
 // Initial default songs
@@ -1769,6 +1104,56 @@ let xiaomiDevices: any[] = rawXiaomiDevices.map((d: any) => {
   };
 });
 let miotConfig = loadJson(CONFIG_FILE, DEFAULT_CONFIG);
+
+// ---------------- SINGLE SOURCE OF TRUTH LOCKSTEP SYNC (P1 ARCHITECTURE) ----------------
+// Eliminate dual-state divergence: ensure musicEngine, playlistEngine, and deviceManager
+// stay perfectly synchronized with stored in-memory JSON state at all times.
+export function syncSongs(newSongs?: any[]) {
+  if (newSongs) storedSongs = newSongs;
+  saveJson(SONGS_FILE, storedSongs);
+  try { musicEngine.setSongs(storedSongs); } catch {}
+}
+
+export function syncPlaylists(newPlaylists?: any[]) {
+  if (newPlaylists) storedPlaylists = newPlaylists;
+  saveJson(PLAYLISTS_FILE, storedPlaylists);
+  try { playlistEngine.setPlaylists(storedPlaylists); } catch {}
+}
+
+export function syncDevices(newDevices?: any[]) {
+  if (newDevices) xiaomiDevices = newDevices;
+  saveJson(DEVICES_FILE, xiaomiDevices);
+  try { deviceManager.setDevices(xiaomiDevices); } catch {}
+}
+
+// Initial boot synchronization
+syncSongs();
+syncPlaylists();
+syncDevices();
+
+// ---------------- SECURE SIGNED STREAM TOKENS (P2 SECURITY) ----------------
+// Generates an HMAC-signed media stream token with expiry for secure audio casting
+function generateStreamToken(songId: string, ttlSeconds: number = 86400): string {
+  const exp = Math.floor(Date.now() / 1000) + ttlSeconds;
+  const dataToSign = `${songId}:${exp}`;
+  const hmac = crypto.createHmac('sha256', JWT_SECRET).update(dataToSign).digest('hex').slice(0, 16);
+  return `${exp}.${hmac}`;
+}
+
+function verifyStreamToken(songId: string, token: string): boolean {
+  if (!token) return false;
+  const parts = token.split('.');
+  if (parts.length !== 2) return false;
+  const exp = parseInt(parts[0], 10);
+  if (isNaN(exp) || Math.floor(Date.now() / 1000) > exp) return false;
+  const dataToSign = `${songId}:${exp}`;
+  const expectedHmac = crypto.createHmac('sha256', JWT_SECRET).update(dataToSign).digest('hex').slice(0, 16);
+  try {
+    return crypto.timingSafeEqual(Buffer.from(parts[1]), Buffer.from(expectedHmac));
+  } catch {
+    return false;
+  }
+}
 
 // Dynamically refresh Navidrome song and playlist credentials across stored records
 function refreshNavidromeSongCredentials(): { songsUpdated: number; playlistsUpdated: number } {
@@ -2036,6 +1421,83 @@ if ((miotConfig as any).passToken) {
   }).catch((err) => console.warn('[Auth] passToken startup recovery skipped:', err.message));
 }
 
+// Centralized, deduplicated Xiaomi token refresh service (P0 reliability)
+let isRefreshingXiaomiTokens = false;
+let refreshTokensPromise: Promise<{ success: boolean; serviceToken?: string; error?: string }> | null = null;
+
+async function refreshXiaomiTokens(reason: string = 'token_expired'): Promise<{ success: boolean; serviceToken?: string; error?: string }> {
+  if (isRefreshingXiaomiTokens && refreshTokensPromise) {
+    return refreshTokensPromise;
+  }
+
+  const cleanUid = String(miotConfig.userId || '').trim();
+  const passToken = String((miotConfig as any).passToken || '').trim();
+  if (!cleanUid || !passToken) {
+    return { success: false, error: 'No passToken available for silent refresh' };
+  }
+
+  isRefreshingXiaomiTokens = true;
+  refreshTokensPromise = (async () => {
+    try {
+      console.log(`🔑 [Token Refresh] 正在执行小米凭证无感静默续期 (原因: ${reason}, 用户: ${cleanUid})...`);
+      const [micoRes, ioRes] = await Promise.allSettled([
+        xiaomiPassport.fetchAdditionalStsToken(cleanUid, passToken, 'micoapi'),
+        xiaomiPassport.fetchAdditionalStsToken(cleanUid, passToken, 'xiaomiio')
+      ]);
+
+      let updated = false;
+      let newMicoToken = '';
+
+      if (micoRes.status === 'fulfilled' && micoRes.value.serviceToken) {
+        newMicoToken = micoRes.value.serviceToken;
+        miotConfig.serviceToken = newMicoToken;
+        (miotConfig as any).micoServiceToken = newMicoToken;
+        if (micoRes.value.ssecurity) (miotConfig as any).ssecurity = micoRes.value.ssecurity;
+        updated = true;
+        console.log(`🔑 [Token Refresh] ✅ micoapi 域 serviceToken 续期成功: ${newMicoToken.slice(0, 6)}••••`);
+      }
+
+      if (ioRes.status === 'fulfilled' && ioRes.value.serviceToken) {
+        const newIoToken = ioRes.value.serviceToken;
+        (miotConfig as any).xiaomiioToken = newIoToken;
+        (miotConfig as any).xiaomiioServiceToken = newIoToken;
+        (miotConfig as any).miotServiceToken = newIoToken;
+        if (ioRes.value.ssecurity) (miotConfig as any).xiaomiioSsecurity = ioRes.value.ssecurity;
+        updated = true;
+        console.log(`🔑 [Token Refresh] ✅ xiaomiio 域 serviceToken 续期成功: ${newIoToken.slice(0, 6)}••••`);
+      }
+
+      if (updated) {
+        saveJson(CONFIG_FILE, miotConfig);
+        return { success: true, serviceToken: newMicoToken || miotConfig.serviceToken };
+      }
+
+      return { success: false, error: 'Both token refresh requests failed' };
+    } catch (err: any) {
+      console.warn('🔑 [Token Refresh] 异常:', err?.message || err);
+      return { success: false, error: err?.message || 'Token refresh failed' };
+    } finally {
+      isRefreshingXiaomiTokens = false;
+      refreshTokensPromise = null;
+    }
+  })();
+
+  return refreshTokensPromise;
+}
+
+// Connect Mina WS auth refresh handler for auto-recovery on 401/403
+minaWsClient.setAuthRefreshHandler(async () => {
+  const res = await refreshXiaomiTokens('mina_ws_auth_rejection');
+  if (res.success && res.serviceToken) {
+    return {
+      userId: miotConfig.userId,
+      serviceToken: res.serviceToken,
+      deviceId: miotConfig.activeDeviceId || ''
+    };
+  }
+  return null;
+});
+
 // Auto-connect Mina WebSocket in background if logged in
 minaWsClient.on('error', (err: any) => {
   const errMsg = err?.message || String(err);
@@ -2274,16 +1736,25 @@ function getLocalNetworkIps(): string[] {
 // ----------------- MI-IO UDP 54321 PROTOCOL ENGINE -----------------
 
 // Send miIO UDP 54321 Hello packet to probe & handshake with Xiaomi/Xiaoai speaker
-function sendMiioHello(ip: string, timeoutMs = 1500): Promise<{ reachable: boolean; did?: string; stamp?: number; latency: number }> {
+// Features stepped multi-burst retransmission (0ms, 250ms, 600ms) to conquer 2.4GHz Wi-Fi packet loss
+function sendMiioHello(ip: string, timeoutMs = 1800): Promise<{ reachable: boolean; did?: string; stamp?: number; latency: number }> {
   return new Promise((resolve) => {
     const start = Date.now();
     const client = dgram.createSocket('udp4');
     let isResolved = false;
+    let burstTimer1: NodeJS.Timeout | null = null;
+    let burstTimer2: NodeJS.Timeout | null = null;
+
+    const cleanup = () => {
+      if (burstTimer1) clearTimeout(burstTimer1);
+      if (burstTimer2) clearTimeout(burstTimer2);
+      try { client.close(); } catch {}
+    };
 
     const timer = setTimeout(() => {
       if (!isResolved) {
         isResolved = true;
-        try { client.close(); } catch {}
+        cleanup();
         resolve({ reachable: false, latency: timeoutMs });
       }
     }, timeoutMs);
@@ -2292,6 +1763,7 @@ function sendMiioHello(ip: string, timeoutMs = 1500): Promise<{ reachable: boole
       if (!isResolved) {
         isResolved = true;
         clearTimeout(timer);
+        cleanup();
         const latency = Date.now() - start;
         try {
           let didStr = '';
@@ -2301,10 +1773,8 @@ function sendMiioHello(ip: string, timeoutMs = 1500): Promise<{ reachable: boole
             stamp = msg.readUInt32BE(12);
             didStr = String(didNum);
           }
-          try { client.close(); } catch {}
           resolve({ reachable: true, did: didStr, stamp, latency });
         } catch {
-          try { client.close(); } catch {}
           resolve({ reachable: true, latency });
         }
       }
@@ -2314,29 +1784,27 @@ function sendMiioHello(ip: string, timeoutMs = 1500): Promise<{ reachable: boole
       if (!isResolved) {
         isResolved = true;
         clearTimeout(timer);
-        try { client.close(); } catch {}
+        cleanup();
         resolve({ reachable: false, latency: Date.now() - start });
       }
     });
 
     const helloPacket = Buffer.from('21310020ffffffffffffffffffffffffffffffffffffffffffffffffffffffff', 'hex');
-    try {
-      client.send(helloPacket, 0, helloPacket.length, 54321, ip, (err) => {
-        if (err && !isResolved) {
-          isResolved = true;
-          clearTimeout(timer);
-          try { client.close(); } catch {}
-          resolve({ reachable: false, latency: Date.now() - start });
-        }
-      });
-    } catch {
-      if (!isResolved) {
-        isResolved = true;
-        clearTimeout(timer);
-        try { client.close(); } catch {}
-        resolve({ reachable: false, latency: 0 });
-      }
-    }
+    const sendBurst = () => {
+      if (isResolved) return;
+      try {
+        client.send(helloPacket, 0, helloPacket.length, 54321, ip, () => {});
+      } catch {}
+    };
+
+    // Burst 1: immediate
+    sendBurst();
+
+    // Burst 2: 250ms (for AP sleep / initial 2.4GHz frame drop)
+    burstTimer1 = setTimeout(sendBurst, 250);
+
+    // Burst 3: 600ms (resilient confirmation)
+    burstTimer2 = setTimeout(sendBurst, 600);
   });
 }
 
@@ -2681,478 +2149,34 @@ app.get('/api/tts/stream', handleTtsAudioStream);
 app.get('/api/tts/audio.mp3', handleTtsAudioStream);
 app.post('/api/tts/stream', handleTtsAudioStream);
 
-// ---------------- SONGS API ----------------
-
-// Get all songs
-app.get('/api/songs', (req: Request, res: Response) => {
-  res.json(storedSongs);
-});
-
-// Get detailed audio track technical parameters and ID3 metadata
-app.get('/api/songs/:id/inspector', (req: Request, res: Response) => {
-  const songId = req.params.id;
-  const song = storedSongs.find(s => s.id === songId);
-  if (!song) {
-    return res.status(404).json({ success: false, error: '曲目不存在' });
-  }
-
-  // Derive technical specifications
-  let extension = 'MP3';
-  let fileSize = song.fileSize || '未知';
-  let fullPath = (song as any).localFilename ? path.join(MUSIC_DIR, (song as any).localFilename) : '';
-  let fileExists = false;
-
-  if (fullPath && fs.existsSync(fullPath)) {
-    fileExists = true;
-    try {
-      const stat = fs.statSync(fullPath);
-      fileSize = `${(stat.size / (1024 * 1024)).toFixed(2)} MB`;
-      extension = path.extname(fullPath).replace(/^\./, '').toUpperCase();
-    } catch {}
-  } else if (song.url) {
-    const match = song.url.match(/\.([a-z0-9]+)(\?|$)/i);
-    if (match) extension = match[1].toUpperCase();
-  }
-
-  const isLossless = extension === 'FLAC' || extension === 'WAV' || extension === 'APE' || (song.bitrate && song.bitrate.toLowerCase().includes('flac'));
-  const sampleRate = song.sampleRate || (isLossless ? '96.0 kHz' : '44.1 kHz');
-  const bitDepth = song.bitDepth || (isLossless ? '24-bit Studio Master' : '16-bit');
-  const channels = song.channels || '立体声 2.0 (Stereo)';
-  const codec = song.codec || (isLossless ? 'Free Lossless Audio Codec (FLAC)' : `${extension} Audio Stream`);
-  const bitrate = song.bitrate || (isLossless ? 'Lossless ~980 kbps' : '320 kbps CBR');
-
-  res.json({
-    success: true,
-    song: {
-      ...song,
-      extension,
-      fileSize,
-      sampleRate,
-      bitDepth,
-      channels,
-      codec,
-      bitrate,
-      fullPath: fileExists ? fullPath : undefined,
-      hasLyrics: Boolean(song.lyrics),
-      lyricLinesCount: song.lyrics ? song.lyrics.split('\n').filter(l => l.trim()).length : 0
-    }
-  });
-});
-
-// Recursive scanner for music directory (supporting nested albums/artists)
-function scanMusicDirectory(dir: string, baseDir = dir): string[] {
-  let fileList: string[] = [];
-  if (!fs.existsSync(dir)) return fileList;
-
-  try {
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        fileList = fileList.concat(scanMusicDirectory(fullPath, baseDir));
-      } else if (entry.isFile()) {
-        fileList.push(path.relative(baseDir, fullPath));
-      }
-    }
-  } catch (e) {
-    console.warn('Error reading directory:', dir, e);
-  }
-  return fileList;
-}
-
-// Scan /music folder for newly added files (recursively) with genuine ID3 metadata extraction
-app.post('/api/songs/scan', async (req: Request, res: Response) => {
-  try {
-    const existingSongsMap = new Map(storedSongs.map(s => [s.id, s]));
-    const existingFilenames = new Set(storedSongs.map(s => s.localFilename).filter(Boolean));
-    const relativeFiles = scanMusicDirectory(MUSIC_DIR);
-    const audioExtensions = ['.mp3', '.flac', '.wav', '.m4a', '.ogg', '.aac', '.opus', '.ape', '.dsf', '.dff'];
-    let newlyFound = 0;
-
-    for (const relFile of relativeFiles) {
-      const ext = path.extname(relFile).toLowerCase();
-      if (!audioExtensions.includes(ext)) continue;
-      if (existingFilenames.has(relFile)) continue;
-
-      const baseName = path.basename(relFile, ext);
-      const songId = `song-scan-${Buffer.from(relFile).toString('hex').slice(0, 10)}`;
-
-      if (existingSongsMap.has(songId)) continue;
-
-      const fullFilePath = path.join(MUSIC_DIR, relFile);
-      let fileSizeMb = '5.0';
-      try {
-        const stat = fs.statSync(fullFilePath);
-        fileSizeMb = (stat.size / (1024 * 1024)).toFixed(1);
-      } catch {}
-
-      // Default heuristic metadata from directory structure e.g. Artist/Album/Song or Artist - Song
-      const dirParts = relFile.split(path.sep);
-      let artist = '本地歌手';
-      let album = '挂载目录导入';
-      let title = baseName;
-
-      if (dirParts.length >= 3) {
-        artist = dirParts[0].trim();
-        album = dirParts[1].trim();
-        title = baseName.replace(/^\d+[\s\.\-_]*/, ''); // strip track number prefix if present
-      } else if (dirParts.length === 2) {
-        album = dirParts[0].trim();
-        if (baseName.includes(' - ')) {
-          const parts = baseName.split(' - ');
-          artist = parts[0].trim();
-          title = parts.slice(1).join(' - ').trim();
-        }
-      } else if (baseName.includes(' - ')) {
-        const parts = baseName.split(' - ');
-        artist = parts[0].trim();
-        title = parts.slice(1).join(' - ').trim();
-      }
-
-      let bitrateTag = '320kbps MP3';
-      if (ext === '.flac') bitrateTag = 'FLAC 24bit/96kHz';
-      else if (ext === '.wav') bitrateTag = 'WAV 16bit/44.1kHz';
-      else if (ext === '.m4a' || ext === '.aac') bitrateTag = 'AAC 256kbps';
-      else if (ext === '.dsf' || ext === '.dff') bitrateTag = 'DSD 2.8MHz DSD64';
-      else if (ext === '.ape') bitrateTag = 'APE 无损';
-
-      let durationSec = 180;
-      let parsedYear = new Date().getFullYear();
-      let parsedGenre = ext.toUpperCase().replace('.', '') + ' 高保真';
-
-      // Parse genuine audio tags using music-metadata
-      try {
-        const meta = await parseFile(fullFilePath);
-        if (meta.format.duration && meta.format.duration > 0) {
-          durationSec = Math.round(meta.format.duration);
-        }
-        if (meta.format.bitrate && meta.format.bitrate > 0) {
-          bitrateTag = `${Math.round(meta.format.bitrate / 1000)}kbps ${ext.replace('.', '').toUpperCase()}`;
-        }
-        if (meta.common.title && meta.common.title.trim()) {
-          title = meta.common.title.trim();
-        }
-        if (meta.common.artist && meta.common.artist.trim()) {
-          artist = meta.common.artist.trim();
-        }
-        if (meta.common.album && meta.common.album.trim()) {
-          album = meta.common.album.trim();
-        }
-        if (meta.common.year) {
-          parsedYear = meta.common.year;
-        }
-        if (meta.common.genre && meta.common.genre.length > 0) {
-          parsedGenre = meta.common.genre.join(' / ');
-        }
-      } catch (parseErr) {
-        // Fallback to directory/filename heuristics if tag parsing fails
-      }
-
-      const newSong = {
-        id: songId,
-        title,
-        artist,
-        album,
-        duration: durationSec,
-        url: `/api/stream/${songId}`,
-        coverUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=600&q=80',
-        genre: parsedGenre,
-        year: parsedYear,
-        bitrate: bitrateTag,
-        fileSize: `${fileSizeMb} MB`,
-        isFavorite: false,
-        source: 'local',
-        localFilename: relFile,
-        lyrics: `[00:00.00]${title} - ${artist}\n[00:10.00]已从挂载目录 /app/music/${relFile} 加载\n[00:20.00]支持通过 MIoT / Mina 协议一键推送到小米音箱播放`
-      };
-
-      storedSongs.push(newSong);
-      existingFilenames.add(relFile);
-      newlyFound++;
-    }
-
+// ---------------- SONGS DOMAIN ROUTER (Phase 1 Decoupling) ----------------
+app.use('/api/songs', createSongsRouter({
+  getSongs: () => storedSongs,
+  setSongs: (newSongs) => {
+    storedSongs = newSongs;
     saveJson(SONGS_FILE, storedSongs);
-
-    castLogs.unshift({
-      id: `log-${Date.now()}`,
-      timestamp: new Date().toLocaleTimeString(),
-      type: 'sync',
-      message: `递归扫描挂载目录 /app/music 完成`,
-      detail: `新增 ${newlyFound} 首音频曲目（已解析真实时长与ID3元数据），曲库总计 ${storedSongs.length} 首`,
-      success: true
-    });
+  },
+  getPlaylists: () => storedPlaylists,
+  setPlaylists: (newPlaylists) => {
+    storedPlaylists = newPlaylists;
+    saveJson(PLAYLISTS_FILE, storedPlaylists);
+  },
+  musicDir: MUSIC_DIR,
+  audioTranscoder,
+  logCastAction: (log) => {
+    castLogs.unshift(log);
     if (castLogs.length > 50) castLogs.pop();
-
-    res.json({
-      success: true,
-      added: newlyFound,
-      total: storedSongs.length,
-      songs: storedSongs
-    });
-  } catch (err: any) {
-    console.error('Failed to scan music directory:', err);
-    res.status(500).json({ error: 'Failed to scan music directory', message: err.message });
   }
-});
+}));
 
-// Upload song (with binary base64 file data and ID3 metadata parsing)
-app.post('/api/songs/upload', async (req: Request, res: Response) => {
-  try {
-    const { title, artist, album, genre, duration, lyrics, bitrate, fileSize, fileBase64, fileName, coverUrl } = req.body;
-
-    if (!fileBase64) {
-      return res.status(400).json({
-        success: false,
-        error: '上传失败：必须提供有效音频文件数据 (fileBase64)，系统已禁用虚假伪造音频兜底'
-      });
-    }
-
-    const ALLOWED_AUDIO_EXTS = new Set(['.mp3', '.flac', '.wav', '.m4a', '.aac', '.ogg', '.opus', '.ape', '.wma']);
-    const songId = `song-up-${Date.now()}`;
-    let ext = '.mp3';
-    if (fileName) {
-      const candidateExt = (path.extname(fileName) || '').toLowerCase();
-      if (!ALLOWED_AUDIO_EXTS.has(candidateExt)) {
-        return res.status(400).json({
-          success: false,
-          error: `不支持的文件格式 (${candidateExt || '无后缀'})。仅允许上传音频文件: MP3, FLAC, WAV, M4A, AAC, OGG, OPUS, APE, WMA`
-        });
-      }
-      ext = candidateExt;
-    }
-
-    const fileBuffer = Buffer.from(fileBase64, 'base64');
-    const targetPath = path.join(MUSIC_DIR, `${songId}${ext}`);
-
-    try {
-      fs.writeFileSync(targetPath, fileBuffer);
-    } catch (writeErr: any) {
-      return res.status(500).json({
-        success: false,
-        error: `保存音频文件到本地存储目录失败: ${writeErr.message}`
-      });
-    }
-
-    let realDuration = duration ? Number(duration) : 180;
-    let realTitle = title || path.basename(fileName || '上传曲目', ext);
-    let realArtist = artist || '未知歌手';
-    let realAlbum = album || '本地上传专辑';
-    let realBitrate = bitrate || '320kbps MP3';
-    let realGenre = genre || '流行 Pop';
-    let realYear = new Date().getFullYear();
-    const actualFileSizeMb = (fileBuffer.length / (1024 * 1024)).toFixed(1);
-
-    try {
-      const meta = await parseBuffer(fileBuffer);
-      if (meta.format.duration && meta.format.duration > 0) {
-        realDuration = Math.round(meta.format.duration);
-      }
-      if (meta.format.bitrate && meta.format.bitrate > 0) {
-        realBitrate = `${Math.round(meta.format.bitrate / 1000)}kbps ${ext.replace('.', '').toUpperCase()}`;
-      }
-      if (meta.common.title && meta.common.title.trim()) realTitle = meta.common.title.trim();
-      if (meta.common.artist && meta.common.artist.trim()) realArtist = meta.common.artist.trim();
-      if (meta.common.album && meta.common.album.trim()) realAlbum = meta.common.album.trim();
-      if (meta.common.year) realYear = meta.common.year;
-      if (meta.common.genre && meta.common.genre.length > 0) realGenre = meta.common.genre.join(' / ');
-    } catch (parseErr) {
-      console.warn('Could not parse metadata from buffer, using user provided values:', parseErr);
-    }
-
-    const newSong = {
-      id: songId,
-      title: realTitle,
-      artist: realArtist,
-      album: realAlbum,
-      duration: realDuration,
-      url: `/api/stream/${songId}`,
-      coverUrl: coverUrl || 'https://images.unsplash.com/photo-1514525253161-7a46d19cd819?auto=format&fit=crop&w=600&q=80',
-      genre: realGenre,
-      year: realYear,
-      bitrate: realBitrate,
-      fileSize: `${actualFileSizeMb} MB`,
-      isFavorite: false,
-      source: 'uploaded',
-      localFilename: `${songId}${ext}`,
-      lyrics: lyrics || `[00:00.00]${realTitle} - ${realArtist}\n[00:10.00]本地音频已入库，支持即刻投放至小爱音箱`
-    };
-
-    storedSongs.unshift(newSong);
-    saveJson(SONGS_FILE, storedSongs);
-
-    // Background warm transcode to Standard MP3 (XiaoMusic Audio Layer)
-    setTimeout(() => {
-      try {
-        audioTranscoder.ensureStandardMp3(targetPath, songId);
-      } catch {}
-    }, 50);
-
-    castLogs.unshift({
-      id: `log-${Date.now()}`,
-      timestamp: new Date().toLocaleTimeString(),
-      type: 'sync',
-      message: `新曲目已入库: 《${newSong.title}》`,
-      detail: `真实时长: ${Math.floor(newSong.duration / 60)}分${newSong.duration % 60}秒 | 串流路径: /api/stream/${songId}`,
-      success: true
-    });
-
-    res.json({ success: true, song: newSong });
-  } catch (err: any) {
-    console.error('Upload handler error:', err);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// Delete song
-app.delete('/api/songs/:id', (req: Request, res: Response) => {
-  const { id } = req.params;
-  const initialLen = storedSongs.length;
-  storedSongs = storedSongs.filter(s => s.id !== id);
-
-  if (storedSongs.length < initialLen) {
-    saveJson(SONGS_FILE, storedSongs);
-    // Remove disk file if exists
-    for (const ext of ['.wav', '.mp3', '.flac', '.m4a', '.ogg']) {
-      const p = path.join(MUSIC_DIR, `${id}${ext}`);
-      if (fs.existsSync(p)) {
-        try { fs.unlinkSync(p); } catch {}
-      }
-    }
-    return res.json({ success: true, message: `歌曲 ${id} 已删除` });
-  }
-  res.status(404).json({ error: 'Song not found' });
-});
-
-// Clear all songs from library
-app.delete('/api/songs', (req: Request, res: Response) => {
-  const count = storedSongs.length;
-  storedSongs = [];
-  saveJson(SONGS_FILE, storedSongs);
-
-  // Also clear song references from playlists so playlists don't reference ghost songIds
-  let playlistsModified = false;
-  for (const pl of storedPlaylists) {
-    if (pl.songIds && pl.songIds.length > 0) {
-      pl.songIds = [];
-      playlistsModified = true;
-    }
-  }
-  if (playlistsModified) {
+// ---------------- PLAYLISTS DOMAIN ROUTER (Phase 1 Decoupling) ----------------
+app.use('/api/playlists', createPlaylistsRouter({
+  getPlaylists: () => storedPlaylists,
+  setPlaylists: (newPlaylists) => {
+    storedPlaylists = newPlaylists;
     saveJson(PLAYLISTS_FILE, storedPlaylists);
   }
-
-  castLogs.unshift({
-    id: `log-${Date.now()}`,
-    timestamp: new Date().toLocaleTimeString(),
-    type: 'sync',
-    message: `已清空曲库全部歌曲`,
-    detail: `共清除 ${count} 首歌曲记录与歌单关联`,
-    success: true
-  });
-  if (castLogs.length > 50) castLogs.pop();
-
-  console.log(`[MusicLibrary] 🗑️ 已清空曲库全部歌曲，共 ${count} 首`);
-  res.json({ success: true, message: `已清空全部 ${count} 首歌曲`, count });
-});
-
-// Toggle Favorite
-app.post('/api/songs/:id/favorite', (req: Request, res: Response) => {
-  const { id } = req.params;
-  const song = storedSongs.find(s => s.id === id);
-  if (song) {
-    song.isFavorite = !song.isFavorite;
-    saveJson(SONGS_FILE, storedSongs);
-    return res.json({ success: true, isFavorite: song.isFavorite });
-  }
-  res.status(404).json({ error: 'Song not found' });
-});
-
-// ---------------- PLAYLISTS API ----------------
-
-app.get('/api/playlists', (req: Request, res: Response) => {
-  res.json(storedPlaylists);
-});
-
-app.post('/api/playlists', (req: Request, res: Response) => {
-  const { name, description, songIds } = req.body;
-  const newPl = {
-    id: `pl-${Date.now()}`,
-    name: name || '新建歌单',
-    description: description || '',
-    coverUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=600&q=80',
-    songIds: Array.isArray(songIds) ? songIds : [],
-    createdAt: new Date().toISOString().split('T')[0]
-  };
-  storedPlaylists.push(newPl);
-  saveJson(PLAYLISTS_FILE, storedPlaylists);
-  res.json({ success: true, playlist: newPl, playlists: storedPlaylists });
-});
-
-// Update playlist (name, description, songIds)
-app.put('/api/playlists/:id', (req: Request, res: Response) => {
-  const { id } = req.params;
-  const { name, description, songIds } = req.body;
-  const playlist = storedPlaylists.find(p => p.id === id);
-  if (!playlist) {
-    return res.status(404).json({ error: 'Playlist not found' });
-  }
-
-  if (name !== undefined) playlist.name = name.trim();
-  if (description !== undefined) playlist.description = description.trim();
-  if (Array.isArray(songIds)) playlist.songIds = songIds;
-
-  saveJson(PLAYLISTS_FILE, storedPlaylists);
-  res.json({ success: true, playlist, playlists: storedPlaylists });
-});
-
-// Add song to playlist
-app.post('/api/playlists/:id/songs', (req: Request, res: Response) => {
-  const { id } = req.params;
-  const { songId, songIds } = req.body;
-  const playlist = storedPlaylists.find(p => p.id === id);
-  if (!playlist) {
-    return res.status(404).json({ error: 'Playlist not found' });
-  }
-
-  const idsToAdd: string[] = Array.isArray(songIds) ? songIds : (songId ? [songId] : []);
-  let addedCount = 0;
-
-  idsToAdd.forEach(sId => {
-    if (!playlist.songIds.includes(sId)) {
-      playlist.songIds.push(sId);
-      addedCount++;
-    }
-  });
-
-  saveJson(PLAYLISTS_FILE, storedPlaylists);
-  res.json({ success: true, addedCount, playlist, playlists: storedPlaylists });
-});
-
-// Remove song from playlist
-app.delete('/api/playlists/:id/songs/:songId', (req: Request, res: Response) => {
-  const { id, songId } = req.params;
-  const playlist = storedPlaylists.find(p => p.id === id);
-  if (!playlist) {
-    return res.status(404).json({ error: 'Playlist not found' });
-  }
-
-  playlist.songIds = playlist.songIds.filter(sId => sId !== songId);
-  saveJson(PLAYLISTS_FILE, storedPlaylists);
-  res.json({ success: true, playlist, playlists: storedPlaylists });
-});
-
-// Delete playlist
-app.delete('/api/playlists/:id', (req: Request, res: Response) => {
-  const { id } = req.params;
-  const initialLen = storedPlaylists.length;
-  storedPlaylists = storedPlaylists.filter(p => p.id !== id);
-
-  if (storedPlaylists.length < initialLen) {
-    saveJson(PLAYLISTS_FILE, storedPlaylists);
-    return res.json({ success: true, message: '歌单已成功删除', playlists: storedPlaylists });
-  }
-  res.status(404).json({ error: 'Playlist not found' });
-});
+}));
 
 // ---------------- MIOT & XIAOMI SPEAKER API ----------------
 
@@ -4812,12 +3836,8 @@ async function doCallMinaCloudApi(
           // Attempt 1-time auto-refresh if passToken is available
           if (retryCount === 0 && (miotConfig as any).passToken && cleanUid) {
             try {
-              const refreshRes = await xiaomiPassport.fetchAdditionalStsToken(cleanUid, (miotConfig as any).passToken, 'micoapi');
-              if (refreshRes.serviceToken) {
-                (miotConfig as any).micoServiceToken = refreshRes.serviceToken;
-                miotConfig.serviceToken = refreshRes.serviceToken;
-                if (refreshRes.ssecurity) (miotConfig as any).ssecurity = refreshRes.ssecurity;
-                saveJson(CONFIG_FILE, miotConfig);
+              const refreshRes = await refreshXiaomiTokens('mina_rest_401');
+              if (refreshRes.success && refreshRes.serviceToken) {
                 return doCallMinaCloudApi(pathName, methodName, messageObj, targetDid, retryCount + 1);
               }
             } catch (rErr: any) {
@@ -4847,6 +3867,57 @@ async function doCallMinaCloudApi(
     error: lastError ? `小米 Mina 云端指令通道响应失败: ${lastError}` : '未能连接到小米 Mina 云端指令通道 (网络超时或端点不可达)'
   };
 }
+
+// ---------------- ADAPTIVE HEARTBEAT & SELF-HEALING HOOKS ----------------
+adaptiveHeartbeatEngine.setRpcHandlers(
+  (pathName, methodName, msg, devId) => callMinaCloudApi(pathName, methodName, msg, devId),
+  (ip, token, method, params, timeout) => sendMiioCommand(ip, token, method, params, timeout)
+);
+
+// Subscribe to real-time hardware status changes (Physical buttons / voice commands / volume)
+adaptiveHeartbeatEngine.onStateSync((did, updates) => {
+  const target = xiaomiDevices.find((d) => d.did === did);
+  if (target) {
+    if (updates.online !== undefined) {
+      target.online = updates.online;
+      target.isOnline = updates.online;
+    }
+    if (updates.ip !== undefined) target.ip = updates.ip;
+    if (updates.currentVolume !== undefined) {
+      if (!target.status) target.status = { volume: updates.currentVolume, playing: false };
+      target.status.volume = updates.currentVolume;
+    }
+    if (updates.isPlaying !== undefined) {
+      if (!target.status) target.status = { volume: 50, playing: updates.isPlaying };
+      target.status.playing = updates.isPlaying;
+    }
+    saveJson(DEVICES_FILE, xiaomiDevices);
+  }
+});
+
+adaptiveHeartbeatEngine.start();
+
+// Get real-time adaptive heartbeat & self-healing diagnostics
+app.get('/api/miot/heartbeat/status', (req: Request, res: Response) => {
+  const statuses = adaptiveHeartbeatEngine.getHeartbeatStatuses();
+  res.json({
+    success: true,
+    count: statuses.length,
+    statuses,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Manually trigger fast probe active mode (e.g. on playback or remote control)
+app.post('/api/miot/heartbeat/boost', (req: Request, res: Response) => {
+  const duration = parseInt(String(req.body?.durationMs || '30000'), 10);
+  adaptiveHeartbeatEngine.triggerActiveMode(isNaN(duration) ? 30000 : duration);
+  res.json({
+    success: true,
+    message: '已切换至高频自愈嗅探模式 (3s/次)',
+    durationMs: isNaN(duration) ? 30000 : duration
+  });
+});
 
 // Cast Song to Xiaomi Speaker with Real Cloud UBUS Dispatch & Local miIO fallback
 app.post('/api/miot/cast', async (req: Request, res: Response) => {
@@ -4975,8 +4046,9 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
   }
   const resolvedServerHost = baseHost;
 
-  // Smart Stream URL selection: always point to the actual audio endpoint for the requested song
-  let resolvedStreamUrl = `${baseHost}/api/stream/${encodeURIComponent(cleanSongId)}.mp3`;
+  // Smart Stream URL selection: always point to the actual audio endpoint for the requested song with secure token
+  const streamToken = generateStreamToken(cleanSongId);
+  let resolvedStreamUrl = `${baseHost}/api/stream/${encodeURIComponent(cleanSongId)}.mp3?token=${streamToken}`;
   const isNavidromeOrRawStream = streamUrl && (streamUrl.includes('/rest/stream.view') || streamUrl.includes(':4533') || streamUrl.includes('subsonic'));
   if (streamUrl && streamUrl.startsWith('http') && !streamUrl.includes('localhost') && !streamUrl.includes('127.0.0.1') && !isNavidromeOrRawStream) {
     resolvedStreamUrl = streamUrl;
@@ -5046,6 +4118,7 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
       updatedAt: new Date().toISOString()
     };
     saveJson(DEVICES_FILE, xiaomiDevices);
+    adaptiveHeartbeatEngine.triggerActiveMode(45000);
 
     // Synchronize active track and full playlist context into QueueEngine for continuous queue playback
     try {
@@ -5179,7 +4252,8 @@ async function dispatchCastSongDirectly(song: any, targetDid: string): Promise<{
   // 1. XiaoAi firmware receives a standardized .mp3 URL (not raw Subsonic .view queries)
   // 2. Tinglan handles HTTP 206 Range headers & proxies remote Navidrome/local files
   // 3. QueueEngine stream consumption tracking and auto-advance timers function accurately
-  const resolvedStreamUrl = `${baseHost}/api/stream/${encodeURIComponent(cleanSongId)}.mp3`;
+  const streamToken = generateStreamToken(cleanSongId);
+  const resolvedStreamUrl = `${baseHost}/api/stream/${encodeURIComponent(cleanSongId)}.mp3?token=${streamToken}`;
 
   const selectedCastMode = (miotConfig.castMode || 'auto') as any;
 
@@ -5290,126 +4364,13 @@ queueEngine.on('change', (status) => {
   } catch {}
 });
 
-// --- Queue Engine REST Endpoints ---
-
-// Get current play queue status
-app.get('/api/queue', (req: Request, res: Response) => {
-  res.json({
-    success: true,
-    data: queueEngine.getStatus()
-  });
-});
-
-// Play entire playlist or songs list on speaker
-app.post('/api/queue/play-all', async (req: Request, res: Response) => {
-  const { songs, startIndex, did, mode } = req.body;
-  if (!Array.isArray(songs) || songs.length === 0) {
-    return res.status(400).json({ success: false, error: '歌曲列表不能为空' });
+// --- Queue Engine Domain Router (Phase 1 Decoupling) ---
+app.use('/api/queue', createQueueRouter({
+  getTargetDevice: (did) => {
+    const targetDid = did || miotConfig.activeDeviceId || (xiaomiDevices[0] ? xiaomiDevices[0].did : '');
+    return xiaomiDevices.find(d => d.did === targetDid || (d as any).deviceID === targetDid) || xiaomiDevices[0];
   }
-
-  const targetDid = did || miotConfig.activeDeviceId || (xiaomiDevices[0] ? xiaomiDevices[0].did : '');
-  const targetDev = xiaomiDevices.find(d => d.did === targetDid || (d as any).deviceID === targetDid) || xiaomiDevices[0];
-  const deviceName = targetDev ? targetDev.name : '小爱音箱';
-
-  const result = await queueEngine.playQueue(
-    songs,
-    startIndex || 0,
-    targetDid,
-    deviceName,
-    mode as QueueLoopMode
-  );
-
-  res.json({
-    success: result.success,
-    message: result.message,
-    currentSong: result.currentSong,
-    data: queueEngine.getStatus()
-  });
-});
-
-// Next song in active queue
-app.post('/api/queue/next', async (req: Request, res: Response) => {
-  const result = await queueEngine.next(true);
-  res.json({
-    success: result.success,
-    message: result.message,
-    song: result.song,
-    data: queueEngine.getStatus()
-  });
-});
-
-// Previous song in active queue
-app.post('/api/queue/prev', async (req: Request, res: Response) => {
-  const result = await queueEngine.prev();
-  res.json({
-    success: result.success,
-    message: result.message,
-    song: result.song,
-    data: queueEngine.getStatus()
-  });
-});
-
-// Jump to specific index in queue
-app.post('/api/queue/jump', async (req: Request, res: Response) => {
-  const { index } = req.body;
-  const result = await queueEngine.jumpTo(Number(index) || 0);
-  res.json({
-    success: result.success,
-    message: result.message,
-    song: result.song,
-    data: queueEngine.getStatus()
-  });
-});
-
-// Update loop mode
-app.post('/api/queue/mode', (req: Request, res: Response) => {
-  const { mode } = req.body;
-  if (mode && ['all', 'one', 'shuffle'].includes(mode)) {
-    queueEngine.setLoopMode(mode);
-  }
-  res.json({
-    success: true,
-    mode,
-    data: queueEngine.getStatus()
-  });
-});
-
-// Remove song from queue
-app.post('/api/queue/remove', (req: Request, res: Response) => {
-  const { songId } = req.body;
-  const ok = queueEngine.removeSong(songId);
-  res.json({
-    success: ok,
-    data: queueEngine.getStatus()
-  });
-});
-
-// Clear queue
-app.post('/api/queue/clear', (req: Request, res: Response) => {
-  queueEngine.clear();
-  res.json({
-    success: true,
-    data: queueEngine.getStatus()
-  });
-});
-
-// Pause queue
-app.post('/api/queue/pause', (req: Request, res: Response) => {
-  queueEngine.pause();
-  res.json({
-    success: true,
-    data: queueEngine.getStatus()
-  });
-});
-
-// Resume queue
-app.post('/api/queue/resume', (req: Request, res: Response) => {
-  queueEngine.resume();
-  res.json({
-    success: true,
-    data: queueEngine.getStatus()
-  });
-});
+}));
 
 // Stream status & reachability diagnostic endpoint
 app.get('/api/miot/stream-status', (req: Request, res: Response) => {
@@ -6194,6 +5155,20 @@ const streamAudioHandler = async (req: Request, res: Response) => {
     return res.status(200).end();
   }
 
+  // Token verification for secure stream URLs (P2 security)
+  // When an explicit ?token= query parameter is provided, verify its signature & expiry
+  const providedToken = req.query.token as string;
+  if (providedToken) {
+    const isValid = verifyStreamToken(cleanSongId, providedToken);
+    if (!isValid) {
+      console.warn(`🛡️ [Stream Security] Blocked invalid or expired stream token for track: ${cleanSongId}`);
+      return res.status(403).json({
+        error: 'Forbidden: Invalid or expired stream token',
+        message: '音频串流签名校验失败或已过期，请重新发起点播'
+      });
+    }
+  }
+
   // Find song in library metadata if available
   let foundSong = storedSongs.find(s => 
     s.id === songId || 
@@ -6560,6 +5535,15 @@ const streamAudioHandler = async (req: Request, res: Response) => {
 
       if (remoteRes.body) {
         const nodeStream = Readable.fromWeb(remoteRes.body as any);
+        const onClientClose = () => {
+          try {
+            abortController.abort();
+            nodeStream.destroy();
+          } catch {}
+        };
+        res.on('close', onClientClose);
+        res.on('finish', () => res.off('close', onClientClose));
+
         nodeStream.on('error', (err: any) => {
           if (err.name !== 'AbortError') {
             console.warn('[StreamServer] Navidrome 中继传输警告:', err.message);
@@ -6590,18 +5574,74 @@ const streamAudioHandler = async (req: Request, res: Response) => {
     });
   }
 
-  // Automatic on-demand MP3 transcode for maximum hardware speaker compatibility (XiaoMusic Audio Layer Standard)
-  // If the file on disk is not MP3 (e.g. WAV, FLAC, APE) or when requested from a hardware audio player / stream endpoint,
-  // transcode to a standard 44.1kHz stereo MP3 using FFmpeg so XiaoAi speakers never fail or hang on non-standard formats.
-  const reqUserAgent = String(req.headers['user-agent'] || '');
-  const isHardwareSpeaker = /stagefright|Lavf|gstreamer|xm_player|mico|xiaomi|vlc|mediaplayer/i.test(reqUserAgent);
-  const requestedAsMp3 = String(req.url).includes('.mp3') || String(songId).endsWith('.mp3') || String(req.url).startsWith('/stream/');
+  const userAgent = String(req.headers['user-agent'] || '');
+  const isBrowserClient = /Mozilla|Chrome|Safari|Firefox|Edg|AppleWebKit/i.test(userAgent) && !/stagefright|Lavf|gstreamer|xm_player|mico|xiaomi|vlc/i.test(userAgent);
+  const clientIp = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1').replace('::ffff:', '');
+  const matchedDev = xiaomiDevices.find(d => d.ip && clientIp.includes(d.ip)) || 
+    (miotConfig.activeDeviceId ? xiaomiDevices.find(d => d.did === miotConfig.activeDeviceId) : null);
+  const resolvedDid = matchedDev?.did || '';
+  const resolvedModel = matchedDev?.model || 'wifispeaker';
 
-  if (matchedExt !== '.mp3' || requestedAsMp3 || isHardwareSpeaker) {
-    const transcodeResult = await audioTranscoder.ensureStandardMp3Async(localFilePath, cleanSongId);
-    if (transcodeResult.success && fs.existsSync(transcodeResult.filePath)) {
-      localFilePath = transcodeResult.filePath;
-      matchedExt = transcodeResult.format;
+  // Automatic on-demand MP3 transcode with Hardware Resource Protection (TranscodeSemaphorePool)
+  // For native .mp3 files: bypass with zero delay (0ms).
+  // For non-MP3 files (FLAC, WAV, APE, AAC, OGG):
+  // 1) Fast-serve from disk if already cached.
+  // 2) If not cached, live-stream via FFmpeg pipe (0ms TTFB) with semaphore limit (Strategy A) or direct pass-through (Strategy B).
+  // 3) Simultaneously cache in background so subsequent seeks hit the static MP3.
+  if (matchedExt !== '.mp3') {
+    const existingCachePath = audioTranscoder.getCachedMp3(localFilePath, cleanSongId);
+    if (existingCachePath) {
+      localFilePath = existingCachePath;
+      matchedExt = '.mp3';
+    } else if (audioTranscoder.isAvailable() && (!req.headers.range || req.headers.range.startsWith('bytes=0-'))) {
+      const liveSession = await audioTranscoder.createLiveTranscodeStreamAsync(localFilePath, 0, {
+        sessionId: `stream-${cleanSongId}-${Date.now()}`,
+        songId: cleanSongId,
+        persistCache: true,
+        clientIp,
+        userAgent,
+        deviceModel: resolvedModel,
+        timeoutMs: 3000
+      });
+
+      if (liveSession) {
+        if (liveSession.isPassThrough) {
+          // Strategy B fallback: direct file streaming without transcoding
+          console.log(`[StreamServer] Strategy B triggered: Streaming ${localFilePath} directly to ${clientIp}`);
+        } else {
+          // Dual-output Tee Stream automatically writes to persistent cache while streaming in a single process
+
+          res.writeHead(200, {
+            'Content-Type': 'audio/mpeg',
+            'Accept-Ranges': 'none',
+            'Cache-Control': 'no-cache',
+            'Access-Control-Allow-Origin': '*'
+          });
+
+          // Zombie Process Reaper hook: 5-second countdown on client disconnect
+          const onLiveClose = () => {
+            liveSession.notifyClientDisconnected(5000);
+          };
+          res.on('close', onLiveClose);
+          res.on('finish', () => {
+            res.off('close', onLiveClose);
+            liveSession.kill('client stream finished');
+          });
+
+          liveSession.stream.pipe(res);
+          return;
+        }
+      }
+    } else {
+      const transcodeResult = await audioTranscoder.ensureStandardMp3Async(localFilePath, cleanSongId, {
+        clientIp,
+        userAgent,
+        deviceModel: resolvedModel
+      });
+      if (transcodeResult.success && fs.existsSync(transcodeResult.filePath)) {
+        localFilePath = transcodeResult.filePath;
+        matchedExt = transcodeResult.format;
+      }
     }
   }
 
@@ -6636,20 +5676,11 @@ const streamAudioHandler = async (req: Request, res: Response) => {
       return res.end();
     }
 
-    const userAgent = String(req.headers['user-agent'] || '');
-    const isBrowserClient = /Mozilla|Chrome|Safari|Firefox|Edg|AppleWebKit/i.test(userAgent) && !/stagefright|Lavf|gstreamer|xm_player|mico|xiaomi|vlc/i.test(userAgent);
-
-    const clientIp = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1').replace('::ffff:', '');
     const isPartial = Boolean(range);
     const nowStr = new Date().toLocaleTimeString();
     const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
     const host = (req.headers['x-forwarded-host'] as string) || req.headers.host || req.get('host') || `localhost:${PORT}`;
     const fullRequestedUrl = `${proto}://${host}${req.originalUrl || req.url}`;
-
-    const matchedDev = xiaomiDevices.find(d => d.ip && clientIp.includes(d.ip)) || 
-      (miotConfig.activeDeviceId ? xiaomiDevices.find(d => d.did === miotConfig.activeDeviceId) : null);
-    const resolvedDid = matchedDev?.did || '';
-    const resolvedModel = matchedDev?.model || 'wifispeaker';
 
     if (!isBrowserClient && clientIp && clientIp !== '127.0.0.1' && clientIp !== 'localhost') {
       activeStreamIps.add(clientIp);
@@ -6820,9 +5851,50 @@ app.head('/music/:filename', (req: Request, res: Response) => {
   return streamAudioHandler(req, res);
 });
 
+// Transcode Semaphore & Hardware Protection Status API
+app.get('/api/transcode/status', (req: Request, res: Response) => {
+  const poolStats = transcodeSemaphorePool.getStats();
+  const cacheStats = audioTranscoder.getCacheStats();
+  res.json({
+    success: true,
+    semaphore: poolStats,
+    cache: cacheStats,
+    ffmpegAvailable: audioTranscoder.isAvailable()
+  });
+});
+
+// Dynamic Concurrency Control
+app.post('/api/transcode/concurrency', (req: Request, res: Response) => {
+  const { maxConcurrency } = req.body || {};
+  const count = parseInt(maxConcurrency, 10);
+  if (isNaN(count) || count < 1 || count > 16) {
+    return res.status(400).json({
+      success: false,
+      message: 'maxConcurrency 必须为 1 到 16 之间的有效整数'
+    });
+  }
+  transcodeSemaphorePool.setMaxConcurrency(count);
+  res.json({
+    success: true,
+    maxConcurrency: transcodeSemaphorePool.getMaxConcurrency(),
+    message: `已将全局 FFmpeg 最大转码并发数更新为 ${transcodeSemaphorePool.getMaxConcurrency()}`
+  });
+});
+
+// Cache management
+app.post('/api/transcode/cache/clear', (req: Request, res: Response) => {
+  const result = audioTranscoder.clearCache();
+  res.json({
+    success: true,
+    ...result,
+    message: `已清空转码缓存（共清除 ${result.clearedCount} 个文件，释放 ${result.freedMb} 磁盘空间）`
+  });
+});
+
 // 3-Tier Architecture Status API
 app.get(['/api/system/3tier-architecture', '/api/system/xiaomusic-architecture'], (req: Request, res: Response) => {
   const transcodeStats = audioTranscoder.getCacheStats();
+  const poolStats = transcodeSemaphorePool.getStats();
   const activeMicoToken = (miotConfig as any).micoServiceToken || (miotConfig.isMicoValid ? miotConfig.serviceToken : undefined);
   res.json({
     success: true,
@@ -6830,13 +5902,18 @@ app.get(['/api/system/3tier-architecture', '/api/system/xiaomusic-architecture']
       name: 'Tinglan 3-Tier Audio & Cast Engine',
       version: '3.0.0',
       audioLayer: {
-        engine: 'FFmpeg Standard MP3 Transcoder',
+        engine: 'FFmpeg Standard MP3 Transcoder with Semaphore Concurrency Pool',
         ffmpegAvailable: audioTranscoder.isAvailable(),
         standardBitrate: '320kbps CBR',
         sampleRate: '44.1 kHz Stereo',
         http206RangeSupport: true,
         cacheCount: transcodeStats.count,
         cacheSize: transcodeStats.totalSizeMb,
+        concurrencyLimit: poolStats.maxConcurrency,
+        activeTranscodes: poolStats.activeCount,
+        queuedTranscodes: poolStats.queuedCount,
+        totalReapedZombies: poolStats.totalReapedZombies,
+        totalDirectPassThrough: poolStats.totalDirectPassThrough,
         routes: ['/api/stream/:songId', '/stream/:songId', '/music/:filename']
       },
       controlLayer: {
@@ -7180,660 +6257,27 @@ app.post('/api/lyrics/search', async (req: Request, res: Response) => {
   }
 });
 
-// ---------------- NAVIDROME / SUBSONIC REMOTE SERVER INTEGRATION ----------------
-
-function sanitizeNavidromeConfig(cfg: typeof navidromeConfig) {
-  return {
-    serverUrl: cfg.serverUrl || '',
-    username: cfg.username || '',
-    password: cfg.password ? '••••••••' : '',
-    hasPassword: Boolean(cfg.password),
-    isConnected: Boolean(cfg.isConnected),
-    apiVersion: cfg.apiVersion || '1.16.1',
-    serverVersion: cfg.serverVersion || ''
-  };
-}
-
-// Get Navidrome config
-app.get('/api/navidrome/config', (req: Request, res: Response) => {
-  res.json(sanitizeNavidromeConfig(navidromeConfig));
-});
-
-// Save Navidrome config
-app.post('/api/navidrome/config', (req: Request, res: Response) => {
-  const { serverUrl, username, password } = req.body;
-  const isMaskedPassword = password === '••••••••' || password === '********' || !password;
-  navidromeConfig = {
-    serverUrl: String(serverUrl || '').trim().replace(/\/+$/, ''),
-    username: String(username || '').trim(),
-    password: isMaskedPassword ? navidromeConfig.password : String(password || ''),
-    isConnected: navidromeConfig.isConnected,
-    apiVersion: navidromeConfig.apiVersion || '1.16.1',
-    serverVersion: navidromeConfig.serverVersion || ''
-  };
-  saveJson(NAVIDROME_FILE, navidromeConfig);
-  const refreshStats = refreshNavidromeSongCredentials();
-  res.json({ success: true, config: sanitizeNavidromeConfig(navidromeConfig), refreshStats });
-});
-
-// Test Navidrome connection
-app.post('/api/navidrome/test', async (req: Request, res: Response) => {
-  const debugLogs: string[] = [];
-  try {
-    const serverUrl = String(req.body.serverUrl || navidromeConfig.serverUrl || '').trim().replace(/\/+$/, '');
-    const username = String(req.body.username || navidromeConfig.username || '').trim();
-    const rawPassword = String(req.body.password || '');
-    const password = (rawPassword === '••••••••' || rawPassword === '********' || !rawPassword)
-      ? navidromeConfig.password
-      : rawPassword;
-
-    debugLogs.push(`[Navidrome Test Start] ServerUrl: "${serverUrl}", Username: "${username}", Password Provided: ${Boolean(password)}`);
-    console.log(debugLogs[debugLogs.length - 1]);
-
-    if (!serverUrl || !username) {
-      return res.status(400).json({ success: false, message: '请提供完整的 Navidrome 服务器 URL 和用户名', debugLogs });
-    }
-
-    const tokenQuery = getSubsonicAuthQuery(username, password);
-    const passQuery = getSubsonicPassAuthQuery(username, password);
-
-    const candidateUrls = [
-      `${serverUrl}/rest/ping?${passQuery}`,
-      `${serverUrl}/rest/ping.view?${passQuery}`,
-      `${serverUrl}/rest/ping?${tokenQuery}`,
-      `${serverUrl}/rest/ping.view?${tokenQuery}`
-    ];
-
-    let subResp: any = null;
-    let lastErr = '';
-
-    for (const targetUrl of candidateUrls) {
-      const sanitizedUrl = targetUrl.replace(/p=[^&]+/, 'p=******').replace(/t=[^&]+/, 't=******');
-      debugLogs.push(`--> Fetching: ${sanitizedUrl}`);
-      console.log(`[Navidrome Test] --> Fetching: ${sanitizedUrl}`);
-
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 6000);
-        const response = await fetch(targetUrl, { signal: controller.signal });
-        clearTimeout(timeout);
-
-        const textBody = await response.text().catch(() => '');
-        debugLogs.push(`    <-- Status: HTTP ${response.status} ${response.statusText} | Body length: ${textBody.length}`);
-        console.log(`[Navidrome Test] <-- Status: HTTP ${response.status} | Body preview: ${textBody.slice(0, 150)}`);
-
-        if (!response.ok) {
-          lastErr = `HTTP ${response.status} ${response.statusText}`;
-          continue;
-        }
-
-        let data: any = null;
-        try {
-          data = JSON.parse(textBody);
-        } catch (jsonErr: any) {
-          debugLogs.push(`    [JSON Parse Failed] ${jsonErr.message}`);
-          console.warn(`[Navidrome Test] JSON Parse Error:`, jsonErr.message);
-        }
-
-        const resp = data ? data['subsonic-response'] : null;
-        if (resp && resp.status === 'ok') {
-          subResp = resp;
-          debugLogs.push(`    [Success] Received subsonic-response status: ok`);
-          break;
-        } else if (resp?.error?.message) {
-          lastErr = resp.error.message;
-          debugLogs.push(`    [Subsonic Error] Code: ${resp.error.code}, Message: ${resp.error.message}`);
-        }
-      } catch (err: any) {
-        lastErr = err.message || '网络连接超时';
-        debugLogs.push(`    [Exception] ${lastErr}`);
-        console.warn(`[Navidrome Test] Fetch Exception: ${lastErr}`);
-      }
-    }
-
-    if (subResp && subResp.status === 'ok') {
-      const detectedApiVer = subResp.version || '1.16.1';
-      const detectedServerVer = subResp.serverVersion || subResp.version || 'Subsonic Engine';
-
-      navidromeConfig = { 
-        serverUrl, 
-        username, 
-        password, 
-        isConnected: true, 
-        apiVersion: detectedApiVer, 
-        serverVersion: detectedServerVer 
-      };
-      saveJson(NAVIDROME_FILE, navidromeConfig);
-      const refreshStats = refreshNavidromeSongCredentials();
-
-      const refreshMsg = refreshStats.songsUpdated > 0 
-        ? `，已同步更新 ${refreshStats.songsUpdated} 首已导入歌曲的播放凭据` 
-        : '';
-
-      return res.json({
-        success: true,
-        message: `成功连通 Navidrome 服务器！(检测到 API 协议版本: v${detectedApiVer})${refreshMsg}`,
-        version: detectedServerVer,
-        apiVersion: detectedApiVer,
-        refreshStats,
-        debugLogs
-      });
-    } else {
-      const errDetail = lastErr || '身份鉴权失败，请核对用户名和密码';
-      return res.json({ success: false, message: `Navidrome 拒绝连接: ${errDetail}`, debugLogs });
-    }
-  } catch (e: any) {
-    debugLogs.push(`[Fatal Exception] ${e.message}`);
-    console.error(`[Navidrome Test Fatal Error]`, e);
-    return res.json({
-      success: false,
-      message: `网络连接异常: ${e.message || '请检查服务器地址与网络可达性'}`,
-      debugLogs
-    });
-  }
-});
-
-// Sync Songs from Navidrome
-app.post('/api/navidrome/sync', async (req: Request, res: Response) => {
-  try {
-    const serverUrl = String(req.body.serverUrl || navidromeConfig.serverUrl || '').trim().replace(/\/+$/, '');
-    const username = String(req.body.username || navidromeConfig.username || '').trim();
-    const rawPassword = String(req.body.password || '');
-    const password = (rawPassword === '••••••••' || rawPassword === '********' || !rawPassword)
-      ? navidromeConfig.password
-      : rawPassword;
-
-    if (!serverUrl || !username) {
-      return res.status(400).json({ success: false, message: 'Navidrome 连接未配置' });
-    }
-
-    if (!password) {
-      return res.status(400).json({ success: false, message: '请重新在上方填入 Navidrome 登录密码并保存' });
-    }
-
-    const tokenQuery = getSubsonicAuthQuery(username, password);
-    const passQuery = getSubsonicPassAuthQuery(username, password);
-    
-    // Multiple strategies to retrieve tracks from Navidrome
-    const queryUrls = [
-      `${serverUrl}/rest/getRandomSongs?size=500&${passQuery}`,
-      `${serverUrl}/rest/getRandomSongs.view?size=500&${passQuery}`,
-      `${serverUrl}/rest/search3?query=&songCount=500&${passQuery}`,
-      `${serverUrl}/rest/search3.view?query=&songCount=500&${passQuery}`,
-      `${serverUrl}/rest/getRandomSongs?size=500&${tokenQuery}`,
-      `${serverUrl}/rest/getRandomSongs.view?size=500&${tokenQuery}`,
-      `${serverUrl}/rest/search3?query=&songCount=500&${tokenQuery}`,
-      `${serverUrl}/rest/search3.view?query=&songCount=500&${tokenQuery}`
-    ];
-
-    let songList: any[] = [];
-    let lastError = '';
-    let activeAuthQuery = passQuery;
-
-    for (const targetUrl of queryUrls) {
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 10000);
-        const response = await fetch(targetUrl, { signal: controller.signal });
-        clearTimeout(timeout);
-
-        if (!response.ok) {
-          lastError = `HTTP ${response.status}`;
-          continue;
-        }
-
-        const data = await response.json().catch(() => null);
-        const subResp = data ? data['subsonic-response'] : null;
-
-        if (subResp && subResp.status === 'ok') {
-          if (subResp.version) navidromeConfig.apiVersion = subResp.version;
-          if (subResp.serverVersion) navidromeConfig.serverVersion = subResp.serverVersion;
-
-          const raw = subResp?.randomSongs?.song || subResp?.searchResult3?.song || subResp?.searchResult?.song || subResp?.songs?.song || subResp?.song || [];
-          const items = Array.isArray(raw) ? raw : (raw ? [raw] : []);
-          if (items.length > 0) {
-            songList = items;
-            if (targetUrl.includes(tokenQuery)) {
-              activeAuthQuery = tokenQuery;
-            }
-            break;
-          }
-        } else if (subResp?.error?.message) {
-          lastError = subResp.error.message;
-        }
-      } catch (err: any) {
-        lastError = err.message || '超时';
-      }
-    }
-
-    if (!Array.isArray(songList) || songList.length === 0) {
-      return res.json({ 
-        success: false, 
-        message: `Navidrome 未返回有效歌曲 (${lastError || '列表为空'})。请确认服务器中已扫描音乐文件，且账号具备访问权限。` 
-      });
-    }
-
-    // Convert to TingLan Song objects dynamically
-    let importedCount = 0;
-    const defaultCover = 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=600&q=80';
-
-    const newNavidromeSongs = songList.map((item: any) => {
-      const trackId = item.id || item.songId || item.key;
-      const songId = `navidrome-${trackId}`;
-      const streamUrl = `${serverUrl}/rest/stream?id=${encodeURIComponent(trackId)}&${activeAuthQuery}`;
-      const coverArtId = item.coverArt || item.coverArtId || item.cover || trackId;
-      const coverUrl = coverArtId 
-        ? `${serverUrl}/rest/getCoverArt?id=${encodeURIComponent(coverArtId)}&${activeAuthQuery}`
-        : defaultCover;
-
-      return {
-        id: songId,
-        title: item.title || item.name || 'Navidrome Track',
-        artist: item.artist || item.artistName || '未知歌手',
-        album: item.album || item.albumName || 'Navidrome 音乐库',
-        duration: Number(item.duration || 210),
-        url: streamUrl,
-        coverUrl: coverUrl,
-        genre: item.genre || 'Navidrome',
-        year: item.year || 2024,
-        bitrate: item.bitRate ? `${item.bitRate}kbps ${item.suffix || 'mp3'}` : '320kbps mp3',
-        fileSize: item.size ? `${(item.size / (1024 * 1024)).toFixed(1)} MB` : '12 MB',
-        isFavorite: Boolean(item.starred || item.isFavorite),
-        source: 'uploaded',
-        lyrics: item.lyrics || `[00:00.00] ${item.title || 'Track'} - ${item.artist || 'Artist'}\n[00:05.00] 来自 Navidrome 远程曲库\n[00:12.00] 小爱音箱高保真串流中...`
-      };
-    }).filter((s: any) => Boolean(s.id));
-
-    // Merge into storedSongs without duplicating
-    newNavidromeSongs.forEach(newSong => {
-      const idx = storedSongs.findIndex(s => s.id === newSong.id);
-      if (idx >= 0) {
-        storedSongs[idx] = newSong;
-      } else {
-        storedSongs.unshift(newSong);
-        importedCount++;
-      }
-    });
-
-    saveJson(SONGS_FILE, storedSongs);
-
-    // Save active config securely
-    if (password && password !== '••••••••' && password !== '********') {
-      navidromeConfig = {
-        serverUrl,
-        username,
-        password,
-        isConnected: true,
-        apiVersion: navidromeConfig.apiVersion || '1.16.1',
-        serverVersion: navidromeConfig.serverVersion || ''
-      };
-      saveJson(NAVIDROME_FILE, navidromeConfig);
-      refreshNavidromeSongCredentials();
-    }
-
-    return res.json({
-      success: true,
-      count: importedCount > 0 ? importedCount : newNavidromeSongs.length,
-      message: `已同步 Navidrome 曲库中的 ${newNavidromeSongs.length} 首歌曲！`
-    });
-
-  } catch (e: any) {
-    return res.json({
-      success: false,
-      message: `Navidrome 同步异常: ${e.message || '网络连接超时'}`
-    });
-  }
-});
-
-// Fetch all Playlists from Navidrome
-app.all('/api/navidrome/playlists', async (req: Request, res: Response) => {
-  const debugLogs: string[] = [];
-  try {
-    const serverUrl = String(req.body?.serverUrl || req.query?.serverUrl || navidromeConfig.serverUrl || '').trim().replace(/\/+$/, '');
-    const username = String(req.body?.username || req.query?.username || navidromeConfig.username || '').trim();
-    const rawPassword = String(req.body?.password || req.query?.password || '');
-    const password = (rawPassword === '••••••••' || rawPassword === '********' || !rawPassword)
-      ? navidromeConfig.password
-      : rawPassword;
-
-    debugLogs.push(`[Navidrome Playlists Start] ServerUrl: "${serverUrl}", Username: "${username}", Password Provided: ${Boolean(password)}`);
-    console.log(debugLogs[debugLogs.length - 1]);
-
-    if (!serverUrl || !username) {
-      return res.status(400).json({ success: false, message: '请先配置或提供 Navidrome 服务器地址与用户名', debugLogs });
-    }
-
-    // Auto-persist active credentials if valid
-    if (password && (serverUrl !== navidromeConfig.serverUrl || username !== navidromeConfig.username || password !== navidromeConfig.password)) {
-      navidromeConfig = {
-        serverUrl,
-        username,
-        password,
-        isConnected: true,
-        apiVersion: navidromeConfig.apiVersion || '1.16.1',
-        serverVersion: navidromeConfig.serverVersion || ''
-      };
-      saveJson(NAVIDROME_FILE, navidromeConfig);
-    }
-
-    const tokenQuery = getSubsonicAuthQuery(username, password);
-    const passQuery = getSubsonicPassAuthQuery(username, password);
-
-    // Try multiple query endpoints with short timeout for fast fallback
-    const candidateUrls = [
-      `${serverUrl}/rest/getPlaylists?${passQuery}`,
-      `${serverUrl}/rest/getPlaylists.view?${passQuery}`,
-      `${serverUrl}/rest/getPlaylists?${tokenQuery}`,
-      `${serverUrl}/rest/getPlaylists.view?${tokenQuery}`,
-      `${serverUrl}/rest/getPlaylists?u=${encodeURIComponent(username)}&p=${encodeURIComponent(password)}&v=1.16.1&c=TingLanMusic&f=json`,
-      `${serverUrl}/rest/getPlaylists.view?u=${encodeURIComponent(username)}&p=${encodeURIComponent(password)}&v=1.16.1&c=TingLanMusic&f=json`
-    ];
-
-    let subResp: any = null;
-    let rawItems: any[] = [];
-    let lastErrorMsg = '';
-
-    for (const targetUrl of candidateUrls) {
-      const sanitizedUrl = targetUrl.replace(/p=[^&]+/, 'p=******').replace(/t=[^&]+/, 't=******');
-      debugLogs.push(`--> Fetching: ${sanitizedUrl}`);
-      console.log(`[Navidrome Playlists] --> Fetching: ${sanitizedUrl}`);
-
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 6000);
-        const response = await fetch(targetUrl, { signal: controller.signal });
-        clearTimeout(timeout);
-
-        const textBody = await response.text().catch(() => '');
-        debugLogs.push(`    <-- Status: HTTP ${response.status} ${response.statusText} | Body length: ${textBody.length}`);
-        console.log(`[Navidrome Playlists] <-- Status: HTTP ${response.status} | Body preview: ${textBody.slice(0, 150)}`);
-
-        if (!response.ok) {
-          lastErrorMsg = `HTTP ${response.status} ${response.statusText}`;
-          continue;
-        }
-
-        let data: any = null;
-        try {
-          data = JSON.parse(textBody);
-        } catch (jsonErr: any) {
-          debugLogs.push(`    [JSON Parse Error] ${jsonErr.message}`);
-          console.warn(`[Navidrome Playlists] JSON Parse Error:`, jsonErr.message);
-        }
-
-        const resp = data ? data['subsonic-response'] : null;
-
-        if (resp && resp.status === 'ok') {
-          subResp = resp;
-          if (resp.version) navidromeConfig.apiVersion = resp.version;
-          if (resp.serverVersion) navidromeConfig.serverVersion = resp.serverVersion;
-
-          const extracted = extractSubsonicPlaylists(resp);
-          rawItems = extracted;
-          debugLogs.push(`    [Success] Extracted ${extracted.length} playlist items`);
-          break;
-        } else if (resp?.error?.message) {
-          lastErrorMsg = resp.error.message;
-          debugLogs.push(`    [Subsonic Error] Code: ${resp.error.code}, Message: ${resp.error.message}`);
-        } else if (data) {
-          debugLogs.push(`    [Invalid Response] Response missing 'subsonic-response' key`);
-        }
-      } catch (err: any) {
-        lastErrorMsg = err.message || '网络连接超时';
-        debugLogs.push(`    [Exception] ${lastErrorMsg}`);
-        console.warn(`[Navidrome Playlists] Fetch Exception: ${lastErrorMsg}`);
-      }
-    }
-
-    if (!subResp && rawItems.length === 0) {
-      return res.json({
-        success: false,
-        message: `无法拉取 Navidrome 歌单: ${lastErrorMsg || '网络连接超时或服务器无响应'}`,
-        debugLogs
-      });
-    }
-
-    const defaultCover = 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=600&q=80';
-
-    const formattedPlaylists = rawItems.map((p: any) => {
-      const coverArtId = p.coverArt || p.coverArtId || p.cover;
-      const coverUrl = coverArtId 
-        ? `${serverUrl}/rest/getCoverArt?id=${coverArtId}&${passQuery}`
-        : defaultCover;
-
-      return {
-        id: String(p.id || p.playlistId || p.key || ''),
-        name: p.name || p.title || '未命名歌单',
-        comment: p.comment || p.description || '',
-        songCount: Number(p.songCount || p.song_count || p.itemCount || (p.entry ? (Array.isArray(p.entry) ? p.entry.length : 1) : 0)),
-        duration: Number(p.duration || 0),
-        coverUrl,
-        created: p.created || p.created_at,
-        changed: p.changed || p.updated_at,
-        owner: p.owner || username
-      };
-    }).filter((p: any) => Boolean(p.id));
-
-    return res.json({
-      success: true,
-      count: formattedPlaylists.length,
-      playlists: formattedPlaylists,
-      message: formattedPlaylists.length > 0 
-        ? `成功获取到 ${formattedPlaylists.length} 个 Navidrome 歌单` 
-        : '未能获取到歌单，请确认 Navidrome 中已建立歌单并对该账号开放权限',
-      debugLogs
-    });
-
-  } catch (e: any) {
-    debugLogs.push(`[Fatal Exception] ${e.message}`);
-    console.error(`[Navidrome Playlists Fatal Error]`, e);
-    return res.json({
-      success: false,
-      message: `获取 Navidrome 歌单失败: ${e.message || '网络连接超时'}`,
-      debugLogs
-    });
-  }
-});
-
-function extractSubsonicPlaylists(subResp: any): any[] {
-  if (!subResp) return [];
-  const list: any[] = [];
-
-  const addItems = (val: any) => {
-    if (!val) return;
-    if (Array.isArray(val)) {
-      list.push(...val);
-    } else if (typeof val === 'object') {
-      if (val.id || val.name) {
-        list.push(val);
-      } else {
-        Object.values(val).forEach(v => {
-          if (v && typeof v === 'object' && ((v as any).id || (v as any).name)) {
-            list.push(v);
-          }
-        });
-      }
-    }
-  };
-
-  if (subResp.playlists) addItems(subResp.playlists.playlist || subResp.playlists);
-  if (subResp.playlist) addItems(subResp.playlist);
-  if (subResp.publicPlaylists) addItems(subResp.publicPlaylists.playlist || subResp.publicPlaylists);
-  if (subResp.smartPlaylists) addItems(subResp.smartPlaylists.playlist || subResp.smartPlaylists);
-
-  const map = new Map<string, any>();
-  for (const item of list) {
-    const itemId = String(item.id || item.playlistId || item.name || '');
-    if (itemId && !map.has(itemId)) {
-      map.set(itemId, item);
-    }
-  }
-
-  return Array.from(map.values());
-}
-
-// Import Selected Playlists and their Songs from Navidrome
-app.post('/api/navidrome/import-playlists', async (req: Request, res: Response) => {
-  try {
-    const { playlistIds } = req.body;
-    const serverUrl = String(req.body?.serverUrl || navidromeConfig.serverUrl || '').trim().replace(/\/+$/, '');
-    const username = String(req.body?.username || navidromeConfig.username || '').trim();
-    const rawPassword = String(req.body?.password || '');
-    const password = (rawPassword === '••••••••' || rawPassword === '********' || !rawPassword)
-      ? navidromeConfig.password
-      : rawPassword;
-
-    if (!Array.isArray(playlistIds) || playlistIds.length === 0) {
-      return res.status(400).json({ success: false, message: '请选择至少一个要导入的歌单' });
-    }
-
-    if (!serverUrl || !username) {
-      return res.status(400).json({ success: false, message: 'Navidrome 连接未配置' });
-    }
-
-    const tokenQuery = getSubsonicAuthQuery(username, password);
-    const passQuery = getSubsonicPassAuthQuery(username, password);
-    const defaultCover = 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=600&q=80';
-
-    let totalSongsImported = 0;
-    let totalPlaylistsImported = 0;
-
-    for (const plId of playlistIds) {
-      try {
-        const candidateUrls = [
-          `${serverUrl}/rest/getPlaylist?id=${encodeURIComponent(plId)}&${passQuery}`,
-          `${serverUrl}/rest/getPlaylist.view?id=${encodeURIComponent(plId)}&${passQuery}`,
-          `${serverUrl}/rest/getPlaylist?id=${encodeURIComponent(plId)}&${tokenQuery}`,
-          `${serverUrl}/rest/getPlaylist.view?id=${encodeURIComponent(plId)}&${tokenQuery}`
-        ];
-
-        let naviPl: any = null;
-        let activeAuthQuery = passQuery;
-
-        for (const targetUrl of candidateUrls) {
-          try {
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 8000);
-            const response = await fetch(targetUrl, { signal: controller.signal });
-            clearTimeout(timeout);
-
-            if (!response.ok) continue;
-
-            const data = await response.json().catch(() => null);
-            const subResp = data ? data['subsonic-response'] : null;
-            if (subResp && subResp.status === 'ok' && subResp.playlist) {
-              naviPl = subResp.playlist;
-              if (targetUrl.includes(tokenQuery)) {
-                activeAuthQuery = tokenQuery;
-              }
-              break;
-            }
-          } catch (e) {
-            // Continue to next candidate
-          }
-        }
-
-        if (!naviPl) continue;
-
-        const rawEntries = naviPl.entry || [];
-        const entryArray = Array.isArray(rawEntries) ? rawEntries : (rawEntries ? [rawEntries] : []);
-
-        const songIdList: string[] = [];
-
-        for (const item of entryArray) {
-          const songId = `navidrome-${item.id}`;
-          songIdList.push(songId);
-
-          const streamUrl = `${serverUrl}/rest/stream?id=${item.id}&${activeAuthQuery}`;
-          const coverUrl = item.coverArt 
-            ? `${serverUrl}/rest/getCoverArt?id=${item.coverArt}&${activeAuthQuery}`
-            : defaultCover;
-
-          const songObj = {
-            id: songId,
-            title: item.title || 'Navidrome Track',
-            artist: item.artist || '未知歌手',
-            album: item.album || naviPl.name || 'Navidrome 音乐库',
-            duration: item.duration || 210,
-            url: streamUrl,
-            coverUrl: coverUrl,
-            genre: item.genre || 'Navidrome',
-            year: item.year || 2024,
-            bitrate: `${item.bitRate || 320}kbps ${item.suffix || 'mp3'}`,
-            fileSize: item.size ? `${(item.size / (1024 * 1024)).toFixed(1)} MB` : '12 MB',
-            isFavorite: false,
-            source: 'uploaded',
-            lyrics: item.lyrics || `[00:00.00] ${item.title} - ${item.artist}\n[00:05.00] 来自 Navidrome 歌单《${naviPl.name}》\n[00:12.00] 小爱音箱高保真串流中...`
-          };
-
-          const existSongIdx = storedSongs.findIndex(s => s.id === songId);
-          if (existSongIdx >= 0) {
-            storedSongs[existSongIdx] = songObj;
-          } else {
-            storedSongs.unshift(songObj);
-            totalSongsImported++;
-          }
-        }
-
-        const plCoverUrl = naviPl.coverArt 
-          ? `${serverUrl}/rest/getCoverArt?id=${naviPl.coverArt}&${activeAuthQuery}`
-          : (entryArray[0]?.coverArt 
-              ? `${serverUrl}/rest/getCoverArt?id=${entryArray[0].coverArt}&${activeAuthQuery}` 
-              : defaultCover);
-
-        const targetPlId = `navidrome-pl-${naviPl.id}`;
-        const existingPlIdx = storedPlaylists.findIndex(p => p.id === targetPlId || p.name === naviPl.name);
-
-        const playlistRecord = {
-          id: targetPlId,
-          name: naviPl.name || 'Navidrome 歌单',
-          description: naviPl.comment || `从 Navidrome 导入 (${entryArray.length} 首)`,
-          coverUrl: plCoverUrl,
-          songIds: songIdList,
-          createdAt: new Date().toISOString().split('T')[0]
-        };
-
-        if (existingPlIdx >= 0) {
-          storedPlaylists[existingPlIdx] = playlistRecord;
-        } else {
-          storedPlaylists.push(playlistRecord);
-        }
-        totalPlaylistsImported++;
-
-      } catch (err) {
-        console.warn(`[Navidrome Import] Failed to import playlist ${plId}:`, err);
-      }
-    }
-
-    saveJson(SONGS_FILE, storedSongs);
-    saveJson(PLAYLISTS_FILE, storedPlaylists);
-
-    // Save active config
-    navidromeConfig = {
-      serverUrl,
-      username,
-      password,
-      isConnected: true,
-      apiVersion: navidromeConfig.apiVersion || '1.16.1',
-      serverVersion: navidromeConfig.serverVersion || ''
-    };
+// ---------------- NAVIDROME / SUBSONIC REMOTE SERVER INTEGRATION (Phase 1 Decoupling) ----------------
+app.use("/api/navidrome", createNavidromeRouter({
+  getNavidromeConfig: () => navidromeConfig,
+  setNavidromeConfig: (cfg) => {
+    navidromeConfig = cfg;
     saveJson(NAVIDROME_FILE, navidromeConfig);
-
-    return res.json({
-      success: true,
-      importedPlaylistsCount: totalPlaylistsImported,
-      importedSongsCount: totalSongsImported,
-      playlists: storedPlaylists,
-      message: `成功导入 ${totalPlaylistsImported} 个 Navidrome 歌单（共关联 ${totalSongsImported} 首歌曲）！`
-    });
-
-  } catch (e: any) {
-    return res.json({
-      success: false,
-      message: `导入歌单异常: ${e.message || '网络连接超时'}`
-    });
+  },
+  refreshNavidromeSongCredentials,
+  getSubsonicAuthQuery,
+  getSubsonicPassAuthQuery,
+  getStoredSongs: () => storedSongs,
+  setStoredSongs: (songs) => {
+    storedSongs = songs;
+    saveJson(SONGS_FILE, storedSongs);
+  },
+  getStoredPlaylists: () => storedPlaylists,
+  setStoredPlaylists: (pls) => {
+    storedPlaylists = pls;
+    saveJson(PLAYLISTS_FILE, storedPlaylists);
   }
-});
+}));
 
 // AI Music Insight & Recommendation (server-side Gemini)
 app.post('/api/ai/music-insight', async (req: Request, res: Response) => {

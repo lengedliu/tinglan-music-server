@@ -1,5 +1,5 @@
 import http from 'http';
-import dgram from 'dgram';
+import net from 'net';
 
 export interface DlnaEndpoint {
   ip: string;
@@ -14,7 +14,7 @@ export interface DlnaEndpoint {
 const dlnaEndpointCache = new Map<string, DlnaEndpoint>();
 
 // Standard DLNA ports used by XiaoAi speakers and UPnP MediaRenderers
-const COMMON_DLNA_PORTS = [1420, 49152, 49153, 49154, 8008, 1900, 52235, 38400, 8080];
+const COMMON_DLNA_PORTS = [1420, 49152, 49153, 49154, 8008, 8080, 6095, 5000];
 
 /**
  * Escapes XML special characters
@@ -30,6 +30,44 @@ function escapeXml(unsafe: string): string {
 }
 
 /**
+ * Super-fast TCP port probe to avoid waiting for HTTP timeouts on closed/unreachable ports
+ */
+function checkPortOpen(ip: string, port: number, timeoutMs = 350): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = new net.Socket();
+    let isDone = false;
+
+    const cleanup = () => {
+      if (!isDone) {
+        isDone = true;
+        socket.destroy();
+      }
+    };
+
+    socket.setTimeout(timeoutMs);
+    socket.once('connect', () => {
+      cleanup();
+      resolve(true);
+    });
+    socket.once('timeout', () => {
+      cleanup();
+      resolve(false);
+    });
+    socket.once('error', () => {
+      cleanup();
+      resolve(false);
+    });
+
+    try {
+      socket.connect(port, ip);
+    } catch {
+      cleanup();
+      resolve(false);
+    }
+  });
+}
+
+/**
  * Perform a raw HTTP POST with SOAP envelope
  */
 function sendSoapRequest(
@@ -39,7 +77,7 @@ function sendSoapRequest(
   serviceType: string,
   action: string,
   bodyXml: string,
-  timeoutMs = 1500
+  timeoutMs = 1200
 ): Promise<{ success: boolean; statusCode: number; responseText: string; error?: string }> {
   return new Promise((resolve) => {
     let finished = false;
@@ -174,25 +212,40 @@ export class DlnaEngine {
     const cached = dlnaEndpointCache.get(cleanIp);
     if (cached) return cached;
 
-    // Comprehensive XiaoAi and UPnP DLNA ports:
-    // 1420 (primary XiaoAi DLNA/UPnP)
-    // 49152, 49153, 49154, 49155, 49156 (secondary UPnP MediaRenderer standard dynamic ports)
-    // 8080, 8008 (standard MediaRenderer / Google Cast web servers)
-    // 6095, 5000 (standard UPnP alternate)
-    const standardPorts = [1420, 49152, 49153, 49154, 49155, 49156, 8080, 8008, 6095, 5000];
+    // Candidate ports
+    const standardPorts = COMMON_DLNA_PORTS;
     const portsToTry = preferredPort ? [preferredPort, ...standardPorts] : standardPorts;
     const uniquePorts = Array.from(new Set(portsToTry));
 
-    console.log(`[DLNA Probe] 正在探测音箱 ${cleanIp} 候选端口 [${uniquePorts.join(', ')}]...`);
+    // Phase 1: Fast TCP Socket Connect check in parallel (< 350ms)
+    const portCheckTasks = uniquePorts.map(async (port) => {
+      const isOpen = await checkPortOpen(cleanIp, port, 350);
+      return { port, isOpen };
+    });
+
+    const checkResults = await Promise.allSettled(portCheckTasks);
+    const openPorts: number[] = [];
+    for (const r of checkResults) {
+      if (r.status === 'fulfilled' && r.value.isOpen) {
+        openPorts.push(r.value.port);
+      }
+    }
+
+    if (openPorts.length === 0) {
+      // No ports reachable on this IP
+      return null;
+    }
+
+    console.log(`[DLNA Probe] 设备 ${cleanIp} 开放活动端口: [${openPorts.join(', ')}]，正在解析 UPnP 服务...`);
 
     const xmlPaths = ['/description.xml', '/rootDesc.xml', '/upnp/description.xml', '/dd.xml'];
     const probeTasks: Promise<DlnaEndpoint | null>[] = [];
 
-    for (const port of uniquePorts) {
+    for (const port of openPorts) {
       // 1. Try XML descriptor endpoints
       for (const xmlPath of xmlPaths) {
         probeTasks.push(
-          httpGet(`http://${cleanIp}:${port}${xmlPath}`, 1200).then(res => {
+          httpGet(`http://${cleanIp}:${port}${xmlPath}`, 800).then(res => {
             if (res.ok && (res.text.includes('AVTransport') || res.text.includes('MediaRenderer') || res.text.includes('RenderingControl'))) {
               const ep = this.parseDeviceXml(cleanIp, port, res.text);
               if (ep) {
@@ -214,7 +267,7 @@ export class DlnaEngine {
           'urn:schemas-upnp-org:service:AVTransport:1',
           'GetTransportInfo',
           '<InstanceID>0</InstanceID>',
-          1200
+          800
         ).then(soapRes => {
           if (soapRes.statusCode === 200 || (soapRes.responseText && (soapRes.responseText.includes('UPnPError') || soapRes.responseText.includes('TransportInfo') || soapRes.responseText.includes('CurrentTransportState')))) {
             console.log(`[DLNA Probe] ✅ 发现活动 AVTransport SOAP 端口: ${cleanIp}:${port}`);
@@ -242,7 +295,6 @@ export class DlnaEngine {
       }
     } catch {}
 
-    console.warn(`[DLNA Probe] ⚠️ 未能在端口 [${uniquePorts.join(', ')}] 自动捕获到活动 DLNA 服务`);
     return null;
   }
 
@@ -303,40 +355,11 @@ export class DlnaEngine {
     const t0 = Date.now();
     console.log(`[DLNA] 准备向音箱 ${ip} 发送 DLNA 媒体流: ${streamUrl}`);
 
-    let endpoint = await this.probeDevice(ip);
-
-    // If probing description XML failed, try direct XiaoAi default port 1420 & 49152
-    if (!endpoint) {
-      console.log(`[DLNA] 正在尝试小爱标准直接端点 fallback (${ip}:1420 & ${ip}:49152)...`);
-      const fallbackPorts = [1420, 49152];
-      for (const fPort of fallbackPorts) {
-        const testRes = await sendSoapRequest(
-          ip,
-          fPort,
-          '/upnp/control/AVTransport',
-          'urn:schemas-upnp-org:service:AVTransport:1',
-          'GetTransportInfo',
-          '<InstanceID>0</InstanceID>',
-          1200
-        );
-        if (testRes.statusCode === 200 || (testRes.responseText && (testRes.responseText.includes('UPnPError') || testRes.responseText.includes('TransportInfo')))) {
-          endpoint = {
-            ip,
-            port: fPort,
-            controlUrl: '/upnp/control/AVTransport',
-            renderingControlUrl: '/upnp/control/RenderingControl',
-            friendlyName: `小爱音箱 (${ip})`
-          };
-          dlnaEndpointCache.set(ip, endpoint);
-          console.log(`[DLNA] ✅ 直接端点命中: ${ip}:${fPort}/upnp/control/AVTransport`);
-          break;
-        }
-      }
-    }
+    const endpoint = await this.probeDevice(ip);
 
     if (!endpoint) {
       const err = `未能发现设备 ${ip} 的 DLNA 影音渲染服务（请在小爱音箱 App 中开启【DLNA】支持，并确保与服务端处于同局域网）`;
-      console.warn(`[DLNA] ❌ ${err}`);
+      console.log(`[DLNA] 提示: ${err}`);
       return {
         success: false,
         error: err
@@ -360,7 +383,7 @@ export class DlnaEngine {
         'urn:schemas-upnp-org:service:AVTransport:1',
         'Stop',
         '<InstanceID>0</InstanceID>',
-        800
+        600
       );
     } catch {}
 
@@ -376,7 +399,7 @@ export class DlnaEngine {
       'urn:schemas-upnp-org:service:AVTransport:1',
       'SetAVTransportURI',
       setUriBody,
-      2500
+      1800
     );
 
     console.log(`[DLNA] [${endpoint.ip}:${endpoint.port}] SetAVTransportURI 响应: status=${setUriRes.statusCode}, success=${setUriRes.success}`);
@@ -390,7 +413,7 @@ export class DlnaEngine {
         'urn:schemas-upnp-org:service:AVTransport:1',
         'SetAVTransportURI',
         `<InstanceID>0</InstanceID><CurrentURI>${escapedUrl}</CurrentURI><CurrentURIMetaData></CurrentURIMetaData>`,
-        2000
+        1500
       );
 
       console.log(`[DLNA] [${endpoint.ip}:${endpoint.port}] SetAVTransportURI 简化重试: status=${simpleSetUri.statusCode}, success=${simpleSetUri.success}`);
@@ -415,7 +438,7 @@ export class DlnaEngine {
       'urn:schemas-upnp-org:service:AVTransport:1',
       'Play',
       '<InstanceID>0</InstanceID><Speed>1</Speed>',
-      2000
+      1500
     );
 
     console.log(`[DLNA] [${endpoint.ip}:${endpoint.port}] Play 响应: status=${playRes.statusCode}, success=${playRes.success}`);
@@ -432,7 +455,7 @@ export class DlnaEngine {
           'urn:schemas-upnp-org:service:AVTransport:1',
           'SetPlayMode',
           '<InstanceID>0</InstanceID><NewPlayMode>NORMAL</NewPlayMode>',
-          1000
+          800
         );
       } catch {}
 
@@ -444,8 +467,8 @@ export class DlnaEngine {
       };
     }
 
-    // Some devices require brief delay before Play command
-    await new Promise((r) => setTimeout(r, 300));
+    // Brief delay before retry
+    await new Promise((r) => setTimeout(r, 200));
     const retryPlay = await sendSoapRequest(
       endpoint.ip,
       endpoint.port,
@@ -453,7 +476,7 @@ export class DlnaEngine {
       'urn:schemas-upnp-org:service:AVTransport:1',
       'Play',
       '<InstanceID>0</InstanceID><Speed>1</Speed>',
-      2000
+      1500
     );
 
     console.log(`[DLNA] [${endpoint.ip}:${endpoint.port}] Play 延迟重试: status=${retryPlay.statusCode}, success=${retryPlay.success}`);
@@ -481,7 +504,7 @@ export class DlnaEngine {
       'urn:schemas-upnp-org:service:AVTransport:1',
       'Play',
       '<InstanceID>0</InstanceID><Speed>1</Speed>',
-      2000
+      1500
     );
     return { success: res.success, error: res.error };
   }
@@ -500,7 +523,7 @@ export class DlnaEngine {
       'urn:schemas-upnp-org:service:AVTransport:1',
       'Pause',
       '<InstanceID>0</InstanceID>',
-      2000
+      1500
     );
     return { success: res.success, error: res.error };
   }
@@ -519,7 +542,7 @@ export class DlnaEngine {
       'urn:schemas-upnp-org:service:AVTransport:1',
       'Stop',
       '<InstanceID>0</InstanceID>',
-      2000
+      1500
     );
     return { success: res.success, error: res.error };
   }
@@ -541,7 +564,7 @@ export class DlnaEngine {
       'urn:schemas-upnp-org:service:RenderingControl:1',
       'SetVolume',
       `<InstanceID>0</InstanceID><Channel>Master</Channel><DesiredVolume>${vol}</DesiredVolume>`,
-      2000
+      1500
     );
     return { success: res.success, error: res.error };
   }
@@ -567,8 +590,23 @@ export class DlnaEngine {
     return {
       reachable: false,
       latency,
-      message: `设备 ${ip} 未响应 DLNA (端口 1420/49152/8008 无 UPnP 服务，请在小爱音箱 App 开启 DLNA)`
+      message: `设备 ${ip} 未响应 DLNA (端口 1420/49152/8008 无 UPnP 服务，请在小爱音箱 App 开启 DLNA，或在云端模式下投播)`
     };
+  }
+
+  /**
+   * Clear or set cached endpoint
+   */
+  public clearCache(ip?: string) {
+    if (ip) {
+      dlnaEndpointCache.delete(ip);
+    } else {
+      dlnaEndpointCache.clear();
+    }
+  }
+
+  public setEndpoint(ip: string, endpoint: DlnaEndpoint) {
+    dlnaEndpointCache.set(ip, endpoint);
   }
 }
 

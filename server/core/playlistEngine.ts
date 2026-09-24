@@ -67,6 +67,14 @@ export class PlaylistEngine {
     return this.playlists;
   }
 
+  public setPlaylists(playlists: Playlist[]): void {
+    this.playlists = playlists;
+  }
+
+  public reload(): void {
+    this.loadPlaylists();
+  }
+
   public getById(id: string): Playlist | undefined {
     return this.playlists.find(p => p.id === id);
   }

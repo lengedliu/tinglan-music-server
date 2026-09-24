@@ -89,23 +89,28 @@ export class DeviceDiscoveryEngine {
         resolve(Array.from(foundMap.values()));
       });
 
-      // Send broadcast / multi-unicast
-      for (const sub of subnets) {
-        // Send to standard broadcast .255
-        try {
-          client.send(helloPacket, 0, helloPacket.length, 54321, `${sub}.255`);
-        } catch {}
-
-        // Send unicast probes in batch
-        for (let i = startIp; i <= endIp; i++) {
-          const targetIp = `${sub}.${i}`;
+      // Send broadcast / multi-unicast (staggered 2-burst for Wi-Fi packet-loss resistance)
+      const sendProbes = () => {
+        for (const sub of subnets) {
           try {
-            client.send(helloPacket, 0, helloPacket.length, 54321, targetIp);
+            client.send(helloPacket, 0, helloPacket.length, 54321, `${sub}.255`);
           } catch {}
+          for (let i = startIp; i <= endIp; i++) {
+            const targetIp = `${sub}.${i}`;
+            try {
+              client.send(helloPacket, 0, helloPacket.length, 54321, targetIp);
+            } catch {}
+          }
         }
-      }
+      };
+
+      // Initial burst
+      sendProbes();
+      // Second burst after 250ms to catch sleeping Wi-Fi APs / lost packets
+      const secondaryTimer = setTimeout(sendProbes, 250);
 
       setTimeout(() => {
+        clearTimeout(secondaryTimer);
         try { client.close(); } catch {}
         resolve(Array.from(foundMap.values()));
       }, timeoutMs);
