@@ -1,5 +1,5 @@
-import React from 'react';
-import { ListMusic, X, Play, Trash2, Shuffle, Disc, Repeat, Repeat1, Radio, SkipForward, SkipBack } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { ListMusic, X, Play, Trash2, Shuffle, Disc, Repeat, Repeat1, Radio, SkipForward, SkipBack, ArrowRightLeft, Check, Loader2, Sparkles } from 'lucide-react';
 import { Song, XiaomiDevice } from '../types';
 import { formatTime } from '../utils/lyricParser';
 import { useTheme } from '../context/ThemeContext';
@@ -22,6 +22,7 @@ interface PlayQueueDrawerProps {
   onCycleRepeat?: () => void;
   onNext?: () => void;
   onPrev?: () => void;
+  onDeviceChange?: (device: XiaomiDevice) => void;
 }
 
 export const PlayQueueDrawer: React.FC<PlayQueueDrawerProps> = ({
@@ -41,12 +42,86 @@ export const PlayQueueDrawer: React.FC<PlayQueueDrawerProps> = ({
   onCycleRepeat,
   onNext,
   onPrev,
+  onDeviceChange,
 }) => {
   const { themeConfig, isLight: ctxIsLight } = useTheme();
   const isLight = Boolean(ctxIsLight ?? themeConfig?.isLight);
+
+  const [showHandover, setShowHandover] = useState(false);
+  const [candidates, setCandidates] = useState<any[]>([]);
+  const [loadingCandidates, setLoadingCandidates] = useState(false);
+  const [transferringDid, setTransferringDid] = useState<string | null>(null);
+  const [transferToast, setTransferToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (showHandover) {
+      setLoadingCandidates(true);
+      fetch('/api/queue/handover-targets')
+        .then(res => res.json())
+        .then(data => {
+          if (data.success && Array.isArray(data.devices)) {
+            setCandidates(data.devices);
+          }
+        })
+        .catch(err => console.warn('Failed to fetch handover targets:', err))
+        .finally(() => setLoadingCandidates(false));
+    }
+  }, [showHandover]);
+
   if (!isOpen) return null;
 
   const currentIndex = playlist.findIndex(s => s.id === currentSong?.id);
+
+  const handleExecuteTransfer = async (targetDev: any) => {
+    try {
+      setTransferringDid(targetDev.did);
+      const res = await fetch('/api/queue/transfer', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetDid: targetDev.did })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setTransferToast(`已成功流转至【${targetDev.name}】`);
+        if (onDeviceChange) {
+          onDeviceChange({
+            did: targetDev.did,
+            name: targetDev.name,
+            model: targetDev.model || 'XiaoAi',
+            ip: targetDev.ip,
+            isOnline: true,
+            status: { playing: true, volume: 40, updatedAt: new Date().toISOString() }
+          });
+        }
+        setTimeout(() => {
+          setShowHandover(false);
+          setTransferToast(null);
+        }, 1600);
+      } else {
+        setTransferToast(`流转失败: ${data.message || '音箱未响应'}`);
+      }
+    } catch (err: any) {
+      setTransferToast(`流转异常: ${err.message}`);
+    } finally {
+      setTransferringDid(null);
+    }
+  };
+
+  const renderDeviceBadge = () => {
+    const state = activeDevice?.deviceState || (activeDevice?.status?.playing ? 'playing' : (activeDevice?.isOnline ? 'online' : 'offline'));
+    switch (state) {
+      case 'transcoding':
+        return <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-purple-500/20 text-purple-400 border border-purple-500/30">FFmpeg转码中</span>;
+      case 'buffering':
+        return <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-blue-500/20 text-blue-400 border border-blue-500/30">缓冲中</span>;
+      case 'playing':
+        return <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">播放中</span>;
+      case 'paused':
+        return <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-amber-500/20 text-amber-400 border border-amber-500/30">已暂停</span>;
+      default:
+        return null;
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-md flex justify-end animate-in fade-in duration-200">
@@ -64,17 +139,28 @@ export const PlayQueueDrawer: React.FC<PlayQueueDrawerProps> = ({
                 <span className={`text-xs px-2 py-0.5 rounded-full ${isLight ? 'bg-orange-100 text-orange-700 font-bold border border-orange-200' : 'bg-zinc-800 text-[#FF6700] font-mono font-bold'}`}>
                   {playlist.length} 首
                 </span>
+                {renderDeviceBadge()}
               </h3>
-              <p className={`text-xs ${isLight ? 'text-zinc-600' : 'text-zinc-400'} flex items-center gap-1.5 mt-0.5`}>
+              <div className={`text-xs ${isLight ? 'text-zinc-600' : 'text-zinc-400'} flex items-center gap-1.5 mt-0.5`}>
                 {isCasting ? (
                   <>
-                    <Radio className="w-3 h-3 text-[#FF6700] animate-pulse" />
-                    <span>正在投播至: {activeDevice?.name || '小爱音箱'} (连续播放)</span>
+                    <Radio className="w-3 h-3 text-[#FF6700] animate-pulse shrink-0" />
+                    <span className="truncate max-w-[170px]">投播: {activeDevice?.name || '小爱音箱'}</span>
+                    <button
+                      onClick={() => setShowHandover(!showHandover)}
+                      className={`ml-1 flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold transition ${
+                        isLight ? 'bg-orange-100 text-orange-800 hover:bg-orange-200' : 'bg-white/10 text-orange-400 hover:bg-white/15'
+                      }`}
+                      title="无缝流转播放至其他音箱"
+                    >
+                      <ArrowRightLeft className="w-3 h-3" />
+                      <span>流转</span>
+                    </button>
                   </>
                 ) : (
                   <span>当前输出: 浏览器本地音频</span>
                 )}
-              </p>
+              </div>
             </div>
           </div>
 
@@ -86,6 +172,73 @@ export const PlayQueueDrawer: React.FC<PlayQueueDrawerProps> = ({
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        {/* Handover Dialog Dropdown */}
+        {showHandover && (
+          <div className={`px-5 py-3 border-b animate-in slide-in-from-top-2 duration-150 ${
+            isLight ? 'bg-orange-50/70 border-orange-200' : 'bg-zinc-900/90 border-white/10'
+          }`}>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold flex items-center gap-1.5 text-[#FF6700]">
+                <ArrowRightLeft className="w-3.5 h-3.5" />
+                无缝跨音箱流转 (保持进度续播)
+              </span>
+              <button
+                onClick={() => setShowHandover(false)}
+                className="text-xs text-zinc-400 hover:text-zinc-200"
+              >
+                收起
+              </button>
+            </div>
+
+            {transferToast && (
+              <div className="mb-2 p-2 rounded bg-emerald-500/20 text-emerald-400 text-xs font-medium border border-emerald-500/30">
+                {transferToast}
+              </div>
+            )}
+
+            {loadingCandidates ? (
+              <div className="flex items-center justify-center py-3 text-xs text-zinc-400 gap-2">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                正在发现局域网可用音箱...
+              </div>
+            ) : candidates.length === 0 ? (
+              <p className="text-xs text-zinc-400 py-1">未发现其他在线的小爱音箱设备</p>
+            ) : (
+              <div className="space-y-1.5 max-h-36 overflow-y-auto">
+                {candidates.map((dev) => (
+                  <button
+                    key={dev.did}
+                    disabled={transferringDid === dev.did}
+                    onClick={() => handleExecuteTransfer(dev)}
+                    className={`w-full flex items-center justify-between p-2 rounded-lg text-left text-xs transition ${
+                      isLight
+                        ? 'bg-white hover:bg-orange-100/60 border border-zinc-200 text-zinc-900'
+                        : 'bg-zinc-800/80 hover:bg-zinc-700/80 border border-white/5 text-zinc-100'
+                    }`}
+                  >
+                    <div>
+                      <div className="font-bold flex items-center gap-1.5">
+                        <span>{dev.name}</span>
+                        {dev.model && <span className="text-[10px] text-zinc-400 font-mono">({dev.model})</span>}
+                      </div>
+                      <div className="text-[10px] text-zinc-400 font-mono mt-0.5">{dev.ip || 'Cloud DID'}</div>
+                    </div>
+                    <div>
+                      {transferringDid === dev.did ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-[#FF6700]" />
+                      ) : (
+                        <span className="text-[11px] font-bold text-[#FF6700] hover:underline">
+                          流转至此
+                        </span>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Toolbar Controls */}
         <div className={`px-5 py-3 border-b flex items-center justify-between text-xs gap-2 ${

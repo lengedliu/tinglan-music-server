@@ -62,7 +62,7 @@ export interface DeviceCapabilities {
 
 export type DevicePlatform = 'mina' | 'miio' | 'miot';
 export type DeviceSource = 'cloud' | 'lan' | 'hybrid';
-export type DeviceConnectionState = 'online' | 'offline' | 'unknown' | 'connecting' | 'playing' | 'paused' | 'error';
+export type DeviceConnectionState = 'online' | 'offline' | 'unknown' | 'connecting' | 'playing' | 'paused' | 'buffering' | 'transcoding' | 'error';
 
 export interface XiaomiDevice {
   did: string;

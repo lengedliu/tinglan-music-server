@@ -1,6 +1,7 @@
 import dgram from 'dgram';
 import net from 'net';
 import { XiaomiDevice, DeviceManager } from './deviceManager.js';
+import { xiaomiCircuitBreaker } from '../circuitBreaker.js';
 
 export interface HeartbeatStatus {
   did: string;
@@ -12,6 +13,19 @@ export interface HeartbeatStatus {
   isPlaying?: boolean;
   volume?: number;
   track?: string;
+  consecutiveFailures?: number;
+  backoffDelayMs?: number;
+  nextProbeDueInSec?: number;
+  isBackingOff?: boolean;
+  recoveredRecently?: boolean;
+}
+
+export interface DeviceBackoffState {
+  consecutiveFailures: number;
+  nextProbeTime: number;
+  lastBackoffIntervalMs: number;
+  wasOffline: boolean;
+  lastRecoveryTime?: number;
 }
 
 export type StateSyncCallback = (deviceDid: string, status: Partial<XiaomiDevice>) => void;
@@ -20,8 +34,10 @@ export type StateSyncCallback = (deviceDid: string, status: Partial<XiaomiDevice
  * Smart Adaptive Heartbeat & Self-Healing State Synchronizer
  * - Idle Mode: 60s low-frequency keepalive
  * - Active/Playing Mode: 3s fast probe
+ * - Exponential Backoff with Jitter for offline/failed speakers (prevents ARP & socket storms)
+ * - Circuit Breaker Aware: suppresses Cloud Mina requests when circuit breaker is tripped
  * - Dynamic IP Drift Self-Healing: Resolves IP changes over LAN broadcast
- * - Bi-directional Hardware Playback State Sync
+ * - Bi-directional Hardware Playback State Sync & Disaster Recovery
  */
 export class AdaptiveHeartbeatEngine {
   private deviceManager: DeviceManager;
@@ -33,6 +49,7 @@ export class AdaptiveHeartbeatEngine {
   private isHighFrequency: boolean = false;
   private consecutiveFailures: Map<string, number> = new Map();
   private lastHeartbeatMap: Map<string, HeartbeatStatus> = new Map();
+  private deviceBackoffMap: Map<string, DeviceBackoffState> = new Map();
 
   constructor(deviceManager: DeviceManager) {
     this.deviceManager = deviceManager;
@@ -68,6 +85,28 @@ export class AdaptiveHeartbeatEngine {
   }
 
   /**
+   * Reset backoff cooldown and failures counter for a specific device (e.g. when user triggers action)
+   */
+  public resetDeviceBackoff(did: string): void {
+    const state = this.deviceBackoffMap.get(did);
+    if (state) {
+      state.consecutiveFailures = 0;
+      state.nextProbeTime = 0;
+      state.lastBackoffIntervalMs = 0;
+    }
+    this.consecutiveFailures.set(did, 0);
+  }
+
+  /**
+   * Called when playback or volume command is issued to a device:
+   * Resets backoff delays and immediately boosts to active fast-probe mode
+   */
+  public notifyDeviceActivity(did: string): void {
+    this.resetDeviceBackoff(did);
+    this.triggerActiveMode(35000);
+  }
+
+  /**
    * Boost heartbeat to high-frequency (3s) when user issues playback commands
    */
   public triggerActiveMode(durationMs = 30000): void {
@@ -75,7 +114,7 @@ export class AdaptiveHeartbeatEngine {
     console.log(`[AdaptiveHeartbeat] Boosted to Active Fast Probe Mode (3s) for ${durationMs / 1000}s`);
     if (this.timer) {
       clearTimeout(this.timer);
-      this.scheduleNextTick(500);
+      this.scheduleNextTick(300);
     }
     setTimeout(() => {
       // Re-evaluate if any device is still playing
@@ -98,6 +137,9 @@ export class AdaptiveHeartbeatEngine {
     this.timer = setTimeout(() => this.tick(), interval);
   }
 
+  /**
+   * Parallel heartbeat tick with per-device exponential backoff and jitter
+   */
   private async tick(): Promise<void> {
     if (!this.isRunning) return;
 
@@ -106,9 +148,11 @@ export class AdaptiveHeartbeatEngine {
       const hasPlaying = devices.some((d) => d.isPlaying);
       this.isHighFrequency = hasPlaying;
 
-      for (const device of devices) {
-        await this.probeDevice(device);
-      }
+      const now = Date.now();
+      // Probe devices concurrently without head-of-line blocking
+      await Promise.allSettled(
+        devices.map((device) => this.probeDeviceWithBackoff(device, now))
+      );
     } catch (err: any) {
       console.warn('[AdaptiveHeartbeat] Error during heartbeat tick:', err.message);
     } finally {
@@ -116,7 +160,37 @@ export class AdaptiveHeartbeatEngine {
     }
   }
 
-  private async probeDevice(device: XiaomiDevice): Promise<void> {
+  /**
+   * Evaluates exponential backoff cooldown before firing network sockets
+   */
+  private async probeDeviceWithBackoff(device: XiaomiDevice, now: number): Promise<void> {
+    let backoff = this.deviceBackoffMap.get(device.did);
+    if (!backoff) {
+      backoff = {
+        consecutiveFailures: 0,
+        nextProbeTime: 0,
+        lastBackoffIntervalMs: 0,
+        wasOffline: !device.online
+      };
+      this.deviceBackoffMap.set(device.did, backoff);
+    }
+
+    // If currently in exponential backoff cooldown, skip probe to prevent ARP/socket flooding
+    if (now < backoff.nextProbeTime) {
+      const remainingSec = Math.ceil((backoff.nextProbeTime - now) / 1000);
+      const existing = this.lastHeartbeatMap.get(device.did);
+      if (existing) {
+        existing.isBackingOff = true;
+        existing.nextProbeDueInSec = remainingSec;
+        existing.consecutiveFailures = backoff.consecutiveFailures;
+      }
+      return;
+    }
+
+    await this.probeDevice(device, backoff);
+  }
+
+  private async probeDevice(device: XiaomiDevice, backoff?: DeviceBackoffState): Promise<void> {
     const startTime = Date.now();
     let isOnline = false;
     let activeProtocol: 'miIO_UDP' | 'DLNA_TCP' | 'MINA_CLOUD' | 'NONE' = 'NONE';
@@ -124,13 +198,22 @@ export class AdaptiveHeartbeatEngine {
     let isPlaying: boolean | undefined = device.isPlaying;
     let currentTrack: string | undefined = device.currentTrack;
 
+    if (!backoff) {
+      backoff = this.deviceBackoffMap.get(device.did) || {
+        consecutiveFailures: 0,
+        nextProbeTime: 0,
+        lastBackoffIntervalMs: 0,
+        wasOffline: !device.online
+      };
+      this.deviceBackoffMap.set(device.did, backoff);
+    }
+
     // 1. LAN miIO UDP 54321 Probe (if IP is configured)
     if (device.ip) {
       const miioReachable = await this.pingMiioUdp(device.ip, 1200);
       if (miioReachable) {
         isOnline = true;
         activeProtocol = 'miIO_UDP';
-        this.consecutiveFailures.set(device.did, 0);
 
         // If token available, query play status & volume
         if (device.token && this.sendMiioCommandFn && (this.isHighFrequency || Math.random() < 0.2)) {
@@ -162,7 +245,6 @@ export class AdaptiveHeartbeatEngine {
         if (dlnaReachable) {
           isOnline = true;
           activeProtocol = 'DLNA_TCP';
-          this.consecutiveFailures.set(device.did, 0);
         }
       }
     }
@@ -185,21 +267,56 @@ export class AdaptiveHeartbeatEngine {
       }
     }
 
-    // 3. Cloud Mina API fallback query if available
+    // 3. Cloud Mina API fallback query if available (Protected by Circuit Breaker)
     if (!isOnline && this.callMinaCloudApiFn) {
-      try {
-        const cloudRes = await this.callMinaCloudApiFn('mediaplayer', 'player_get_play_status', {}, device.did);
-        if (cloudRes?.success) {
-          isOnline = true;
-          activeProtocol = 'MINA_CLOUD';
-          this.consecutiveFailures.set(device.did, 0);
-          const info = cloudRes.data?.info;
-          if (info) {
-            isPlaying = info.status === 1 || info.status === 'play';
-            if (info.volume !== undefined) volume = info.volume;
+      const circuitCheck = xiaomiCircuitBreaker.canRequest('heartbeat_probe');
+      if (circuitCheck.allowed) {
+        try {
+          const cloudRes = await this.callMinaCloudApiFn('mediaplayer', 'player_get_play_status', {}, device.did);
+          if (cloudRes?.success) {
+            isOnline = true;
+            activeProtocol = 'MINA_CLOUD';
+            const info = cloudRes.data?.info;
+            if (info) {
+              isPlaying = info.status === 1 || info.status === 'play';
+              if (info.volume !== undefined) volume = info.volume;
+            }
           }
-        }
-      } catch {}
+        } catch {}
+      } else {
+        // Circuit breaker OPEN: safely skip cloud probing to prevent account locks and allow recovery
+      }
+    }
+
+    const now = Date.now();
+    let recoveredRecently = false;
+
+    // 4. Backoff & Disaster Recovery State Tracking
+    if (isOnline) {
+      if (backoff.wasOffline) {
+        recoveredRecently = true;
+        backoff.lastRecoveryTime = now;
+        console.log(`🎉 [AdaptiveHeartbeat] [Disaster Recovery] Speaker 【${device.name}】(${device.did}) recovered online via ${activeProtocol}! Reconciling state...`);
+      }
+      backoff.wasOffline = false;
+      backoff.consecutiveFailures = 0;
+      backoff.nextProbeTime = 0;
+      backoff.lastBackoffIntervalMs = 0;
+      this.consecutiveFailures.set(device.did, 0);
+    } else {
+      backoff.consecutiveFailures++;
+      this.consecutiveFailures.set(device.did, backoff.consecutiveFailures);
+      backoff.wasOffline = true;
+
+      // Exponential Backoff with Jitter algorithm:
+      // Base: 4s in active mode, 15s in idle mode. Multiplier = 1.8^min(fails, 6)
+      // Jitter = +/- 15% to avoid synchronized bursts across multiple offline devices
+      const baseDelay = this.isHighFrequency ? 4000 : 15000;
+      const multiplier = Math.pow(1.8, Math.min(backoff.consecutiveFailures, 6));
+      const backoffMs = Math.min(300000, Math.round(baseDelay * multiplier)); // cap at 5 minutes
+      const jitter = Math.round(backoffMs * (0.85 + Math.random() * 0.3));
+      backoff.nextProbeTime = now + jitter;
+      backoff.lastBackoffIntervalMs = jitter;
     }
 
     const latencyMs = Date.now() - startTime;
@@ -212,7 +329,12 @@ export class AdaptiveHeartbeatEngine {
       activeProtocol,
       isPlaying,
       volume,
-      track: currentTrack
+      track: currentTrack,
+      consecutiveFailures: backoff.consecutiveFailures,
+      backoffDelayMs: backoff.lastBackoffIntervalMs,
+      nextProbeDueInSec: backoff.nextProbeTime > now ? Math.ceil((backoff.nextProbeTime - now) / 1000) : 0,
+      isBackingOff: backoff.consecutiveFailures > 0 && backoff.nextProbeTime > now,
+      recoveredRecently
     };
 
     this.lastHeartbeatMap.set(device.did, heartbeat);

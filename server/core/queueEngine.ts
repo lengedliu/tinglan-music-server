@@ -18,7 +18,8 @@ export interface QueueStatus {
   totalSongs: number;
 }
 
-export type CastDispatcherFn = (song: Song, targetDid: string) => Promise<{ success: boolean; message?: string; error?: string }>;
+export type CastDispatcherFn = (song: Song, targetDid: string, seekSeconds?: number) => Promise<{ success: boolean; message?: string; error?: string }>;
+export type PauseDispatcherFn = (targetDid: string) => Promise<any>;
 export type SongProviderFn = () => Song[];
 
 export class QueueEngine extends EventEmitter {
@@ -34,9 +35,11 @@ export class QueueEngine extends EventEmitter {
   private autoAdvanceTimer: NodeJS.Timeout | null = null;
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private castDispatcher: CastDispatcherFn | null = null;
+  private pauseDispatcher: PauseDispatcherFn | null = null;
   private songProvider: SongProviderFn | null = null;
   private isTransitioning: boolean = false;
-  private preheatHandler: ((song: Song, targetDid: string) => void) | null = null;
+  private preheatHandler: ((song: Song, targetDid: string, isDeep?: boolean) => void) | null = null;
+  private deepPreheatDoneForIndex: number = -1;
 
   constructor() {
     super();
@@ -46,11 +49,15 @@ export class QueueEngine extends EventEmitter {
     this.castDispatcher = dispatcher;
   }
 
+  public setPauseDispatcher(dispatcher: PauseDispatcherFn) {
+    this.pauseDispatcher = dispatcher;
+  }
+
   public setSongProvider(provider: SongProviderFn) {
     this.songProvider = provider;
   }
 
-  public setPreheatHandler(handler: (song: Song, targetDid: string) => void) {
+  public setPreheatHandler(handler: (song: Song, targetDid: string, isDeep?: boolean) => void) {
     this.preheatHandler = handler;
   }
 
@@ -60,19 +67,17 @@ export class QueueEngine extends EventEmitter {
     return this.queue[nextIdx] || null;
   }
 
-  private triggerNextTrackPreheat() {
+  private triggerNextTrackPreheat(isDeep: boolean = false) {
     if (!this.preheatHandler || this.queue.length <= 1) return;
     const nextSong = this.getNextSong();
     if (nextSong) {
-      setTimeout(() => {
-        try {
-          if (this.isPlaying && this.preheatHandler) {
-            this.preheatHandler(nextSong, this.targetDid);
-          }
-        } catch (err: any) {
-          console.warn('[QueueEngine] Preheat trigger warning:', err?.message);
+      try {
+        if (this.isPlaying && this.preheatHandler) {
+          this.preheatHandler(nextSong, this.targetDid, isDeep);
         }
-      }, 3500);
+      } catch (err: any) {
+        console.warn('[QueueEngine] Preheat trigger warning:', err?.message);
+      }
     }
   }
 
@@ -341,6 +346,107 @@ export class QueueEngine extends EventEmitter {
     }
 
     // Normal intermediate range requests (buffering bytes): DO NOT reset songStartTime or autoAdvanceTimer!
+  }
+
+  /**
+   * Phase 3: Hardware closed-loop EOF / stream completion event
+   * Called when speaker has fetched all audio bytes and closed the connection.
+   */
+  public notifyStreamCompleted(songId: string, clientIp?: string) {
+    if (!this.isPlaying || this.queue.length === 0 || this.isTransitioning) return;
+    const currentSong = this.queue[this.currentIndex];
+    if (!currentSong) return;
+
+    const rawCleanSongId = decodeURIComponent(songId).replace(/\.(mp3|flac|wav|m4a|aac|ogg|opus)$/i, '').trim();
+    const cleanCurrentId = decodeURIComponent(currentSong.id || '').replace(/\.(mp3|flac|wav|m4a|aac|ogg|opus)$/i, '').trim();
+    if (rawCleanSongId !== cleanCurrentId && !songId.includes(cleanCurrentId)) return;
+
+    const now = Date.now();
+    const elapsed = Math.floor((now - this.songStartTime) / 1000);
+    const remaining = this.currentDuration - elapsed;
+
+    console.log(`[QueueEngine] 🏁 捕获音箱流结束闭环事件 (已播放 ${elapsed}s / 总时长 ${this.currentDuration}s, 剩余 ${remaining}s)`);
+
+    // If less than 4 seconds remaining, cleanly trigger next track immediately
+    if (remaining <= 4) {
+      console.log(`[QueueEngine] ⏭️ 音箱已完整拉取全部音频数据且接近曲目尾声，执行零静音无缝切歌！`);
+      this.next(false).catch(err => console.warn('[QueueEngine] 闭环切歌异常:', err));
+    }
+  }
+
+  /**
+   * Phase 3: Seamless cross-speaker playback handover
+   * Transfers active queue, current track, and precise playback position to target speaker.
+   */
+  public async transferPlayback(
+    newTargetDid: string,
+    newTargetDeviceName?: string,
+    positionOffsetSeconds?: number
+  ): Promise<{ success: boolean; message: string; elapsedSeconds: number; song: Song | null }> {
+    if (!newTargetDid) {
+      return { success: false, message: '目标音箱 DID 不能为空', elapsedSeconds: 0, song: null };
+    }
+    this.ensureQueueContext();
+    if (this.queue.length === 0 || !this.currentSongStarted) {
+      this.targetDid = newTargetDid;
+      if (newTargetDeviceName) this.targetDeviceName = newTargetDeviceName;
+      this.emit('change', this.getStatus());
+      return {
+        success: true,
+        message: `已将播放目标音箱设置为【${this.targetDeviceName}】`,
+        elapsedSeconds: 0,
+        song: this.queue[this.currentIndex] || null
+      };
+    }
+
+    const currentSong = this.queue[this.currentIndex];
+    const oldTargetDid = this.targetDid;
+    const oldTargetName = this.targetDeviceName;
+
+    const now = Date.now();
+    const elapsedSeconds = (typeof positionOffsetSeconds === 'number' && positionOffsetSeconds >= 0)
+      ? positionOffsetSeconds
+      : Math.max(0, Math.floor((now - this.songStartTime) / 1000));
+
+    console.log(`[QueueEngine] 🔄 触发跨音箱无缝流转: 从【${oldTargetName || oldTargetDid}】->【${newTargetDeviceName || newTargetDid}】，保持曲目《${currentSong?.title}》，接续进度 ${elapsedSeconds}s`);
+
+    // 1. Pause / Stop playback on the old speaker
+    if (oldTargetDid && oldTargetDid !== newTargetDid && this.pauseDispatcher) {
+      try {
+        await this.pauseDispatcher(oldTargetDid);
+      } catch (pauseErr: any) {
+        console.warn('[QueueEngine] Handover: Failed to pause old speaker:', pauseErr?.message);
+      }
+    }
+
+    // 2. Switch target device
+    this.targetDid = newTargetDid;
+    if (newTargetDeviceName) this.targetDeviceName = newTargetDeviceName;
+
+    // 3. Dispatch to new speaker with seekSeconds parameter
+    let dispatchRes: { success: boolean; message?: string; error?: string } = { success: true };
+    if (this.castDispatcher && currentSong) {
+      try {
+        dispatchRes = await this.castDispatcher(currentSong, newTargetDid, elapsedSeconds);
+      } catch (err: any) {
+        dispatchRes = { success: false, error: err.message };
+      }
+    }
+
+    // 4. Update playback timer and remaining duration
+    this.songStartTime = Date.now() - (elapsedSeconds * 1000);
+    const remaining = Math.max(5, this.currentDuration - elapsedSeconds);
+    this.scheduleAutoAdvance(remaining);
+    this.emit('change', this.getStatus());
+
+    return {
+      success: dispatchRes.success,
+      message: dispatchRes.success
+        ? `已无缝流转播放至【${this.targetDeviceName}】（自 ${elapsedSeconds}s 处续播）`
+        : `流转指令下发异常: ${dispatchRes.error || dispatchRes.message || '音箱未响应'}`,
+      elapsedSeconds,
+      song: currentSong
+    };
   }
 
   /**
@@ -625,6 +731,15 @@ export class QueueEngine extends EventEmitter {
     this.heartbeatTimer = setInterval(() => {
       if (!this.isPlaying || this.queue.length === 0 || this.songStartTime <= 0 || this.isTransitioning) return;
       const elapsed = Math.floor((Date.now() - this.songStartTime) / 1000);
+      const remaining = Math.max(0, this.currentDuration - elapsed);
+
+      // Phase 3: Stage 2 Deep Pre-caching when 25s remaining or 75% played
+      if (this.deepPreheatDoneForIndex !== this.currentIndex && (remaining <= 25 || elapsed >= this.currentDuration * 0.75)) {
+        this.deepPreheatDoneForIndex = this.currentIndex;
+        console.log(`[QueueEngine] ⚡ 双阶段预热 Stage 2 激活 (剩余 ${remaining}s): 启动下一首全量预转码`);
+        this.triggerNextTrackPreheat(true /* isDeep */);
+      }
+
       const threshold = (this.currentDuration || 180) + 4; // 4.0s safe threshold to let speaker flush full buffer
 
       if (elapsed >= threshold) {

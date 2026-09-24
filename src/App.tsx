@@ -2311,6 +2311,7 @@ export default function App() {
           isPlaying={isPlaying}
           isCasting={isCasting}
           activeDevice={activeDevice}
+          onDeviceChange={(dev) => setActiveDeviceId(dev.did)}
           onSelectSong={handlePlaySong}
           onRemoveFromQueue={(songId) => {
             setPlayQueue(prev => {

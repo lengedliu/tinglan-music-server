@@ -1106,6 +1106,9 @@ let xiaomiDevices: any[] = rawXiaomiDevices.map((d: any) => {
   };
 });
 let miotConfig = loadJson(CONFIG_FILE, DEFAULT_CONFIG);
+if ((miotConfig as any).enableReplayGain) {
+  streamServer.setLoudnessConfig(true, (miotConfig as any).targetLufs || -16);
+}
 
 // ---------------- SINGLE SOURCE OF TRUTH LOCKSTEP SYNC (P1 ARCHITECTURE) ----------------
 // Eliminate dual-state divergence: ensure musicEngine, playlistEngine, and deviceManager
@@ -1537,13 +1540,16 @@ function sanitizeDevice(dev: any) {
   const tokenMasked = token ? (String(token).length > 8 ? `${String(token).slice(0, 4)}••••••••${String(token).slice(-4)}` : '••••••••') : '';
 
   // Phase 3: Fine-grained device connection & playback state
-  let deviceState: 'online' | 'offline' | 'unknown' | 'connecting' | 'playing' | 'paused' | 'error' = 'offline';
+  let deviceState: 'online' | 'offline' | 'unknown' | 'connecting' | 'playing' | 'paused' | 'buffering' | 'transcoding' | 'error' = 'offline';
+  const isTranscoding = transcodeSemaphorePool.getStats().activeCount > 0 && queueEngine.getStatus().targetDid === dev.did;
   if (!isOnline) {
     deviceState = 'offline';
   } else if (dev.status?.error) {
     deviceState = 'error';
-  } else if (dev.status?.connecting) {
-    deviceState = 'connecting';
+  } else if (isTranscoding) {
+    deviceState = 'transcoding';
+  } else if (dev.status?.buffering || dev.status?.connecting) {
+    deviceState = dev.status?.buffering ? 'buffering' : 'connecting';
   } else if (dev.status?.playing) {
     deviceState = 'playing';
   } else if (dev.status?.paused) {
@@ -4021,6 +4027,23 @@ app.post('/api/miot/heartbeat/boost', (req: Request, res: Response) => {
   });
 });
 
+// Manually reset heartbeat exponential backoff for a specific device or all devices
+app.post('/api/miot/heartbeat/reset-backoff', (req: Request, res: Response) => {
+  const { did } = req.body || {};
+  if (did) {
+    adaptiveHeartbeatEngine.resetDeviceBackoff(did);
+  } else {
+    for (const dev of xiaomiDevices) {
+      adaptiveHeartbeatEngine.resetDeviceBackoff(dev.did);
+    }
+  }
+  adaptiveHeartbeatEngine.triggerActiveMode(30000);
+  res.json({
+    success: true,
+    message: did ? `已重置设备 ${did} 的心跳退避计时器并立即嗅探` : '已重置所有音箱的心跳退避计时器并立即嗅探'
+  });
+});
+
 // Cast Song to Xiaomi Speaker with Real Cloud UBUS Dispatch & Local miIO fallback
 app.post('/api/miot/cast', async (req: Request, res: Response) => {
   if (!checkMiotControlPermission(req, res)) return;
@@ -4213,7 +4236,7 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
       updatedAt: new Date().toISOString()
     };
     saveJson(DEVICES_FILE, xiaomiDevices);
-    adaptiveHeartbeatEngine.triggerActiveMode(45000);
+    adaptiveHeartbeatEngine.notifyDeviceActivity(targetDevice.did);
 
     // Synchronize active track and full playlist context into QueueEngine for continuous queue playback
     try {
@@ -4293,7 +4316,11 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
 /**
  * Direct casting dispatcher for QueueEngine automated playlist playback
  */
-async function dispatchCastSongDirectly(song: any, targetDid: string): Promise<{ success: boolean; message?: string; error?: string }> {
+async function dispatchCastSongDirectly(
+  song: any,
+  targetDid: string,
+  seekSeconds?: number
+): Promise<{ success: boolean; message?: string; error?: string }> {
   if (xiaomiDevices.length === 0 && (miotConfig as any).passToken) {
     try {
       const resolveRes = await xiaoaiResolverEngine.resolveDevices({
@@ -4337,16 +4364,14 @@ async function dispatchCastSongDirectly(song: any, targetDid: string): Promise<{
   const cleanSongId = rawId.replace(/\.(mp3|wav|flac|m4a|aac|ogg|opus|ape)$/i, '');
   
   // ALWAYS stream through Tinglan proxy endpoint (/api/stream/:id.mp3)
-  // This guarantees:
-  // 1. XiaoAi firmware receives a standardized .mp3 URL (not raw Subsonic .view queries)
-  // 2. Tinglan handles HTTP 206 Range headers & proxies remote Navidrome/local files
-  // 3. QueueEngine stream consumption tracking and auto-advance timers function accurately
+  // Phase 3: Supports Accurate Seek parameter (?t=seconds) for cross-speaker handover
   const streamToken = generateStreamToken(cleanSongId);
-  const resolvedStreamUrl = `${baseHost}/api/stream/${encodeURIComponent(cleanSongId)}.mp3?token=${streamToken}`;
+  const seekParam = (typeof seekSeconds === 'number' && seekSeconds > 0) ? `&t=${Math.floor(seekSeconds)}` : '';
+  const resolvedStreamUrl = `${baseHost}/api/stream/${encodeURIComponent(cleanSongId)}.mp3?token=${streamToken}${seekParam}`;
 
   const selectedCastMode = (miotConfig.castMode || 'auto') as any;
 
-  if (miotConfig.ttsAnnouncement) {
+  if (miotConfig.ttsAnnouncement && (!seekSeconds || seekSeconds <= 0)) {
     try {
       await ttsEngine.dispatchToSpeaker({
         targetDevice,
@@ -4385,17 +4410,20 @@ async function dispatchCastSongDirectly(song: any, targetDid: string): Promise<{
       currentTitle: song.title || '未知曲目',
       currentArtist: song.artist || '未知歌手',
       currentDuration: song.duration || 200,
-      currentPosition: 0,
+      currentPosition: seekSeconds || 0,
       streamUrl: resolvedStreamUrl,
       updatedAt: new Date().toISOString()
     };
     saveJson(DEVICES_FILE, xiaomiDevices);
+    adaptiveHeartbeatEngine.notifyDeviceActivity(targetDevice.did);
 
     castLogs.unshift({
       id: `log-q-${Date.now()}`,
       timestamp: new Date().toLocaleTimeString(),
       type: 'cast',
-      message: `【歌单队列自动切播】《${song.title}》->【${targetDevice.name}】`,
+      message: seekSeconds
+        ? `【跨音箱无缝流转】《${song.title}》接续至【${targetDevice.name}】(${seekSeconds}s)`
+        : `【歌单队列自动切播】《${song.title}》->【${targetDevice.name}】`,
       detail: `歌手: ${song.artist} | 协议: ${castResult.protocol} | 串流源: ${resolvedStreamUrl}`,
       success: true,
       did: targetDevice.did,
@@ -4428,8 +4456,25 @@ async function dispatchCastSongDirectly(song: any, targetDid: string): Promise<{
 queueEngine.setCastDispatcher(dispatchCastSongDirectly);
 queueEngine.setSongProvider(() => storedSongs);
 
-// Phase 2: Next-track idle pre-transcoding handler
-queueEngine.setPreheatHandler(async (nextSong, targetDid) => {
+// Phase 3: Pause old device on handover
+queueEngine.setPauseDispatcher(async (did: string) => {
+  const dev = xiaomiDevices.find(d => d.did === did || (d as any).deviceID === did);
+  if (!dev) return;
+  try {
+    await xiaomiAdapter.setPlaybackOperation(
+      dev,
+      'pause',
+      (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry),
+      (ip, token, method, params, timeoutMs) => sendMiioCommand(ip, token, method, params, timeoutMs || 2500),
+      miotConfig
+    );
+  } catch (err: any) {
+    console.warn('[QueueEngine] Handover pause old speaker error:', err.message);
+  }
+});
+
+// Phase 3: Dual-stage next-track idle pre-transcoding handler
+queueEngine.setPreheatHandler(async (nextSong, targetDid, isDeep) => {
   if (!nextSong) return;
   try {
     const rawId = (nextSong.id || '').toString();
@@ -4447,8 +4492,14 @@ queueEngine.setPreheatHandler(async (nextSong, targetDid) => {
     }
     if (resolvedFilePath && fs.existsSync(resolvedFilePath)) {
       const targetDev = xiaomiDevices.find(d => d.did === targetDid);
+      console.log(`[QueueEngine] ⚡ 双阶段预热 ${isDeep ? 'Stage 2 (全量转码)' : 'Stage 1 (轻量预备)'} 《${nextSong.title}》`);
       await ffmpegTranscoder.preheatSongAsync(resolvedFilePath, cleanSongId, {
-        deviceModel: targetDev?.model
+        deviceModel: targetDev?.model,
+        cueStartSeconds: (nextSong as any).cueTrack?.startSeconds,
+        cueDurationSeconds: (nextSong as any).cueTrack?.durationSeconds,
+        replayGainDb: (nextSong as any).replayGain?.trackGainDb,
+        normalizeLoudness: Boolean((miotConfig as any).normalizeLoudness ?? true),
+        targetLufs: Number((miotConfig as any).targetLufs ?? -14)
       });
     }
   } catch (err: any) {
@@ -4505,12 +4556,13 @@ app.get('/api/events', (req: Request, res: Response) => {
   });
 });
 
-// --- Queue Engine Domain Router (Phase 1 Decoupling) ---
+// --- Queue Engine Domain Router (Phase 1 Decoupling & Phase 3 Cross-Speaker Handover) ---
 app.use('/api/queue', createQueueRouter({
   getTargetDevice: (did) => {
     const targetDid = did || miotConfig.activeDeviceId || (xiaomiDevices[0] ? xiaomiDevices[0].did : '');
     return xiaomiDevices.find(d => d.did === targetDid || (d as any).deviceID === targetDid) || xiaomiDevices[0];
-  }
+  },
+  getAllDevices: () => xiaomiDevices
 }));
 
 // Stream status & reachability diagnostic endpoint
@@ -6069,6 +6121,11 @@ const streamAudioHandler = async (req: Request, res: Response) => {
       res.on('close', () => {
         fileStream.destroy();
       });
+      res.on('finish', () => {
+        if (!isBrowserClient && end >= fileSize - 4096) {
+          queueEngine.notifyStreamCompleted(String(songId), clientIp);
+        }
+      });
       fileStream.pipe(res);
     } else {
       const head = {
@@ -6085,6 +6142,11 @@ const streamAudioHandler = async (req: Request, res: Response) => {
       const fileStream = fs.createReadStream(localFilePath);
       res.on('close', () => {
         fileStream.destroy();
+      });
+      res.on('finish', () => {
+        if (!isBrowserClient) {
+          queueEngine.notifyStreamCompleted(String(songId), clientIp);
+        }
       });
       fileStream.pipe(res);
     }
@@ -6150,6 +6212,31 @@ app.post('/api/transcode/cache/clear', (req: Request, res: Response) => {
   });
 });
 
+// ReplayGain & Loudness Normalization Settings API (Phase 2)
+app.get('/api/transcode/replaygain', (req: Request, res: Response) => {
+  res.json({
+    success: true,
+    enabled: streamServer.enableLoudnessNormalization,
+    targetLufs: streamServer.targetLufs
+  });
+});
+
+app.post('/api/transcode/replaygain', (req: Request, res: Response) => {
+  const { enabled, targetLufs } = req.body || {};
+  const isEnabled = Boolean(enabled);
+  const lufs = typeof targetLufs === 'number' ? Math.max(-30, Math.min(-6, targetLufs)) : -16;
+  streamServer.setLoudnessConfig(isEnabled, lufs);
+  (miotConfig as any).enableReplayGain = isEnabled;
+  (miotConfig as any).targetLufs = lufs;
+  saveJson(CONFIG_FILE, miotConfig);
+  res.json({
+    success: true,
+    enabled: isEnabled,
+    targetLufs: lufs,
+    message: isEnabled ? `已开启智能等响度均衡（目标响度 ${lufs} LUFS）` : '已关闭智能等响度均衡'
+  });
+});
+
 // 3-Tier Architecture Status API
 app.get(['/api/system/3tier-architecture', '/api/system/xiaomusic-architecture'], (req: Request, res: Response) => {
   const transcodeStats = audioTranscoder.getCacheStats();
@@ -6198,6 +6285,27 @@ app.get(['/api/system/3tier-architecture', '/api/system/xiaomusic-architecture']
       }
     }
   });
+});
+
+// Phase 3: Hardware Strategy Telemetry & Self-Healing Profiles API
+app.get('/api/system/cast-profiles', (req: Request, res: Response) => {
+  const profiles = castPipelineManager.getProfilesReport();
+  res.json({
+    success: true,
+    profiles,
+    totalDevices: xiaomiDevices.length
+  });
+});
+
+app.post('/api/system/cast-profiles/reset', (req: Request, res: Response) => {
+  const { did } = req.body || {};
+  if (did) {
+    castPipelineManager.clearProfile(did);
+    res.json({ success: true, message: `已重置设备 [${did}] 的自适应策略画像` });
+  } else {
+    castPipelineManager.resetAllProfiles();
+    res.json({ success: true, message: '已重置所有音箱的自学习策略画像' });
+  }
 });
 
 // ---------------- SUBSONIC & OPENSUBSONIC REST API STANDARD ----------------

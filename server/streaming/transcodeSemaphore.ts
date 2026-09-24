@@ -18,6 +18,8 @@ export interface ActiveProcessSession {
   deviceModel?: string;
   startTime: number;
   lastActivityTime: number;
+  lastChunkTime: number;
+  bytesEmitted: number;
   hasConsumer: boolean;
   reaperTimer?: NodeJS.Timeout;
   releaseFn?: () => void;
@@ -34,6 +36,11 @@ export interface TranscodePoolStats {
   totalDirectPassThrough: number;
   totalReapedZombies: number;
   systemCores: number;
+  systemMemory: {
+    freeMb: number;
+    totalMb: number;
+    processHeapMb: number;
+  };
   activeSessions: Array<{
     sessionId: string;
     pid: number;
@@ -42,6 +49,9 @@ export interface TranscodePoolStats {
     sourcePath: string;
     hasConsumer: boolean;
     isZombiePending: boolean;
+    bytesEmittedMb: string;
+    lastChunkAgoSec: number;
+    isStalled: boolean;
   }>;
 }
 
@@ -299,6 +309,7 @@ export class TranscodeSemaphorePool {
     releaseFn?: () => void;
   }): void {
     const pid = session.process.pid || 0;
+    const now = Date.now();
     const meta: ActiveProcessSession = {
       sessionId: session.sessionId,
       pid,
@@ -307,8 +318,10 @@ export class TranscodeSemaphorePool {
       clientIp: session.clientIp,
       userAgent: session.userAgent,
       deviceModel: session.deviceModel,
-      startTime: Date.now(),
-      lastActivityTime: Date.now(),
+      startTime: now,
+      lastActivityTime: now,
+      lastChunkTime: now,
+      bytesEmitted: 0,
       hasConsumer: true,
       releaseFn: session.releaseFn,
       killed: false
@@ -320,6 +333,18 @@ export class TranscodeSemaphorePool {
     session.process.once('exit', (code, sig) => {
       this.unregisterSession(session.sessionId, `process exit code=${code} sig=${sig}`);
     });
+  }
+
+  /**
+   * Watchdog Feed: Invoked whenever FFmpeg emits new transcoded chunks to client PassThrough
+   */
+  public feedSession(sessionId: string, bytesChunk: number = 0): void {
+    const meta = this.activeSessions.get(sessionId);
+    if (!meta || meta.killed) return;
+    const now = Date.now();
+    meta.lastActivityTime = now;
+    meta.lastChunkTime = now;
+    meta.bytesEmitted = (meta.bytesEmitted || 0) + bytesChunk;
   }
 
   /**
@@ -414,20 +439,76 @@ export class TranscodeSemaphorePool {
   }
 
   /**
-   * Periodic sweep: kill processes running for > 30 minutes or without consumer for > 15s
+   * Comprehensive Process Watchdog & Zombie Reaper:
+   * 1. OS PID liveness check (ESRCH detection)
+   * 2. Host RAM memory pressure shedding
+   * 3. Max session TTL enforcement (30 minutes)
+   * 4. Disconnected consumer timeout (>10s)
+   * 5. Active pipeline stall / deadlock detection (>25s with no chunks emitted)
    */
   private sweepZombieSessions(): void {
     const now = Date.now();
+
+    // 1. Host Memory Pressure Guard (Protection for NAS / Raspberry Pi)
+    try {
+      const freeMem = os.freemem();
+      const totalMem = os.totalmem();
+      if (freeMem < 50 * 1024 * 1024 && (freeMem / totalMem) < 0.05) {
+        console.warn(`⚠️ [TranscodeWatchdog] Critical low host memory (${Math.round(freeMem / 1024 / 1024)}MB free). Triggering emergency session trimming...`);
+        let candidateSessionId: string | null = null;
+        let oldestStartTime = Infinity;
+        for (const [id, meta] of this.activeSessions.entries()) {
+          if (!meta.hasConsumer) {
+            candidateSessionId = id;
+            break;
+          }
+          if (meta.startTime < oldestStartTime) {
+            oldestStartTime = meta.startTime;
+            candidateSessionId = id;
+          }
+        }
+        if (candidateSessionId) {
+          this.reapSession(candidateSessionId, 'emergency memory pressure shed');
+        }
+      }
+    } catch {}
+
     for (const [sessionId, meta] of this.activeSessions.entries()) {
+      if (meta.killed) continue;
+
+      // 2. OS Process Table Liveness Check
+      if (meta.pid > 0) {
+        try {
+          process.kill(meta.pid, 0); // Tests whether process exists without sending destructive signal
+        } catch (err: any) {
+          if (err.code === 'ESRCH') {
+            console.warn(`💀 [TranscodeWatchdog] FFmpeg PID ${meta.pid} (${sessionId}) no longer exists in OS process table. Cleaning up vanished process...`);
+            this.reapSession(sessionId, 'OS process vanished (ESRCH)');
+            continue;
+          }
+        }
+      }
+
+      // 3. Max TTL Guard (30 minutes max stream session)
       const runningMs = now - meta.startTime;
-      // Max TTL 30 minutes for a single stream session
       if (runningMs > 30 * 60 * 1000) {
         this.reapSession(sessionId, 'session max TTL (30m) reached');
         continue;
       }
-      // If marked without consumer and running without timer for > 10s
+
+      // 4. Disconnected Consumer Inactivity (> 10s without consumer)
       if (!meta.hasConsumer && !meta.reaperTimer && (now - meta.lastActivityTime > 10000)) {
         this.reapSession(sessionId, 'orphaned session with no active consumer');
+        continue;
+      }
+
+      // 5. Active Pipeline Stall / Freeze Detection
+      // If consumer is connected and stream was initiated (>5s ago), but no chunks were produced for >25s
+      const chunkInactivityMs = now - (meta.lastChunkTime || meta.startTime);
+      if (meta.hasConsumer && runningMs > 5000 && chunkInactivityMs > 25000) {
+        console.warn(`⏱️ [TranscodeWatchdog] FFmpeg pipe stalled for ${Math.round(chunkInactivityMs / 1000)}s on session ${sessionId} (PID: ${meta.pid}). Reaping hung process...`);
+        this.reapSession(sessionId, 'pipeline deadlock / data freeze (>25s stall)');
+        continue;
       }
     }
   }
@@ -440,6 +521,7 @@ export class TranscodeSemaphorePool {
     const sessionsList: TranscodePoolStats['activeSessions'] = [];
 
     for (const [id, meta] of this.activeSessions.entries()) {
+      const chunkInactivitySec = Math.round((now - (meta.lastChunkTime || meta.startTime)) / 1000);
       sessionsList.push({
         sessionId: id,
         pid: meta.pid,
@@ -447,9 +529,16 @@ export class TranscodeSemaphorePool {
         clientIp: meta.clientIp,
         sourcePath: meta.sourcePath,
         hasConsumer: meta.hasConsumer,
-        isZombiePending: Boolean(meta.reaperTimer)
+        isZombiePending: Boolean(meta.reaperTimer),
+        bytesEmittedMb: ((meta.bytesEmitted || 0) / (1024 * 1024)).toFixed(2),
+        lastChunkAgoSec: chunkInactivitySec,
+        isStalled: meta.hasConsumer && chunkInactivitySec > 25
       });
     }
+
+    const freeMb = Math.round(os.freemem() / 1024 / 1024);
+    const totalMb = Math.round(os.totalmem() / 1024 / 1024);
+    const heapMb = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
 
     return {
       maxConcurrency: this.maxConcurrency,
@@ -461,6 +550,11 @@ export class TranscodeSemaphorePool {
       totalDirectPassThrough: this.totalDirectPassThrough,
       totalReapedZombies: this.totalReapedZombies,
       systemCores: os.cpus()?.length || 2,
+      systemMemory: {
+        freeMb,
+        totalMb,
+        processHeapMb: heapMb
+      },
       activeSessions: sessionsList
     };
   }

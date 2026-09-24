@@ -55,6 +55,8 @@ export class StreamServer {
   public recentStreamEvents: StreamEvent[] = [];
   public castLogs: CastLog[] = [];
   public activeStreamIps: Set<string> = new Set();
+  public enableLoudnessNormalization: boolean = false;
+  public targetLufs: number = -16;
 
   constructor(
     musicDir: string,
@@ -70,9 +72,14 @@ export class StreamServer {
     this.port = port;
   }
 
+  public setLoudnessConfig(enabled: boolean, targetLufs: number = -16): void {
+    this.enableLoudnessNormalization = enabled;
+    this.targetLufs = targetLufs;
+  }
+
   /**
-   * Express middleware / route handler for streaming audio with RFC 7233 HTTP 206 Partial Content
-   * and TranscodeSemaphorePool Hardware Resource Protection
+   * Express middleware / route handler for streaming audio with RFC 7233 HTTP 206 Partial Content,
+   * Exact Sample-Accurate Seek, CUE Sheet Sub-Track Virtual Slicing, and ReplayGain Loudness Normalization.
    */
   public handleStream = async (req: Request, res: Response) => {
     const rawSongId = req.params.songId || req.params.filename || '';
@@ -98,17 +105,32 @@ export class StreamServer {
       matchedExt = path.extname(songId).toLowerCase();
     }
 
-    // 2. Lookup via MusicEngine
-    if (!localFilePath) {
-      const matchedSong = this.musicEngine.getById(songId);
-      if (matchedSong?.localFilename) {
-        const potentialCustomPath = path.isAbsolute(matchedSong.localFilename)
-          ? matchedSong.localFilename
-          : path.join(this.musicDir, matchedSong.localFilename);
-        if (fs.existsSync(potentialCustomPath) && fs.statSync(potentialCustomPath).isFile()) {
-          localFilePath = potentialCustomPath;
-          matchedExt = path.extname(potentialCustomPath).toLowerCase();
+    // 2. Lookup via MusicEngine (including CUE virtual sub-tracks)
+    const matchedSong = this.musicEngine.getById(cleanSongId) || this.musicEngine.getById(songId);
+    let cueStartSeconds = 0;
+    let cueDurationSeconds: number | undefined;
+
+    if (matchedSong?.cueTrack) {
+      cueStartSeconds = matchedSong.cueTrack.startSeconds;
+      cueDurationSeconds = matchedSong.cueTrack.durationSeconds;
+      if (!localFilePath && matchedSong.cueTrack.parentFilename) {
+        const potential = path.isAbsolute(matchedSong.cueTrack.parentFilename)
+          ? matchedSong.cueTrack.parentFilename
+          : path.join(this.musicDir, matchedSong.cueTrack.parentFilename);
+        if (fs.existsSync(potential) && fs.statSync(potential).isFile()) {
+          localFilePath = potential;
+          matchedExt = path.extname(potential).toLowerCase();
         }
+      }
+    }
+
+    if (!localFilePath && matchedSong?.localFilename) {
+      const potentialCustomPath = path.isAbsolute(matchedSong.localFilename)
+        ? matchedSong.localFilename
+        : path.join(this.musicDir, matchedSong.localFilename);
+      if (fs.existsSync(potentialCustomPath) && fs.statSync(potentialCustomPath).isFile()) {
+        localFilePath = potentialCustomPath;
+        matchedExt = path.extname(potentialCustomPath).toLowerCase();
       }
     }
 
@@ -128,6 +150,20 @@ export class StreamServer {
     if (!localFilePath || !fs.existsSync(localFilePath)) {
       return res.status(404).send('Audio track not found in music engine catalog');
     }
+
+    // Query parameter seek support: ?t=seconds or ?ss=seconds
+    let querySeekSeconds = 0;
+    const rawSeek = req.query.t || req.query.ss || req.query.seek;
+    if (rawSeek) {
+      const parsed = parseFloat(String(rawSeek));
+      if (!isNaN(parsed) && parsed > 0) {
+        querySeekSeconds = parsed;
+      }
+    }
+
+    const replayGainDb = matchedSong?.replayGain?.trackGainDb;
+    const normalizeLoudness = this.enableLoudnessNormalization;
+    const targetLufs = this.targetLufs;
 
     const clientIp = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1').replace('::ffff:', '');
     const matchedDev = this.deviceManager.getByIp(clientIp);
@@ -232,18 +268,23 @@ export class StreamServer {
       }
     }
 
-    // 6. Live streaming & seek fast-paths for non-MP3 files (TTFB < 50ms)
-    if (matchedExt !== '.mp3') {
-      const matchedSong = this.musicEngine.getById(cleanSongId);
-      const durationSec = matchedSong?.duration || 240;
+    // 6. Live streaming & seek fast-paths (for non-MP3 files, CUE virtual sub-tracks, or ReplayGain processing)
+    const needsProcessing = matchedExt !== '.mp3' || Boolean(matchedSong?.cueTrack) || querySeekSeconds > 0 || normalizeLoudness || replayGainDb !== undefined;
+    if (needsProcessing && this.transcoder.isAvailable()) {
+      const durationSec = cueDurationSeconds || matchedSong?.duration || 240;
       const estimatedMp3Size = Math.max(1024 * 1024, Math.round(durationSec * (320 * 1000 / 8)) + 4096);
 
       // 6a. Live Streaming from beginning (bytes=0- or no range) (TTFB < 50ms)
-      if (this.transcoder.isAvailable() && (!rangeHeader || rangeHeader === 'bytes=0-' || rangeHeader.startsWith('bytes=0-'))) {
-        const liveSession = await this.transcoder.createLiveTranscodeStreamAsync(localFilePath, 0, {
+      if (!rangeHeader || rangeHeader === 'bytes=0-' || rangeHeader.startsWith('bytes=0-')) {
+        const liveStartSec = cueStartSeconds + querySeekSeconds;
+        const liveSession = await this.transcoder.createLiveTranscodeStreamAsync(localFilePath, liveStartSec, {
           sessionId: `stream-${cleanSongId}-${Date.now()}`,
           songId: cleanSongId,
-          persistCache: true,
+          persistCache: !matchedSong?.cueTrack && liveStartSec === 0 && !normalizeLoudness,
+          durationSeconds: cueDurationSeconds,
+          replayGainDb,
+          normalizeLoudness,
+          targetLufs,
           clientIp,
           userAgent: reqUserAgent,
           deviceModel: resolvedModel,
@@ -275,17 +316,30 @@ export class StreamServer {
         }
       }
 
-      // 6b. Seeking on non-cached non-MP3 audio (Range: bytes=START-) (TTFB < 80ms)
-      if (this.transcoder.isAvailable() && rangeHeader) {
+      // 6b. Accurate Seeking (Range: bytes=START-) with CBR MP3 frame-boundary alignment (TTFB < 80ms)
+      if (rangeHeader) {
         const rangeMatch = rangeHeader.match(/bytes=(\d+)-/);
         if (rangeMatch) {
           const startByte = parseInt(rangeMatch[1], 10);
           if (startByte > 2048) {
-            const startSeconds = Math.max(0, Math.floor((startByte - 128) / (320000 / 8)));
-            const seekSession = await this.transcoder.createLiveTranscodeStreamAsync(localFilePath, startSeconds, {
+            // Align startByte to MP3 CBR frame boundary (1044 bytes for 320k 44.1kHz CBR)
+            const alignedStartByte = Math.floor(startByte / 1044) * 1044;
+            const seekOffsetSec = Math.max(0, Math.floor((alignedStartByte - 128) / (320000 / 8)));
+            const seekStartSec = cueStartSeconds + querySeekSeconds + seekOffsetSec;
+
+            let remainingDurationSec: number | undefined;
+            if (cueDurationSeconds) {
+              remainingDurationSec = Math.max(1, cueDurationSeconds - seekOffsetSec);
+            }
+
+            const seekSession = await this.transcoder.createLiveTranscodeStreamAsync(localFilePath, seekStartSec, {
               sessionId: `seek-${cleanSongId}-${Date.now()}`,
               songId: cleanSongId,
               persistCache: false,
+              durationSeconds: remainingDurationSec,
+              replayGainDb,
+              normalizeLoudness,
+              targetLufs,
               clientIp,
               userAgent: reqUserAgent,
               deviceModel: resolvedModel,
@@ -319,14 +373,19 @@ export class StreamServer {
       }
 
       // Fallback: full transcode
-      const transcodeResult = await this.transcoder.ensureStandardMp3Async(localFilePath, cleanSongId, {
-        deviceModel: resolvedModel,
-        userAgent: reqUserAgent,
-        clientIp
-      });
-      if (transcodeResult.success && fs.existsSync(transcodeResult.filePath)) {
-        localFilePath = transcodeResult.filePath;
-        matchedExt = transcodeResult.format;
+      if (matchedExt !== '.mp3' && !matchedSong?.cueTrack) {
+        const transcodeResult = await this.transcoder.ensureStandardMp3Async(localFilePath, cleanSongId, {
+          deviceModel: resolvedModel,
+          userAgent: reqUserAgent,
+          clientIp,
+          replayGainDb,
+          normalizeLoudness,
+          targetLufs
+        });
+        if (transcodeResult.success && fs.existsSync(transcodeResult.filePath)) {
+          localFilePath = transcodeResult.filePath;
+          matchedExt = transcodeResult.format;
+        }
       }
     }
 

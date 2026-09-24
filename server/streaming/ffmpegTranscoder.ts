@@ -122,6 +122,10 @@ export class FfmpegTranscoder {
       deviceModel?: string;
       timeoutMs?: number;
       persistCache?: boolean;
+      durationSeconds?: number;
+      replayGainDb?: number;
+      normalizeLoudness?: boolean;
+      targetLufs?: number;
     } = {}
   ): Promise<LiveTranscodeSession | null> {
     if (!this.ffmpegAvailable || !fs.existsSync(sourcePath)) {
@@ -165,12 +169,12 @@ export class FfmpegTranscoder {
       };
     }
 
-    // 2. Prepare Tee Pipe cache target if caching from start (0s)
+    // 2. Prepare Tee Pipe cache target if caching from start (0s) and not a virtual sub-track
     let tmpCachePath: string | null = null;
     let targetCachePath: string | null = null;
     let cacheWriteStream: fs.WriteStream | null = null;
 
-    if (startSeconds === 0 && options.songId && options.persistCache !== false) {
+    if (startSeconds === 0 && !options.durationSeconds && options.songId && options.persistCache !== false) {
       const sanitizedId = options.songId.replace(/[^a-zA-Z0-9_-]/g, '_');
       targetCachePath = path.join(this.cacheDir, `${sanitizedId}_standard.mp3`);
       if (!fs.existsSync(targetCachePath)) {
@@ -185,18 +189,44 @@ export class FfmpegTranscoder {
       }
     }
 
-    // 3. Spawn live FFmpeg process
+    // 3. Spawn live FFmpeg process with accurate seek & audio filters
     const args: string[] = [];
     if (startSeconds > 0) {
-      args.push('-ss', startSeconds.toFixed(2));
+      // Accurate seek before input guarantees exact audio sample alignment without drift
+      args.push('-accurate_seek', '-ss', startSeconds.toFixed(3));
     }
+    args.push('-i', sourcePath);
+
+    // Duration bounding (vital for CUE virtual track splitting)
+    if (options.durationSeconds && options.durationSeconds > 0) {
+      args.push('-t', options.durationSeconds.toFixed(3));
+    }
+
     args.push(
-      '-i', sourcePath,
       '-vn',
       '-c:a', 'libmp3lame',
       '-ar', '44100',
       '-ac', '2',
-      '-b:a', '320k',
+      '-b:a', '320k'
+    );
+
+    // Audio Filters: ReplayGain & EBU R128 Smart Loudness
+    const audioFilters: string[] = [];
+    if (typeof options.replayGainDb === 'number' && !isNaN(options.replayGainDb)) {
+      // Clamp replayGain to safe audio range (-20dB to +12dB)
+      const clampedGain = Math.max(-20, Math.min(12, options.replayGainDb));
+      audioFilters.push(`volume=${clampedGain.toFixed(1)}dB`);
+    } else if (options.normalizeLoudness) {
+      // EBU R128 standard loudness normalizer (-16 LUFS is broadcast standard for smart speakers)
+      const targetI = typeof options.targetLufs === 'number' ? options.targetLufs : -16;
+      audioFilters.push(`loudnorm=I=${targetI}:TP=-1.5:LRA=11`);
+    }
+
+    if (audioFilters.length > 0) {
+      args.push('-af', audioFilters.join(','));
+    }
+
+    args.push(
       '-id3v2_version', '3',
       '-write_xing', '1',
       '-f', 'mp3',
@@ -228,9 +258,12 @@ export class FfmpegTranscoder {
 
       const clientPassThrough = new PassThrough({ highWaterMark: 128 * 1024 });
 
-      // Tee stream branching with Backpressure Control:
+      // Tee stream branching with Backpressure Control & Watchdog Feeding:
       // When client or network is slow, pause FFmpeg stdout to prevent RAM bloat
       child.stdout.on('data', (chunk: Buffer) => {
+        // Feed watchdog to confirm process is healthy and actively producing audio
+        this.semaphore.feedSession(sessionId, chunk.length);
+
         const canContinue = clientPassThrough.write(chunk);
         if (!canContinue) {
           child.stdout.pause();
@@ -395,7 +428,16 @@ export class FfmpegTranscoder {
   public async ensureStandardMp3Async(
     sourcePath: string,
     songId: string,
-    options: { deviceModel?: string; userAgent?: string; clientIp?: string } = {}
+    options: {
+      deviceModel?: string;
+      userAgent?: string;
+      clientIp?: string;
+      cueStartSeconds?: number;
+      cueDurationSeconds?: number;
+      replayGainDb?: number;
+      normalizeLoudness?: boolean;
+      targetLufs?: number;
+    } = {}
   ): Promise<TranscodeResult> {
     if (!fs.existsSync(sourcePath)) {
       return {
@@ -480,13 +522,30 @@ export class FfmpegTranscoder {
           const partPath = `${cachedMp3Path}.part.${Date.now()}_${process.pid}`;
           try {
             console.log(`🎵 [FfmpegTranscoder] Transcoding ${sourceExt} -> Standard MP3 for ${songId} (Slot allocated, strategy=${slot.strategy})...`);
-            const args = [
-              '-y', '-i', sourcePath,
-              '-vn', '-c:a', 'libmp3lame',
-              '-ar', '44100', '-ac', '2', '-b:a', '320k',
+            const args: string[] = ['-y'];
+            if (typeof options.cueStartSeconds === 'number' && options.cueStartSeconds > 0) {
+              args.push('-accurate_seek', '-ss', options.cueStartSeconds.toString());
+            }
+            args.push('-i', sourcePath);
+            if (typeof options.cueDurationSeconds === 'number' && options.cueDurationSeconds > 0) {
+              args.push('-t', options.cueDurationSeconds.toString());
+            }
+            args.push('-vn', '-c:a', 'libmp3lame', '-ar', '44100', '-ac', '2', '-b:a', '320k');
+            const audioFilters: string[] = [];
+            if (typeof options.replayGainDb === 'number' && !isNaN(options.replayGainDb)) {
+              const clampedGain = Math.max(-20, Math.min(12, options.replayGainDb));
+              audioFilters.push(`volume=${clampedGain.toFixed(1)}dB`);
+            } else if (options.normalizeLoudness) {
+              const targetI = typeof options.targetLufs === 'number' ? options.targetLufs : -16;
+              audioFilters.push(`loudnorm=I=${targetI}:TP=-1.5:LRA=11`);
+            }
+            if (audioFilters.length > 0) {
+              args.push('-af', audioFilters.join(','));
+            }
+            args.push(
               '-id3v2_version', '3', '-write_xing', '1',
               partPath
-            ];
+            );
             await execFileAsync('ffmpeg', args, { timeout: 45000 });
             if (fs.existsSync(partPath) && fs.statSync(partPath).size > 1024) {
               await fs.promises.rename(partPath, cachedMp3Path);
@@ -589,7 +648,18 @@ export class FfmpegTranscoder {
    * Pre-transcodes the next song in the background if the concurrency pool is idle.
    * Enables instant zero-delay playback when the queue advances to the next track.
    */
-  public async preheatSongAsync(sourcePath: string, songId: string, options: { deviceModel?: string } = {}): Promise<boolean> {
+  public async preheatSongAsync(
+    sourcePath: string,
+    songId: string,
+    options: {
+      deviceModel?: string;
+      cueStartSeconds?: number;
+      cueDurationSeconds?: number;
+      replayGainDb?: number;
+      normalizeLoudness?: boolean;
+      targetLufs?: number;
+    } = {}
+  ): Promise<boolean> {
     if (!this.ffmpegAvailable || !fs.existsSync(sourcePath)) return false;
     const sourceExt = path.extname(sourcePath).toLowerCase();
     if (sourceExt === '.mp3') return true;
@@ -610,6 +680,11 @@ export class FfmpegTranscoder {
     console.log(`⚡ [PreheatEngine] Queue is idle, pre-transcoding next track in background: ${songId} (${sourceExt})`);
     this.ensureStandardMp3Async(sourcePath, songId, {
       deviceModel: options.deviceModel,
+      cueStartSeconds: options.cueStartSeconds,
+      cueDurationSeconds: options.cueDurationSeconds,
+      replayGainDb: options.replayGainDb,
+      normalizeLoudness: options.normalizeLoudness,
+      targetLufs: options.targetLufs,
       userAgent: 'QueuePreheatEngine'
     }).then(res => {
       if (res.isTranscoded) {

@@ -20,6 +20,22 @@ export interface Song {
   source?: 'local' | 'uploaded' | 'sample' | 'nas';
   localFilename?: string;
   lyrics?: string;
+  replayGain?: {
+    trackGainDb?: number;
+    trackPeak?: number;
+    albumGainDb?: number;
+  };
+  cueTrack?: {
+    cueFilePath: string;
+    parentFilename: string;
+    trackNumber: number;
+    startSeconds: number;
+    endSeconds?: number;
+    durationSeconds?: number;
+    rawIndex?: string;
+    performer?: string;
+    title?: string;
+  };
 }
 
 export class MusicEngine {

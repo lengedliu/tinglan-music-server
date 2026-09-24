@@ -104,7 +104,10 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
         bitrate,
         fullPath: fileExists ? fullPath : undefined,
         hasLyrics: Boolean(song.lyrics),
-        lyricLinesCount: song.lyrics ? song.lyrics.split('\n').filter((l: string) => l.trim()).length : 0
+        lyricLinesCount: song.lyrics ? song.lyrics.split('\n').filter((l: string) => l.trim()).length : 0,
+        isCueTrack: Boolean(song.cueTrack),
+        cueInfo: song.cueTrack,
+        replayGain: song.replayGain
       }
     });
   });

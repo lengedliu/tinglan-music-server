@@ -4,6 +4,7 @@ import { parseBuffer } from 'music-metadata';
 import { Song } from './musicEngine.js';
 import { musicRepository } from './repositories/musicRepository.js';
 import { musicSearchIndex } from './searchIndex.js';
+import { parseCueSheet } from './cueParser.js';
 
 export interface ScanProgress {
   status: 'idle' | 'scanning' | 'completed' | 'failed';
@@ -114,6 +115,54 @@ export class AsyncMusicScanner {
         await new Promise((r) => setImmediate(r));
       }
 
+      // Process CUE sheets to create virtual split tracks
+      const cueFiles = await this.collectCueFilesAsync(musicDir);
+      for (const cuePath of cueFiles) {
+        try {
+          const cueSheet = parseCueSheet(cuePath);
+          if (cueSheet && cueSheet.tracks.length > 0 && cueSheet.resolvedAudioPath) {
+            const relAudio = path.relative(musicDir, cueSheet.resolvedAudioPath);
+            const parentSong = existingMap.get(relAudio);
+            const parentBaseId = parentSong ? parentSong.id : `song-${path.basename(cueSheet.resolvedAudioPath, path.extname(cueSheet.resolvedAudioPath))}`;
+
+            for (const track of cueSheet.tracks) {
+              const trackId = `${parentBaseId}_cue_t${track.trackNumber.toString().padStart(2, '0')}`;
+              const virtualSong: Song = {
+                id: trackId,
+                title: track.title || `Track ${track.trackNumber}`,
+                artist: track.performer || cueSheet.albumPerformer || parentSong?.artist || '未知歌手',
+                album: cueSheet.albumTitle || parentSong?.album || 'CUE专辑分轨',
+                duration: track.durationSeconds || 180,
+                url: `/api/stream/${trackId}`,
+                coverUrl: parentSong?.coverUrl || '/covers/default.jpg',
+                genre: cueSheet.genre || parentSong?.genre || '分轨音乐',
+                year: cueSheet.date ? parseInt(cueSheet.date, 10) : parentSong?.year,
+                bitrate: parentSong?.bitrate || '无损分轨',
+                fileSize: parentSong?.fileSize || '虚拟分轨',
+                isFavorite: false,
+                source: 'local',
+                localFilename: relAudio,
+                cueTrack: {
+                  cueFilePath: path.relative(musicDir, cuePath),
+                  parentFilename: relAudio,
+                  trackNumber: track.trackNumber,
+                  startSeconds: track.startSeconds,
+                  endSeconds: track.endSeconds,
+                  durationSeconds: track.durationSeconds,
+                  rawIndex: track.rawIndex,
+                  performer: track.performer,
+                  title: track.title
+                }
+              };
+              musicRepository.addOrUpdateSong(virtualSong, false);
+              added++;
+            }
+          }
+        } catch (cueErr: any) {
+          console.warn(`[AsyncMusicScanner] CUE parsing error for ${cuePath}:`, cueErr?.message);
+        }
+      }
+
       // Commit all changes in a single atomic disk write & rebuild search index
       await musicRepository.commitBatch();
 
@@ -188,6 +237,8 @@ export class AsyncMusicScanner {
     let year = new Date(stats.mtime).getFullYear();
     let bitrate = '320 kbps';
 
+    let replayGain: Song['replayGain'] | undefined;
+
     try {
       // Read first 256KB for fast ID3 / FLAC / Vorbis header parsing without reading the whole multi-megabyte file
       const fd = await fs.promises.open(filePath, 'r');
@@ -202,6 +253,38 @@ export class AsyncMusicScanner {
         if (metadata.common.album) album = metadata.common.album.trim();
         if (metadata.common.genre && metadata.common.genre[0]) genre = metadata.common.genre[0];
         if (metadata.common.year) year = metadata.common.year;
+
+        // Extract ReplayGain metadata
+        const rawGain = (metadata.common as any).replaygain_track_gain;
+        let trackGainDb: number | undefined;
+        if (typeof rawGain === 'number') {
+          trackGainDb = rawGain;
+        } else if (typeof rawGain === 'string') {
+          const parsed = parseFloat(rawGain.replace(/[^\d.-]/g, ''));
+          if (!isNaN(parsed)) trackGainDb = parsed;
+        } else if (rawGain && typeof rawGain === 'object' && typeof rawGain.dB === 'number') {
+          trackGainDb = rawGain.dB;
+        }
+
+        if (trackGainDb === undefined && metadata.native) {
+          for (const tagList of Object.values(metadata.native)) {
+            for (const tag of tagList) {
+              const tagId = (tag.id || '').toUpperCase();
+              if (tagId.includes('REPLAYGAIN_TRACK_GAIN') || tagId === 'R128_TRACK_GAIN') {
+                const parsed = parseFloat(String(tag.value).replace(/[^\d.-]/g, ''));
+                if (!isNaN(parsed)) {
+                  trackGainDb = parsed;
+                  break;
+                }
+              }
+            }
+            if (trackGainDb !== undefined) break;
+          }
+        }
+
+        if (trackGainDb !== undefined) {
+          replayGain = { trackGainDb };
+        }
       }
       if (metadata.format) {
         if (metadata.format.duration) duration = Math.round(metadata.format.duration);
@@ -226,10 +309,31 @@ export class AsyncMusicScanner {
       fileSize: `${(stats.size / (1024 * 1024)).toFixed(1)} MB`,
       isFavorite: false,
       source: 'local',
-      localFilename: relPath
+      localFilename: relPath,
+      replayGain
     };
 
     return song;
+  }
+
+  private async collectCueFilesAsync(dir: string): Promise<string[]> {
+    const results: string[] = [];
+    async function walk(currentDir: string) {
+      if (!fs.existsSync(currentDir)) return;
+      try {
+        const entries = await fs.promises.readdir(currentDir, { withFileTypes: true });
+        for (const entry of entries) {
+          const fullPath = path.join(currentDir, entry.name);
+          if (entry.isDirectory()) {
+            await walk(fullPath);
+          } else if (entry.isFile() && path.extname(entry.name).toLowerCase() === '.cue') {
+            results.push(fullPath);
+          }
+        }
+      } catch {}
+    }
+    await walk(dir);
+    return results;
   }
 
   private getMimeType(ext: string): string {

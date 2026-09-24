@@ -3,6 +3,7 @@ import { queueEngine, QueueLoopMode } from '../core/queueEngine.js';
 
 export interface QueueRouterOptions {
   getTargetDevice: (did?: string) => { did: string; name: string } | undefined;
+  getAllDevices?: () => any[];
 }
 
 /**
@@ -16,6 +17,50 @@ export function createQueueRouter(options: QueueRouterOptions): Router {
     res.json({
       success: true,
       data: queueEngine.getStatus()
+    });
+  });
+
+  // Phase 3: Seamless cross-speaker playback handover
+  router.post('/transfer', async (req: Request, res: Response) => {
+    const { targetDid, positionSeconds } = req.body;
+    if (!targetDid) {
+      return res.status(400).json({ success: false, error: '目标音箱 DID 不能为空' });
+    }
+    const targetDev = options.getTargetDevice(targetDid);
+    const targetName = targetDev ? targetDev.name : '小爱音箱';
+
+    const result = await queueEngine.transferPlayback(
+      targetDid,
+      targetName,
+      typeof positionSeconds === 'number' ? positionSeconds : undefined
+    );
+
+    res.json({
+      success: result.success,
+      message: result.message,
+      elapsedSeconds: result.elapsedSeconds,
+      currentSong: result.song,
+      data: queueEngine.getStatus()
+    });
+  });
+
+  // Phase 3: Get available handover target devices
+  router.get('/handover-targets', (req: Request, res: Response) => {
+    const allDevs = options.getAllDevices ? options.getAllDevices() : [];
+    const currentDid = queueEngine.getStatus().targetDid;
+    const candidates = allDevs
+      .filter((d: any) => d.did !== currentDid && (d.isOnline || d.online || d.ip))
+      .map((d: any) => ({
+        did: d.did,
+        name: d.name,
+        model: d.model,
+        ip: d.ip,
+        isOnline: Boolean(d.isOnline || d.online)
+      }));
+    res.json({
+      success: true,
+      currentDid,
+      devices: candidates
     });
   });
 
