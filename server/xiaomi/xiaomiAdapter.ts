@@ -5,6 +5,8 @@ import { minaWsClient } from '../minaWebSocket.js';
 import { castPipelineManager } from './strategies/castPipelineManager.js';
 import { CastContext } from './strategies/castStrategy.js';
 
+export { castPipelineManager };
+
 export interface CastOptions {
   songId: string;
   songTitle: string;

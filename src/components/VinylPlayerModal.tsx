@@ -24,14 +24,15 @@ import {
 import { Song, XiaomiDevice, ABLoopConfig } from '../types';
 import { formatTime, parseLrc } from '../utils/lyricParser';
 import { useTheme } from '../context/ThemeContext';
+import { usePlaybackTime } from '../context/PlaybackTimeContext';
 
 interface VinylPlayerModalProps {
   isOpen: boolean;
   onClose: () => void;
   currentSong: Song | null;
   isPlaying: boolean;
-  currentTime: number;
-  duration: number;
+  currentTime?: number;
+  duration?: number;
   onPlayPause: () => void;
   onNext: () => void;
   onPrev: () => void;
@@ -58,8 +59,8 @@ export const VinylPlayerModal: React.FC<VinylPlayerModalProps> = ({
   onClose,
   currentSong,
   isPlaying,
-  currentTime,
-  duration,
+  currentTime: propCurrentTime,
+  duration: propDuration,
   onPlayPause,
   onNext,
   onPrev,
@@ -80,6 +81,9 @@ export const VinylPlayerModal: React.FC<VinylPlayerModalProps> = ({
   onOpenEQ,
   onOpenInspector
 }) => {
+  const playbackTime = usePlaybackTime();
+  const currentTime = propCurrentTime !== undefined ? propCurrentTime : playbackTime.currentTime;
+  const duration = propDuration !== undefined ? propDuration : playbackTime.duration;
   const [showLyrics, setShowLyrics] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [prevVol, setPrevVol] = useState(volume);

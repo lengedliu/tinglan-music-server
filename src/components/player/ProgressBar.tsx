@@ -1,21 +1,25 @@
 import React, { useRef, useState, memo } from 'react';
 import { Song, ABLoopConfig } from '../../types';
+import { usePlaybackTime } from '../../context/PlaybackTimeContext';
 
 export interface ProgressBarProps {
   currentSong: Song | null;
-  currentTime: number;
-  duration: number;
+  currentTime?: number;
+  duration?: number;
   abLoop?: ABLoopConfig;
   onSeek: (time: number) => void;
 }
 
 export const ProgressBar: React.FC<ProgressBarProps> = memo(({
   currentSong,
-  currentTime,
-  duration,
+  currentTime: propCurrentTime,
+  duration: propDuration,
   abLoop,
   onSeek
 }) => {
+  const playbackTime = usePlaybackTime();
+  const currentTime = propCurrentTime !== undefined ? propCurrentTime : playbackTime.currentTime;
+  const duration = propDuration !== undefined ? propDuration : playbackTime.duration;
   const progressBarRef = useRef<HTMLDivElement>(null);
   const [, setIsHoveringProgress] = useState(false);
 

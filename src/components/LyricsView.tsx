@@ -18,11 +18,12 @@ import {
 import { Song, XiaomiDevice } from '../types';
 import { parseLrc, formatTime } from '../utils/lyricParser';
 import { apiFetch } from '../utils/api';
+import { usePlaybackTime } from '../context/PlaybackTimeContext';
 
 interface LyricsViewProps {
   currentSong: Song | null;
-  currentTime: number;
-  duration: number;
+  currentTime?: number;
+  duration?: number;
   isPlaying: boolean;
   onSeek: (time: number) => void;
   activeDevice: XiaomiDevice | undefined;
@@ -33,8 +34,8 @@ interface LyricsViewProps {
 
 export const LyricsView: React.FC<LyricsViewProps> = ({
   currentSong,
-  currentTime,
-  duration,
+  currentTime: propCurrentTime,
+  duration: propDuration,
   isPlaying,
   onSeek,
   activeDevice,
@@ -42,6 +43,10 @@ export const LyricsView: React.FC<LyricsViewProps> = ({
   onToggleCast,
   onSongUpdated
 }) => {
+  const playbackTime = usePlaybackTime();
+  const currentTime = propCurrentTime !== undefined ? propCurrentTime : playbackTime.currentTime;
+  const duration = propDuration !== undefined ? propDuration : playbackTime.duration;
+
   const lyricsContainerRef = useRef<HTMLDivElement>(null);
   const activeLineRef = useRef<HTMLDivElement>(null);
 

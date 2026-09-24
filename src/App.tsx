@@ -20,6 +20,7 @@ import { VinylPlayerModal } from './components/VinylPlayerModal';
 import { MultiRoomCastModal } from './components/MultiRoomCastModal';
 import { TrackInspectorModal } from './components/TrackInspectorModal';
 import { useTheme } from './context/ThemeContext';
+import { usePlaybackTimeActions } from './context/PlaybackTimeContext';
 import { Song, Playlist, XiaomiDevice, MiotConfig, CastLog, User, SecurityStatus, DeviceCommandState, SleepTimerConfig, ABLoopConfig, AudioEngineSettings } from './types';
 import { INITIAL_SONGS, INITIAL_PLAYLISTS, INITIAL_XIAOMI_DEVICES } from './data/mockSongs';
 import { apiFetch, setStoredAuthToken, getAuthToken } from './utils/api';
@@ -91,17 +92,7 @@ export default function App() {
     return INITIAL_SONGS[0] || null;
   });
   const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(() => {
-    try {
-      const savedSong = localStorage.getItem('tinglan_current_song');
-      if (savedSong) {
-        const s = JSON.parse(savedSong);
-        if (s?.duration) return s.duration;
-      }
-    } catch {}
-    return INITIAL_SONGS[0]?.duration || 234;
-  });
+  const timeActions = usePlaybackTimeActions();
   const [volume, setVolume] = useState(() => {
     try {
       const v = localStorage.getItem('tinglan_volume');
@@ -186,6 +177,10 @@ export default function App() {
   }, [audioSettings]);
 
   const isCrossfadingRef = useRef(false);
+  const abLoopRef = useRef(abLoop);
+  useEffect(() => {
+    abLoopRef.current = abLoop;
+  }, [abLoop]);
   const [playbackSpeed, setPlaybackSpeed] = useState<number>(1.0);
   const [sleepTimer, setSleepTimer] = useState<SleepTimerConfig>({
     enabled: false,
@@ -296,15 +291,14 @@ export default function App() {
   };
 
   const handleToggleABLoop = () => {
+    const now = timeActions.getCurrentTime();
     if (abLoop.enabled) {
       setAbLoop({ a: null, b: null, enabled: false });
       showToast('已关闭 A-B 区间复读', undefined, 'info');
     } else if (abLoop.a === null) {
-      const now = currentTime;
       setAbLoop({ a: now, b: null, enabled: false });
       showToast(`已设定 A 点: ${formatTime(now)}`, '请继续播放至复读终点后再次点击定 B 点', 'info');
     } else if (abLoop.b === null) {
-      const now = currentTime;
       if (now <= abLoop.a) {
         showToast('B 点必须大于 A 点', '请在当前播放时间晚于 A 点时设定', 'error');
         return;
@@ -437,10 +431,10 @@ export default function App() {
             setIsPlaying(true);
             if (status.currentSong) {
               setCurrentSong(status.currentSong);
-              setDuration(status.currentSong.duration || 200);
+              timeActions.setDuration(status.currentSong.duration || 200);
             }
             if (typeof status.elapsedSeconds === 'number' && status.elapsedSeconds >= 0) {
-              setCurrentTime(status.elapsedSeconds);
+              timeActions.setCurrentTime(status.elapsedSeconds);
             }
             if (status.queue && status.queue.length > 0) {
               setPlayQueue(status.queue);
@@ -610,10 +604,10 @@ export default function App() {
             }
             if (status.currentSong && status.currentSong.id !== currentSong?.id) {
               setCurrentSong(status.currentSong);
-              setDuration(status.currentSong.duration || 200);
+              timeActions.setDuration(status.currentSong.duration || 200);
             }
             if (typeof status.elapsedSeconds === 'number' && status.elapsedSeconds >= 0) {
-              setCurrentTime(status.elapsedSeconds);
+              timeActions.setCurrentTime(status.elapsedSeconds);
             }
           }
           // Queue list sync when drawer is open
@@ -709,8 +703,8 @@ export default function App() {
     }
 
     setCurrentSong(song);
-    setCurrentTime(0);
-    setDuration(song.duration || 200);
+    timeActions.setCurrentTime(0);
+    timeActions.setDuration(song.duration || 200);
 
     const newQueue = (targetQueue && targetQueue.length > 0)
       ? targetQueue
@@ -801,8 +795,8 @@ export default function App() {
       const queueMode = isShuffle ? 'shuffle' : repeatMode === 'one' ? 'one' : 'all';
 
       setCurrentSong(startSong);
-      setCurrentTime(0);
-      setDuration(startSong.duration || 200);
+      timeActions.setCurrentTime(0);
+      timeActions.setDuration(startSong.duration || 200);
       setIsPlaying(true);
 
       // Mute/pause browser audio so it does not double-play or trigger onEnded conflicts
@@ -848,8 +842,8 @@ export default function App() {
       return;
     }
     setCurrentSong(song);
-    setCurrentTime(0);
-    setDuration(song.duration || 200);
+    timeActions.setCurrentTime(0);
+    timeActions.setDuration(song.duration || 200);
     setIsPlaying(true);
     setIsCasting(true);
     if (audioRef.current) audioRef.current.pause();
@@ -874,8 +868,8 @@ export default function App() {
     if (isCasting) {
       // Route 'Next' directly to Speaker Queue Engine with active queue context
       setCurrentSong(nextSong);
-      setCurrentTime(0);
-      setDuration(nextSong.duration || 200);
+      timeActions.setCurrentTime(0);
+      timeActions.setDuration(nextSong.duration || 200);
       setIsPlaying(true);
       if (audioRef.current) audioRef.current.pause();
       castSongToDevice(nextSong, activeDevice, queue);
@@ -891,9 +885,9 @@ export default function App() {
     const currentIndex = queue.findIndex(s => s.id === currentSong?.id);
     let prevIndex = 0;
 
-    if (currentTime > 3) {
+    if (timeActions.getCurrentTime() > 3) {
       // If played for more than 3 seconds, restart current track
-      setCurrentTime(0);
+      timeActions.setCurrentTime(0);
       if (isCasting) {
         if (activeDevice) {
           handleControlDevice(activeDevice.did, 'seek', 0);
@@ -915,8 +909,8 @@ export default function App() {
     if (isCasting) {
       // Route 'Prev' directly to Speaker Queue Engine with active queue context
       setCurrentSong(prevSong);
-      setCurrentTime(0);
-      setDuration(prevSong.duration || 200);
+      timeActions.setCurrentTime(0);
+      timeActions.setDuration(prevSong.duration || 200);
       setIsPlaying(true);
       if (audioRef.current) audioRef.current.pause();
       castSongToDevice(prevSong, activeDevice, queue);
@@ -927,7 +921,7 @@ export default function App() {
   };
 
   const handleSeek = (time: number) => {
-    setCurrentTime(time);
+    timeActions.setCurrentTime(time);
     if (isCasting) {
       // Route Seek exclusively to Xiaomi Speaker
       if (activeDevice) {
@@ -940,6 +934,10 @@ export default function App() {
       }
     }
   };
+
+  useEffect(() => {
+    return timeActions.registerSeekHandler(handleSeek);
+  }, [handleSeek, timeActions]);
 
   const volumeDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const handleVolumeChange = (newVolume: number) => {
@@ -1275,7 +1273,7 @@ export default function App() {
           : `/api/stream/${encodeURIComponent(currentSong.id)}`;
         if (audioRef.current) {
           audioRef.current.src = playSrc;
-          audioRef.current.currentTime = currentTime;
+          audioRef.current.currentTime = timeActions.getCurrentTime();
           audioRef.current.play().catch(e => {
             console.warn('Local handoff play error:', e);
           });
@@ -1759,7 +1757,9 @@ export default function App() {
           if (e.shiftKey) {
             handleNextSong();
           } else {
-            handleSeek(Math.min(duration, currentTime + 5));
+            const curDur = timeActions.getDuration();
+            const curTime = timeActions.getCurrentTime();
+            handleSeek(curDur > 0 ? Math.min(curDur, curTime + 5) : curTime + 5);
           }
           break;
         case 'ArrowLeft':
@@ -1767,7 +1767,8 @@ export default function App() {
           if (e.shiftKey) {
             handlePrevSong();
           } else {
-            handleSeek(Math.max(0, currentTime - 5));
+            const curTime = timeActions.getCurrentTime();
+            handleSeek(Math.max(0, curTime - 5));
           }
           break;
         case 'ArrowUp':
@@ -1815,7 +1816,7 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handlePlayPause, handleNextSong, handlePrevSong, handleSeek, handleVolumeChange, handleCycleRepeat, handleToggleCast, duration, currentTime, volume]);
+  }, [handlePlayPause, handleNextSong, handlePrevSong, handleSeek, handleVolumeChange, handleCycleRepeat, handleToggleCast, volume, timeActions]);
 
   // MediaSession API Integration
   useEffect(() => {
@@ -1871,7 +1872,7 @@ export default function App() {
           if (audioRef.current) audioRef.current.pause();
         }
         setCurrentSong(null);
-        setCurrentTime(0);
+        timeActions.setCurrentTime(0);
         showToast('曲库已清空', `成功清除 ${data.count || 0} 首歌曲及播放队列`, 'success');
         return;
       }
@@ -1886,7 +1887,7 @@ export default function App() {
       if (audioRef.current) audioRef.current.pause();
     }
     setCurrentSong(null);
-    setCurrentTime(0);
+    timeActions.setCurrentTime(0);
     showToast('曲库已清空', '已重置本地曲库列表', 'info');
   };
 
@@ -2020,24 +2021,26 @@ export default function App() {
           onTimeUpdate={() => {
             if (audioRef.current) {
               const cur = audioRef.current.currentTime;
-              setCurrentTime(cur);
+              timeActions.setCurrentTime(cur);
 
               // A-B Loop Logic: Seamless loop back to A when reaching B
-              if (abLoop.enabled && abLoop.a !== null && abLoop.b !== null && abLoop.b > abLoop.a) {
-                if (cur >= abLoop.b) {
-                  audioRef.current.currentTime = abLoop.a;
+              if (abLoopRef.current.enabled && abLoopRef.current.a !== null && abLoopRef.current.b !== null && abLoopRef.current.b > abLoopRef.current.a) {
+                if (cur >= abLoopRef.current.b) {
+                  audioRef.current.currentTime = abLoopRef.current.a;
+                  timeActions.setCurrentTime(abLoopRef.current.a);
                   return;
                 }
               }
 
               // Crossfade auto-advance near track end
+              const curDuration = timeActions.getDuration();
               if (
                 !isCasting &&
                 audioSettings.crossfadeDuration > 0 &&
                 repeatMode !== 'one' &&
-                duration > 0 &&
-                cur >= duration - audioSettings.crossfadeDuration &&
-                cur < duration - 0.5 &&
+                curDuration > 0 &&
+                cur >= curDuration - audioSettings.crossfadeDuration &&
+                cur < curDuration - 0.5 &&
                 !isCrossfadingRef.current
               ) {
                 isCrossfadingRef.current = true;
@@ -2047,7 +2050,7 @@ export default function App() {
           }}
           onLoadedMetadata={() => {
             if (audioRef.current) {
-              setDuration(audioRef.current.duration || currentSong?.duration || 200);
+              timeActions.setDuration(audioRef.current.duration || currentSong?.duration || 200);
               audioRef.current.playbackRate = playbackSpeed;
             }
           }}
@@ -2124,8 +2127,6 @@ export default function App() {
           {activeTab === 'lyrics' && (
             <LyricsView
               currentSong={currentSong}
-              currentTime={currentTime}
-              duration={duration}
               isPlaying={isPlaying}
               onSeek={handleSeek}
               activeDevice={activeDevice}
@@ -2201,8 +2202,6 @@ export default function App() {
         <PlayerBar
           currentSong={currentSong}
           isPlaying={isPlaying}
-          currentTime={currentTime}
-          duration={duration}
           onPlayPause={handlePlayPause}
           onNext={handleNextSong}
           onPrev={handlePrevSong}
@@ -2281,7 +2280,7 @@ export default function App() {
                     audioRef.current.pause();
                     audioRef.current.currentTime = 0;
                   }
-                  setCurrentTime(0);
+                  timeActions.setCurrentTime(0);
                   setIsPlaying(false);
                   setCurrentSong(null);
                 }
@@ -2297,7 +2296,7 @@ export default function App() {
               audioRef.current.pause();
               audioRef.current.currentTime = 0;
             }
-            setCurrentTime(0);
+            timeActions.setCurrentTime(0);
             try {
               localStorage.setItem('tinglan_play_queue', '[]');
               localStorage.removeItem('tinglan_current_song');
@@ -2362,8 +2361,6 @@ export default function App() {
           onClose={() => setIsVinylOpen(false)}
           currentSong={currentSong}
           isPlaying={isPlaying}
-          currentTime={currentTime}
-          duration={duration}
           onPlayPause={handlePlayPause}
           onNext={handleNextSong}
           onPrev={handlePrevSong}

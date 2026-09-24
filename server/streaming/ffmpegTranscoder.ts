@@ -447,6 +447,7 @@ export class FfmpegTranscoder {
             };
           }
 
+          const partPath = `${cachedMp3Path}.part.${Date.now()}_${process.pid}`;
           try {
             console.log(`🎵 [FfmpegTranscoder] Transcoding ${sourceExt} -> Standard MP3 for ${songId} (Slot allocated, strategy=${slot.strategy})...`);
             const args = [
@@ -454,10 +455,11 @@ export class FfmpegTranscoder {
               '-vn', '-c:a', 'libmp3lame',
               '-ar', '44100', '-ac', '2', '-b:a', '320k',
               '-id3v2_version', '3', '-write_xing', '1',
-              cachedMp3Path
+              partPath
             ];
             await execFileAsync('ffmpeg', args, { timeout: 45000 });
-            if (fs.existsSync(cachedMp3Path) && fs.statSync(cachedMp3Path).size > 1024) {
+            if (fs.existsSync(partPath) && fs.statSync(partPath).size > 1024) {
+              await fs.promises.rename(partPath, cachedMp3Path);
               this.pruneCacheIfNeeded();
               return {
                 success: true,
@@ -469,6 +471,9 @@ export class FfmpegTranscoder {
             }
           } catch (transErr: any) {
             console.error(`[FfmpegTranscoder] Async transcode error for ${songId}:`, transErr?.message);
+            try {
+              if (fs.existsSync(partPath)) await fs.promises.unlink(partPath);
+            } catch {}
           } finally {
             slot.release();
           }
@@ -535,6 +540,7 @@ export class FfmpegTranscoder {
 
     // 2. For non-MP3 files
     if (this.ffmpegAvailable) {
+      const partPath = `${cachedMp3Path}.part.${Date.now()}_${process.pid}`;
       try {
         console.log(`🎵 [FfmpegTranscoder] Transcoding ${sourceExt} -> Standard MP3 for ${songId}...`);
         const ffmpegArgs = [
@@ -542,10 +548,11 @@ export class FfmpegTranscoder {
           '-vn', '-c:a', 'libmp3lame',
           '-ar', '44100', '-ac', '2', '-b:a', '320k',
           '-id3v2_version', '3', '-write_xing', '1',
-          cachedMp3Path
+          partPath
         ];
         spawnSync('ffmpeg', ffmpegArgs, { timeout: 20000, stdio: 'ignore' });
-        if (fs.existsSync(cachedMp3Path) && fs.statSync(cachedMp3Path).size > 1024) {
+        if (fs.existsSync(partPath) && fs.statSync(partPath).size > 1024) {
+          fs.renameSync(partPath, cachedMp3Path);
           return {
             success: true,
             filePath: cachedMp3Path,
@@ -555,6 +562,9 @@ export class FfmpegTranscoder {
         }
       } catch (transErr: any) {
         console.error(`[FfmpegTranscoder] Transcode error for ${songId}:`, transErr?.message);
+        try {
+          if (fs.existsSync(partPath)) fs.unlinkSync(partPath);
+        } catch {}
       }
     }
 
@@ -564,6 +574,43 @@ export class FfmpegTranscoder {
       format: sourceExt,
       isTranscoded: false
     };
+  }
+
+  /**
+   * Pre-transcodes the next song in the background if the concurrency pool is idle.
+   * Enables instant zero-delay playback when the queue advances to the next track.
+   */
+  public async preheatSongAsync(sourcePath: string, songId: string, options: { deviceModel?: string } = {}): Promise<boolean> {
+    if (!this.ffmpegAvailable || !fs.existsSync(sourcePath)) return false;
+    const sourceExt = path.extname(sourcePath).toLowerCase();
+    if (sourceExt === '.mp3') return true;
+
+    // If already cached, no work needed
+    if (this.getCachedMp3(sourcePath, songId)) return true;
+
+    // If concurrency pool has no idle capacity, do NOT contend with active playback
+    if (!this.semaphore.canAcquireImmediately()) {
+      return false;
+    }
+
+    const sanitizedId = songId.replace(/[^a-zA-Z0-9_-]/g, '_');
+    if (this.inFlightTranscodes.has(sanitizedId)) {
+      return true;
+    }
+
+    console.log(`⚡ [PreheatEngine] Queue is idle, pre-transcoding next track in background: ${songId} (${sourceExt})`);
+    this.ensureStandardMp3Async(sourcePath, songId, {
+      deviceModel: options.deviceModel,
+      userAgent: 'QueuePreheatEngine'
+    }).then(res => {
+      if (res.isTranscoded) {
+        console.log(`🚀 [PreheatEngine] Next track preheat complete for ${songId}: ready for zero-latency cast.`);
+      }
+    }).catch(err => {
+      console.warn(`[PreheatEngine] Background preheat skipped for ${songId}:`, err?.message);
+    });
+
+    return true;
   }
 
   /**

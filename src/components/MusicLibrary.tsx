@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, memo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, memo } from 'react';
 import { 
   Play, 
   FolderPlus, 
@@ -92,6 +92,20 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
   const isLight = !!themeConfig?.isLight;
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
+
+  // Debounce search query to prevent heavy recalculations on large libraries
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setDebouncedSearchQuery('');
+      return;
+    }
+    const timer = setTimeout(() => {
+      setDebouncedSearchQuery(searchQuery);
+    }, 120);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<string>('all');
   const [sortOption, setSortOption] = useState<SongSortOption>('default');
   const [sourceFilter, setSourceFilter] = useState<LibrarySourceFilter>('all');
@@ -130,7 +144,7 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
   useEffect(() => {
     setCurrentPage(1);
     setSelectedBatchSongIds(new Set());
-  }, [selectedPlaylistId, searchQuery, sourceFilter, sortOption]);
+  }, [selectedPlaylistId, debouncedSearchQuery, sourceFilter, sortOption]);
 
   // Filter songs based on search, playlist, and source
   const filteredSongs = useMemo(() => {
@@ -155,9 +169,9 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
       result = result.filter(s => s.isFavorite);
     }
 
-    // 3. Filter by search query
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
+    // 3. Filter by search query (debounced)
+    if (debouncedSearchQuery.trim()) {
+      const q = debouncedSearchQuery.toLowerCase();
       result = result.filter(
         s => s.title.toLowerCase().includes(q) ||
              s.artist.toLowerCase().includes(q) ||
@@ -206,7 +220,7 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
     }
   };
 
-  const handleToggleBatchSelectSong = (songId: string) => {
+  const handleToggleBatchSelectSong = useCallback((songId: string) => {
     setSelectedBatchSongIds(prev => {
       const next = new Set(prev);
       if (next.has(songId)) {
@@ -216,7 +230,7 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
       }
       return next;
     });
-  };
+  }, []);
 
   const exportPlaylist = (format: 'm3u8' | 'json') => {
     const listToExport = filteredSongs;

@@ -17,6 +17,12 @@ export class MusicRepository {
   private songsMap: Map<string, Song> = new Map();
   private playlists: Playlist[] = [];
 
+  private isBatchMode: boolean = false;
+  private songsPersistTimer: NodeJS.Timeout | null = null;
+  private playlistsPersistTimer: NodeJS.Timeout | null = null;
+  private isPersistingSongs: boolean = false;
+  private isPersistingPlaylists: boolean = false;
+
   constructor(dataDir: string = path.join(process.cwd(), 'data')) {
     this.dataDir = dataDir;
     this.songsFile = path.join(this.dataDir, 'songs.json');
@@ -43,7 +49,7 @@ export class MusicRepository {
         const raw = fs.readFileSync(this.songsFile, 'utf-8');
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
-          this.setSongs(parsed);
+          this.setSongs(parsed, false);
           console.log(`[MusicRepository] Loaded ${this.songs.length} tracks from disk & indexed.`);
           return;
         }
@@ -72,20 +78,93 @@ export class MusicRepository {
     this.playlists = [];
   }
 
-  private persistSongs() {
+  /**
+   * Schedule debounced asynchronous atomic persistence to avoid event-loop blocking
+   */
+  public schedulePersistSongs(delayMs = 800): void {
+    if (this.isBatchMode) return;
+    if (this.songsPersistTimer) clearTimeout(this.songsPersistTimer);
+    this.songsPersistTimer = setTimeout(() => {
+      this.persistSongsAsync().catch((err) => {
+        console.error('[MusicRepository] Scheduled persistSongsAsync failed:', err);
+      });
+    }, delayMs);
+  }
+
+  public schedulePersistPlaylists(delayMs = 800): void {
+    if (this.playlistsPersistTimer) clearTimeout(this.playlistsPersistTimer);
+    this.playlistsPersistTimer = setTimeout(() => {
+      this.persistPlaylistsAsync().catch((err) => {
+        console.error('[MusicRepository] Scheduled persistPlaylistsAsync failed:', err);
+      });
+    }, delayMs);
+  }
+
+  /**
+   * Atomic asynchronous persistence using temporary file and rename
+   */
+  public async persistSongsAsync(): Promise<void> {
+    if (this.isPersistingSongs) return;
+    this.isPersistingSongs = true;
+    const tmpFile = `${this.songsFile}.tmp.${Date.now()}`;
     try {
-      fs.writeFileSync(this.songsFile, JSON.stringify(this.songs, null, 2), 'utf-8');
+      const data = JSON.stringify(this.songs, null, 2);
+      await fs.promises.writeFile(tmpFile, data, 'utf-8');
+      await fs.promises.rename(tmpFile, this.songsFile);
     } catch (err) {
-      console.error('[MusicRepository] Failed to persist songs.json:', err);
+      console.error('[MusicRepository] Async persistSongs failed:', err);
+      try {
+        if (fs.existsSync(tmpFile)) await fs.promises.unlink(tmpFile);
+      } catch {}
+    } finally {
+      this.isPersistingSongs = false;
     }
   }
 
-  private persistPlaylists() {
+  public async persistPlaylistsAsync(): Promise<void> {
+    if (this.isPersistingPlaylists) return;
+    this.isPersistingPlaylists = true;
+    const tmpFile = `${this.playlistsFile}.tmp.${Date.now()}`;
     try {
-      fs.writeFileSync(this.playlistsFile, JSON.stringify(this.playlists, null, 2), 'utf-8');
+      const data = JSON.stringify(this.playlists, null, 2);
+      await fs.promises.writeFile(tmpFile, data, 'utf-8');
+      await fs.promises.rename(tmpFile, this.playlistsFile);
     } catch (err) {
-      console.error('[MusicRepository] Failed to persist playlists.json:', err);
+      console.error('[MusicRepository] Async persistPlaylists failed:', err);
+      try {
+        if (fs.existsSync(tmpFile)) await fs.promises.unlink(tmpFile);
+      } catch {}
+    } finally {
+      this.isPersistingPlaylists = false;
     }
+  }
+
+  /**
+   * Synchronous fallback for process exit or immediate blocking flush
+   */
+  private persistSongs() {
+    this.schedulePersistSongs(100);
+  }
+
+  private persistPlaylists() {
+    this.schedulePersistPlaylists(100);
+  }
+
+  /**
+   * Batch mode control for bulk operations (like directory scanning)
+   */
+  public beginBatch(): void {
+    this.isBatchMode = true;
+    if (this.songsPersistTimer) {
+      clearTimeout(this.songsPersistTimer);
+      this.songsPersistTimer = null;
+    }
+  }
+
+  public async commitBatch(): Promise<void> {
+    this.isBatchMode = false;
+    musicSearchIndex.buildIndex(this.songs);
+    await this.persistSongsAsync();
   }
 
   public getAllSongs(): Song[] {
@@ -111,17 +190,19 @@ export class MusicRepository {
     );
   }
 
-  public setSongs(songs: Song[]): void {
+  public setSongs(songs: Song[], autoPersist: boolean = true): void {
     this.songs = songs;
     this.songsMap.clear();
     for (const s of songs) {
       if (s.id) this.songsMap.set(s.id, s);
     }
     musicSearchIndex.buildIndex(this.songs);
-    this.persistSongs();
+    if (autoPersist) {
+      this.schedulePersistSongs(200);
+    }
   }
 
-  public addOrUpdateSong(song: Song): void {
+  public addOrUpdateSong(song: Song, autoPersist: boolean = true): void {
     const idx = this.songs.findIndex((s) => s.id === song.id);
     if (idx >= 0) {
       this.songs[idx] = { ...this.songs[idx], ...song };
@@ -132,7 +213,9 @@ export class MusicRepository {
       this.songsMap.set(song.id, song);
       musicSearchIndex.indexSong(song);
     }
-    this.persistSongs();
+    if (autoPersist && !this.isBatchMode) {
+      this.schedulePersistSongs(800);
+    }
   }
 
   public deleteSong(id: string): boolean {
@@ -141,7 +224,7 @@ export class MusicRepository {
       this.songs.splice(idx, 1);
       this.songsMap.delete(id);
       musicSearchIndex.removeSong(id);
-      this.persistSongs();
+      this.schedulePersistSongs(300);
       return true;
     }
     return false;
@@ -155,7 +238,7 @@ export class MusicRepository {
     const song = this.getSongById(id);
     if (song) {
       song.isFavorite = !song.isFavorite;
-      this.persistSongs();
+      this.schedulePersistSongs(300);
       return song.isFavorite;
     }
     return false;
@@ -171,7 +254,7 @@ export class MusicRepository {
 
   public setPlaylists(playlists: Playlist[]): void {
     this.playlists = playlists;
-    this.persistPlaylists();
+    this.schedulePersistPlaylists(300);
   }
 
   public addOrUpdatePlaylist(playlist: Playlist): void {
@@ -181,14 +264,14 @@ export class MusicRepository {
     } else {
       this.playlists.push(playlist);
     }
-    this.persistPlaylists();
+    this.schedulePersistPlaylists(500);
   }
 
   public deletePlaylist(id: string): boolean {
     const idx = this.playlists.findIndex((p) => p.id === id);
     if (idx >= 0) {
       this.playlists.splice(idx, 1);
-      this.persistPlaylists();
+      this.schedulePersistPlaylists(300);
       return true;
     }
     return false;

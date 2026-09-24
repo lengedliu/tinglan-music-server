@@ -36,6 +36,7 @@ export class QueueEngine extends EventEmitter {
   private castDispatcher: CastDispatcherFn | null = null;
   private songProvider: SongProviderFn | null = null;
   private isTransitioning: boolean = false;
+  private preheatHandler: ((song: Song, targetDid: string) => void) | null = null;
 
   constructor() {
     super();
@@ -47,6 +48,32 @@ export class QueueEngine extends EventEmitter {
 
   public setSongProvider(provider: SongProviderFn) {
     this.songProvider = provider;
+  }
+
+  public setPreheatHandler(handler: (song: Song, targetDid: string) => void) {
+    this.preheatHandler = handler;
+  }
+
+  public getNextSong(): Song | null {
+    if (this.queue.length <= 1) return null;
+    let nextIdx = (this.currentIndex + 1) % this.queue.length;
+    return this.queue[nextIdx] || null;
+  }
+
+  private triggerNextTrackPreheat() {
+    if (!this.preheatHandler || this.queue.length <= 1) return;
+    const nextSong = this.getNextSong();
+    if (nextSong) {
+      setTimeout(() => {
+        try {
+          if (this.isPlaying && this.preheatHandler) {
+            this.preheatHandler(nextSong, this.targetDid);
+          }
+        } catch (err: any) {
+          console.warn('[QueueEngine] Preheat trigger warning:', err?.message);
+        }
+      }, 3500);
+    }
   }
 
   public setTargetDevice(targetDid: string, targetDeviceName?: string) {
@@ -88,6 +115,7 @@ export class QueueEngine extends EventEmitter {
 
     this.scheduleAutoAdvance(this.currentDuration);
     this.startHeartbeat();
+    this.triggerNextTrackPreheat();
     this.emit('change', this.getStatus());
   }
 
@@ -203,6 +231,7 @@ export class QueueEngine extends EventEmitter {
     // Schedule auto advance based on duration + safety buffer
     this.scheduleAutoAdvance(this.currentDuration);
     this.startHeartbeat();
+    this.triggerNextTrackPreheat();
     this.emit('change', this.getStatus());
 
     return {
@@ -287,6 +316,7 @@ export class QueueEngine extends EventEmitter {
       console.log(`[QueueEngine] 🎧 音箱硬件已成功拉取流媒体《${activeSong?.title}》，启动精准切歌倒计时 (时长: ${this.currentDuration}s, 模式: ${this.loopMode})`);
       this.scheduleAutoAdvance(this.currentDuration);
       this.startHeartbeat();
+      this.triggerNextTrackPreheat();
       this.emit('change', this.getStatus());
       return;
     }

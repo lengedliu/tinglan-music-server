@@ -2,12 +2,13 @@ import React, { memo } from 'react';
 import { Play, Pause, SkipBack, SkipForward, Shuffle, Repeat } from 'lucide-react';
 import { Song } from '../../types';
 import { formatTime } from '../../utils/lyricParser';
+import { usePlaybackTime } from '../../context/PlaybackTimeContext';
 
 export interface PlaybackControlsProps {
   currentSong: Song | null;
   isPlaying: boolean;
-  currentTime: number;
-  duration: number;
+  currentTime?: number;
+  duration?: number;
   isShuffle: boolean;
   repeatMode: 'off' | 'all' | 'one';
   onPlayPause: () => void;
@@ -16,6 +17,25 @@ export interface PlaybackControlsProps {
   onToggleShuffle: () => void;
   onCycleRepeat: () => void;
 }
+
+const TimeDisplay: React.FC<{ currentSong: Song | null; currentTime?: number; duration?: number }> = memo(({
+  currentSong,
+  currentTime: propCurrentTime,
+  duration: propDuration
+}) => {
+  const playbackTime = usePlaybackTime();
+  const currentTime = propCurrentTime !== undefined ? propCurrentTime : playbackTime.currentTime;
+  const duration = propDuration !== undefined ? propDuration : playbackTime.duration;
+
+  return (
+    <div className="flex items-center gap-2 text-[10px] font-mono text-zinc-500">
+      <span>{formatTime(currentSong ? currentTime : 0)}</span>
+      <span>/</span>
+      <span>{formatTime(currentSong ? duration : 0)}</span>
+    </div>
+  );
+});
+TimeDisplay.displayName = 'TimeDisplay';
 
 export const PlaybackControls: React.FC<PlaybackControlsProps> = memo(({
   currentSong,
@@ -106,11 +126,7 @@ export const PlaybackControls: React.FC<PlaybackControlsProps> = memo(({
         </button>
       </div>
 
-      <div className="flex items-center gap-2 text-[10px] font-mono text-zinc-500">
-        <span>{formatTime(currentSong ? currentTime : 0)}</span>
-        <span>/</span>
-        <span>{formatTime(currentSong ? duration : 0)}</span>
-      </div>
+      <TimeDisplay currentSong={currentSong} currentTime={currentTime} duration={duration} />
     </div>
   );
 });

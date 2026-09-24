@@ -71,6 +71,9 @@ export class AsyncMusicScanner {
       let added = 0;
       let updated = 0;
 
+      // Enable batch mode in repository to suspend intermediate disk writes
+      musicRepository.beginBatch();
+
       // Process in chunks with concurrency control (Zero Event-Loop Stalls)
       for (let i = 0; i < audioFiles.length; i += concurrency) {
         const chunk = audioFiles.slice(i, i + concurrency);
@@ -92,12 +95,10 @@ export class AsyncMusicScanner {
               const song = await this.parseAudioMetadataAsync(filePath, relPath, fileStats);
               if (song) {
                 if (existing) {
-                  musicRepository.addOrUpdateSong({ ...existing, ...song, id: existing.id });
-                  musicSearchIndex.indexSong({ ...existing, ...song, id: existing.id });
+                  musicRepository.addOrUpdateSong({ ...existing, ...song, id: existing.id }, false);
                   updated++;
                 } else {
-                  musicRepository.addOrUpdateSong(song);
-                  musicSearchIndex.indexSong(song);
+                  musicRepository.addOrUpdateSong(song, false);
                   added++;
                 }
               }
@@ -112,6 +113,9 @@ export class AsyncMusicScanner {
         // Yield to event loop to allow concurrent HTTP / Cast requests
         await new Promise((r) => setImmediate(r));
       }
+
+      // Commit all changes in a single atomic disk write & rebuild search index
+      await musicRepository.commitBatch();
 
       const durationMs = Date.now() - startTime;
       this.progress.status = 'completed';
@@ -128,6 +132,11 @@ export class AsyncMusicScanner {
       return { added: 0, updated: 0, total: 0, durationMs: Date.now() - startTime };
     } finally {
       this.isScanning = false;
+      try {
+        await musicRepository.commitBatch();
+      } catch (commitErr) {
+        console.warn('[AsyncMusicScanner] Batch commit warning in finally:', commitErr);
+      }
     }
   }
 

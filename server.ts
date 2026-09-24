@@ -44,6 +44,7 @@ import {
   StreamServer,
   DeviceManager,
   XiaomiAdapter,
+  castPipelineManager,
   AdaptiveHeartbeatEngine,
   lyricsService,
   transcodeSemaphorePool
@@ -1714,11 +1715,26 @@ let castLogs: Array<{
   }
 ];
 
-// Helper to get local network IP addresses
+interface NetworkInterfaceCandidate {
+  name: string;
+  ip: string;
+  isPhysical: boolean;
+  isPrivateSubnet: boolean;
+  priority: number;
+}
+
+// Helper to get local network IP addresses, filtering out virtual/Docker/bridge interfaces and prioritizing physical NICs
 function getLocalNetworkIps(): string[] {
   const interfaces = os.networkInterfaces();
-  const ips: string[] = [];
+  const candidates: NetworkInterfaceCandidate[] = [];
+
+  // Patterns for virtual, container, and VPN bridges that shouldn't be picked for speaker LAN streaming
+  const virtualNicRegex = /^(docker|br-|veth|virbr|cni|tailscale|wg|tun|tap|utun|dummy|vboxnet)/i;
+  // Subnets commonly reserved for internal Docker/bridge networking
+  const dockerSubnetRegex = /^172\.(1[6-9]|2[0-9]|3[0-1])\./;
+
   for (const name of Object.keys(interfaces)) {
+    const isVirtualName = virtualNicRegex.test(name);
     for (const net of interfaces[name] || []) {
       if (
         net.family === 'IPv4' &&
@@ -1726,11 +1742,68 @@ function getLocalNetworkIps(): string[] {
         !net.address.startsWith('127.') &&
         !net.address.startsWith('169.254.')
       ) {
-        ips.push(net.address);
+        const isDockerSubnet = dockerSubnetRegex.test(net.address);
+        // Physical interface names: eth*, en*, wlan*, wlp*, eno*, enp*
+        const isPhysical = /^(eth|en|wlan|wlp|eno|enp|lan)/i.test(name) && !isVirtualName;
+        // Standard home private subnets (192.168.x.x, 10.x.x.x)
+        const isPrivateSubnet = /^192\.168\./.test(net.address) || /^10\./.test(net.address);
+
+        let priority = 0;
+        if (isPhysical) priority += 100;
+        if (isPrivateSubnet) priority += 50;
+        if (isVirtualName) priority -= 100;
+        if (isDockerSubnet) priority -= 80;
+
+        candidates.push({
+          name,
+          ip: net.address,
+          isPhysical,
+          isPrivateSubnet,
+          priority
+        });
       }
     }
   }
-  return ips;
+
+  // Sort descending by priority
+  candidates.sort((a, b) => b.priority - a.priority);
+  return candidates.map(c => c.ip);
+}
+
+// Smart LAN IP selector based on speaker target IP subnet matching
+function getBestLanIpForTarget(targetSpeakerIp?: string): string {
+  const allIps = getLocalNetworkIps();
+  if (allIps.length === 0) return '127.0.0.1';
+
+  // 1. If explicit environment override is provided, respect it
+  const envHost = process.env.SERVER_HOST || process.env.HOST_LAN_IP;
+  if (envHost) {
+    const match = envHost.match(/https?:\/\/([^:/]+)/);
+    if (match && match[1] && !match[1].startsWith('127.') && match[1] !== 'localhost') {
+      return match[1];
+    }
+    if (/^\d+\.\d+\.\d+\.\d+$/.test(envHost)) {
+      return envHost;
+    }
+  }
+
+  // 2. If target speaker IP is known, match common /24 or /16 subnet prefix
+  if (targetSpeakerIp && targetSpeakerIp.includes('.')) {
+    const targetParts = targetSpeakerIp.split('.');
+    const subnet24 = targetParts.slice(0, 3).join('.');
+    const subnet16 = targetParts.slice(0, 2).join('.');
+
+    // Match exact /24 subnet (e.g. 192.168.31.X)
+    const match24 = allIps.find(ip => ip.startsWith(`${subnet24}.`));
+    if (match24) return match24;
+
+    // Match /16 subnet (e.g. 192.168.X.X)
+    const match16 = allIps.find(ip => ip.startsWith(`${subnet16}.`));
+    if (match16) return match16;
+  }
+
+  // 3. Fallback to top-ranked physical LAN IP
+  return allIps[0];
 }
 
 // ----------------- MI-IO UDP 54321 PROTOCOL ENGINE -----------------
@@ -3519,6 +3592,30 @@ app.post('/api/miot/devices/ping', async (req: Request, res: Response) => {
   });
 });
 
+// Device Cast Strategy Fast-Path Profiles
+app.get('/api/miot/strategy-profiles', (_req: Request, res: Response) => {
+  const profiles = xiaomiDevices.map(d => {
+    const devId = d.did || d.ip || 'unknown';
+    const profile = castPipelineManager.getProfile(devId);
+    return {
+      did: d.did,
+      name: d.name,
+      model: d.model,
+      ip: d.ip,
+      preferredStrategy: profile?.preferredStrategy || 'auto_discover',
+      lastSuccessTime: profile?.lastSuccessTime || null,
+      failStreak: profile?.failStreak || 0
+    };
+  });
+  res.json({ success: true, profiles });
+});
+
+app.post('/api/miot/strategy-profiles/:did/reset', (req: Request, res: Response) => {
+  const { did } = req.params;
+  castPipelineManager.clearProfile(did);
+  res.json({ success: true, message: `已重置设备 ${did} 的投播策略记忆缓存` });
+});
+
 // XiaoAi Device Discovery & Resolution Pipeline
 // Xiaomi Cloud + LAN miIO Hello -> Device Resolver -> MIoT Spec -> Filter XiaoAi Speaker vs Non-Speaker
 app.post('/api/miot/devices/resolve', async (req: Request, res: Response) => {
@@ -3989,14 +4086,7 @@ app.post('/api/miot/cast', async (req: Request, res: Response) => {
   const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'https';
   const host = (req.headers['x-forwarded-host'] as string) || req.headers.host || req.get('host');
   const reqOrigin = `${proto}://${host}`;
-
-  const localIps = getLocalNetworkIps();
-  let matchedLanIp = '';
-  if (targetDevice.ip) {
-    const targetSubnet = targetDevice.ip.split('.').slice(0, 3).join('.');
-    matchedLanIp = localIps.find(ip => ip.startsWith(`${targetSubnet}.`)) || '';
-  }
-  const primaryLanIp = matchedLanIp || localIps.find(ip => !ip.startsWith('127.') && !ip.startsWith('169.254.') && !ip.startsWith('172.17.')) || localIps[0] || '';
+  const primaryLanIp = getBestLanIpForTarget(targetDevice.ip);
 
   let baseHost = (miotConfig.serverHost && miotConfig.serverHost.startsWith('http'))
     ? miotConfig.serverHost.replace(/\/$/, '')
@@ -4223,13 +4313,7 @@ async function dispatchCastSongDirectly(song: any, targetDid: string): Promise<{
     return { success: false, error: '未找到可用的小米音箱设备' };
   }
 
-  const localIps = getLocalNetworkIps();
-  let matchedLanIp = '';
-  if (targetDevice.ip) {
-    const targetSubnet = targetDevice.ip.split('.').slice(0, 3).join('.');
-    matchedLanIp = localIps.find(ip => ip.startsWith(`${targetSubnet}.`)) || '';
-  }
-  const primaryLanIp = matchedLanIp || localIps.find(ip => !ip.startsWith('127.') && !ip.startsWith('169.254.') && !ip.startsWith('172.17.')) || localIps[0] || '';
+  const primaryLanIp = getBestLanIpForTarget(targetDevice.ip);
 
   let baseHost = (miotConfig.serverHost && miotConfig.serverHost.startsWith('http'))
     ? miotConfig.serverHost.replace(/\/$/, '')
@@ -4338,6 +4422,34 @@ async function dispatchCastSongDirectly(song: any, targetDid: string): Promise<{
 
 queueEngine.setCastDispatcher(dispatchCastSongDirectly);
 queueEngine.setSongProvider(() => storedSongs);
+
+// Phase 2: Next-track idle pre-transcoding handler
+queueEngine.setPreheatHandler(async (nextSong, targetDid) => {
+  if (!nextSong) return;
+  try {
+    const rawId = (nextSong.id || '').toString();
+    const cleanSongId = rawId.replace(/\.(mp3|wav|flac|m4a|aac|ogg|opus|ape)$/i, '');
+    const found = storedSongs.find(s => s.id === cleanSongId || s.id === rawId);
+    let resolvedFilePath = found?.localFilename || '';
+    if (!resolvedFilePath) {
+      for (const ext of ['.flac', '.wav', '.m4a', '.aac', '.ogg', '.opus', '.ape']) {
+        const candidate = path.join(MUSIC_DIR, `${cleanSongId}${ext}`);
+        if (fs.existsSync(candidate)) {
+          resolvedFilePath = candidate;
+          break;
+        }
+      }
+    }
+    if (resolvedFilePath && fs.existsSync(resolvedFilePath)) {
+      const targetDev = xiaomiDevices.find(d => d.did === targetDid);
+      await ffmpegTranscoder.preheatSongAsync(resolvedFilePath, cleanSongId, {
+        deviceModel: targetDev?.model
+      });
+    }
+  } catch (err: any) {
+    console.warn('[QueueEngine] Background preheat error:', err?.message);
+  }
+});
 
 // Restore persistent queue state if exists on disk
 try {

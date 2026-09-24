@@ -10,8 +10,8 @@ import { PlayerActions } from './player/PlayerActions';
 export interface PlayerBarProps {
   currentSong: Song | null;
   isPlaying: boolean;
-  currentTime: number;
-  duration: number;
+  currentTime?: number;
+  duration?: number;
   onPlayPause: () => void;
   onNext: () => void;
   onPrev: () => void;

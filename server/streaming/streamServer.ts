@@ -137,30 +137,6 @@ export class StreamServer {
     const resolvedDid = matchedDev?.did || '';
     const resolvedModel = matchedDev?.model || 'wifispeaker';
 
-    // 4. Standardize audio stream: hardware speakers require Standard MP3 unless native lossless pass-through (Strategy B)
-    if (matchedExt !== '.mp3') {
-      const cachedMp3 = this.transcoder.getCachedMp3(localFilePath, cleanSongId);
-      if (cachedMp3) {
-        localFilePath = cachedMp3;
-        matchedExt = '.mp3';
-      } else {
-        // Use Semaphore concurrency control
-        const transcodeResult = await this.transcoder.ensureStandardMp3Async(localFilePath, cleanSongId, {
-          deviceModel: resolvedModel,
-          userAgent: reqUserAgent,
-          clientIp
-        });
-        if (transcodeResult.success && fs.existsSync(transcodeResult.filePath)) {
-          localFilePath = transcodeResult.filePath;
-          matchedExt = transcodeResult.format;
-        }
-      }
-    }
-
-    const stat = fs.statSync(localFilePath);
-    const fileSize = stat.size;
-    const range = req.headers.range;
-
     const mimeTypes: Record<string, string> = {
       '.wav': 'audio/wav',
       '.mp3': 'audio/mpeg',
@@ -173,6 +149,102 @@ export class StreamServer {
       '.dsf': 'audio/x-dsd',
       '.dff': 'audio/x-dsd'
     };
+
+    const rangeHeader = req.headers.range;
+    let isSmallProbe = false;
+    let probeStart = 0;
+    let probeEnd = 1;
+    if (rangeHeader) {
+      const match = rangeHeader.match(/bytes=(\d+)-(\d*)/);
+      if (match) {
+        probeStart = parseInt(match[1], 10);
+        if (match[2]) {
+          probeEnd = parseInt(match[2], 10);
+          if (probeStart === 0 && probeEnd - probeStart <= 2048) {
+            isSmallProbe = true;
+          }
+        }
+      }
+    }
+
+    // 4. Check if standard MP3 cache already exists
+    let cachedMp3: string | null = null;
+    if (matchedExt !== '.mp3') {
+      cachedMp3 = this.transcoder.getCachedMp3(localFilePath, cleanSongId);
+      if (cachedMp3) {
+        localFilePath = cachedMp3;
+        matchedExt = '.mp3';
+      }
+    }
+
+    // 5. Short-circuit fast-path for HEAD and small Range probes (bytes=0-1 etc.)
+    // If not yet transcoded to MP3, do NOT block the event loop or consume a concurrency slot for a 2-byte probe!
+    if (matchedExt !== '.mp3' && !cachedMp3 && (req.method === 'HEAD' || isSmallProbe)) {
+      const matchedSong = this.musicEngine.getById(cleanSongId);
+      const durationSec = matchedSong?.duration || 240;
+      const estimatedMp3Size = Math.max(1024 * 1024, Math.round(durationSec * (320 * 1000 / 8)) + 4096);
+
+      // Trigger non-blocking async background pre-transcode so full stream will be ready
+      this.transcoder.ensureStandardMp3Async(localFilePath, cleanSongId, {
+        deviceModel: resolvedModel,
+        userAgent: reqUserAgent,
+        clientIp
+      }).catch((err) => {
+        console.warn(`[StreamServer] Background probe-triggered transcode warning:`, err);
+      });
+
+      if (req.method === 'HEAD') {
+        res.writeHead(200, {
+          'Content-Length': estimatedMp3Size,
+          'Content-Type': 'audio/mpeg',
+          'Accept-Ranges': 'bytes',
+          'Cache-Control': 'no-cache',
+          'Access-Control-Allow-Origin': '*'
+        });
+        return res.end();
+      }
+
+      if (isSmallProbe) {
+        // Synthesize valid MP3 ID3 header prefix for the probe
+        const probeLength = probeEnd - probeStart + 1;
+        const synthHeader = Buffer.alloc(Math.max(probeLength, 128));
+        synthHeader.write('ID3', 0);
+        synthHeader[3] = 0x03; // version 2.3
+        synthHeader[4] = 0x00; // flags
+        synthHeader[6] = 0x00;
+        synthHeader[7] = 0x00;
+        synthHeader[8] = 0x02;
+        synthHeader[9] = 0x00;
+
+        res.writeHead(206, {
+          'Content-Range': `bytes ${probeStart}-${probeEnd}/${estimatedMp3Size}`,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': probeLength,
+          'Content-Type': 'audio/mpeg',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+          'Access-Control-Allow-Origin': '*'
+        });
+        return res.end(synthHeader.slice(probeStart, probeEnd + 1));
+      }
+    }
+
+    // 6. Full stream transcode if needed (only for actual audio stream delivery)
+    if (matchedExt !== '.mp3') {
+      const transcodeResult = await this.transcoder.ensureStandardMp3Async(localFilePath, cleanSongId, {
+        deviceModel: resolvedModel,
+        userAgent: reqUserAgent,
+        clientIp
+      });
+      if (transcodeResult.success && fs.existsSync(transcodeResult.filePath)) {
+        localFilePath = transcodeResult.filePath;
+        matchedExt = transcodeResult.format;
+      }
+    }
+
+    const stat = fs.statSync(localFilePath);
+    const fileSize = stat.size;
+    const range = req.headers.range;
     const contentType = mimeTypes[matchedExt] || 'audio/mpeg';
 
     if (req.method === 'HEAD') {

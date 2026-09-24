@@ -115,6 +115,18 @@ export class TranscodeSemaphorePool {
     return this.maxConcurrency;
   }
 
+  public getActiveCount(): number {
+    return this.activeCount;
+  }
+
+  public getAvailableSlots(): number {
+    return Math.max(0, this.maxConcurrency - this.activeCount);
+  }
+
+  public canAcquireImmediately(): boolean {
+    return this.activeCount < this.maxConcurrency;
+  }
+
   public setMaxConcurrency(val: number): void {
     if (val > 0) {
       this.maxConcurrency = Math.min(val, 8);
