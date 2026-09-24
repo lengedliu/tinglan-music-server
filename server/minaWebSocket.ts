@@ -47,9 +47,12 @@ export class MinaWebSocketClient extends EventEmitter {
 
   constructor() {
     super();
-    // Prevent Node.js from crashing with Unhandled 'error' event when underlying TLS/socket disconnects
+    // Suppress unhandled crash while avoiding spamming console on expected 403/1006 closures
     this.on('error', (err: any) => {
-      console.warn('[Mina WebSocket] Handled socket error:', err?.message || err);
+      const msg = err?.message || String(err);
+      if (!msg.includes('403') && !msg.includes('401') && !msg.includes('1006')) {
+        console.warn('[Mina WebSocket] Handled socket error:', msg);
+      }
     });
   }
 
@@ -169,34 +172,16 @@ export class MinaWebSocketClient extends EventEmitter {
         this.handleMessage(data.toString());
       });
 
-      this.ws.on('error', async (err: Error) => {
+      this.ws.on('error', (err: Error) => {
         const errMsg = err?.message || 'WebSocket error';
         this.lastError = errMsg;
         
         const isAuthRejection = errMsg.includes('403') || errMsg.includes('401');
-        const now = Date.now();
-        // Allow token refresh only once every 15 minutes to prevent spamming/infinite loops
-        const canRefresh = this.authRefreshHandler && (now - this.lastAuthRefreshTime > 15 * 60 * 1000);
 
-        if (isAuthRejection && canRefresh) {
-          this.lastAuthRefreshTime = now;
+        if (isAuthRejection) {
           this.authFailCount++;
-          console.warn(`[Mina WebSocket] ⚠️ Mina 鉴权过期 (HTTP 401/403)。尝试无感续期令牌...`);
-          try {
-            const freshCreds = await this.authRefreshHandler!();
-            if (freshCreds && freshCreds.serviceToken) {
-              this.serviceToken = freshCreds.serviceToken;
-              if (freshCreds.userId) this.userId = freshCreds.userId;
-              console.log(`[Mina WebSocket] ✅ Token 续期成功，将进行下一次平滑重连`);
-            }
-          } catch (refErr: any) {
-            console.warn('[Mina WebSocket] Token 自动续期失败:', refErr?.message);
-          }
-        } else if (isAuthRejection) {
-          this.authFailCount++;
-        } else {
-          // Normal socket/network closure notice
-          // Don't flood console with verbose error
+          // WebSocket 403 is WAF client-fingerprint rejection, NOT token expiry.
+          // DO NOT trigger authRefreshHandler to prevent false periodic token refresh loops.
         }
 
         this.recordEvent({
@@ -206,7 +191,7 @@ export class MinaWebSocketClient extends EventEmitter {
           deviceId: this.deviceId || undefined,
           data: { error: errMsg, isAuthRejection },
           summary: isAuthRejection
-            ? 'Mina 云端长连接鉴权受阻 (已进入自适应退避保护)'
+            ? 'Mina 云端 WebSocket 受小米 WAF 策略限制 (已由 HTTPS 语音引擎无缝接管)'
             : `Mina 云端 WebSocket 状态: ${errMsg}`
         });
         try {
@@ -221,13 +206,19 @@ export class MinaWebSocketClient extends EventEmitter {
 
         if (this.shouldRun) {
           this.reconnectCount++;
-          // Progressive exponential backoff up to 5 minutes, with jitter
-          const baseDelay = Math.min(300000, 5000 * Math.pow(1.8, Math.min(this.reconnectCount, 6)));
-          const jitter = Math.floor(Math.random() * 2000);
+          
+          // If repeatedly blocked by WAF (e.g. 403), enter quiet ultra-long standby (15-30 minutes)
+          const isPersistentWafBlock = this.authFailCount >= 2 || this.reconnectCount >= 5;
+          const baseDelay = isPersistentWafBlock
+            ? 900000 // 15 minutes quiet standby
+            : Math.min(300000, 5000 * Math.pow(1.8, Math.min(this.reconnectCount, 6)));
+          const jitter = Math.floor(Math.random() * 3000);
           const delay = baseDelay + jitter;
           
-          if (this.reconnectCount <= 3 || this.reconnectCount % 5 === 0) {
-            console.log(`[Mina WebSocket] 长连接已断开 (code: ${code})，将在 ${(delay / 1000).toFixed(0)} 秒后尝试自适应重连 (重试次数: ${this.reconnectCount})`);
+          if (this.reconnectCount === 1) {
+            console.log(`[Mina WebSocket] ℹ️ 长连接握手未完成 (code: ${code})，将在 ${(delay / 1000).toFixed(0)} 秒后自适应探测`);
+          } else if (this.reconnectCount === 3 && isPersistentWafBlock) {
+            console.log(`[Mina WebSocket] 🛡️ 云端长连接受小米网关安全策略限制 (403)，已转入后台静默待命模式 (语音口令由 HTTPS 引擎全量稳定保障)`);
           }
           
           if (this.reconnectTimeout) {

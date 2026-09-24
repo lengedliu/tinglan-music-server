@@ -1506,23 +1506,10 @@ async function refreshXiaomiTokens(reason: string = 'token_expired', force: bool
   return refreshTokensPromise;
 }
 
-// Connect Mina WS auth refresh handler for auto-recovery on 401/403
-minaWsClient.setAuthRefreshHandler(async () => {
-  const res = await refreshXiaomiTokens('mina_ws_auth_rejection');
-  if (res.success && res.serviceToken) {
-    return {
-      userId: miotConfig.userId,
-      serviceToken: res.serviceToken,
-      deviceId: miotConfig.activeDeviceId || ''
-    };
-  }
-  return null;
-});
-
-// Auto-connect Mina WebSocket in background if logged in
+// Auto-connect Mina WebSocket in background if logged in (non-blocking best effort)
 minaWsClient.on('error', (err: any) => {
   const errMsg = err?.message || String(err);
-  if (!errMsg.includes('403') && !errMsg.includes('401')) {
+  if (!errMsg.includes('403') && !errMsg.includes('401') && !errMsg.includes('1006')) {
     console.warn('[Mina WebSocket] Handled socket error:', errMsg);
   }
 });
