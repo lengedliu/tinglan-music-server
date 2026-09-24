@@ -1432,9 +1432,20 @@ if ((miotConfig as any).passToken) {
 
 // Centralized, deduplicated Xiaomi token refresh service (P0 reliability)
 let isRefreshingXiaomiTokens = false;
+let lastTokenRefreshTime = 0;
 let refreshTokensPromise: Promise<{ success: boolean; serviceToken?: string; error?: string }> | null = null;
 
-async function refreshXiaomiTokens(reason: string = 'token_expired'): Promise<{ success: boolean; serviceToken?: string; error?: string }> {
+async function refreshXiaomiTokens(reason: string = 'token_expired', force: boolean = false): Promise<{ success: boolean; serviceToken?: string; error?: string }> {
+  const now = Date.now();
+  // Enforce a minimum 10-minute cooldown unless explicitly forced by user action
+  if (!force && now - lastTokenRefreshTime < 10 * 60 * 1000) {
+    return {
+      success: true,
+      serviceToken: (miotConfig as any).micoServiceToken || miotConfig.serviceToken,
+      error: 'Token refresh skipped (within 10-minute cooldown window)'
+    };
+  }
+
   if (isRefreshingXiaomiTokens && refreshTokensPromise) {
     return refreshTokensPromise;
   }
@@ -1477,6 +1488,7 @@ async function refreshXiaomiTokens(reason: string = 'token_expired'): Promise<{ 
       }
 
       if (updated) {
+        lastTokenRefreshTime = Date.now();
         saveJson(CONFIG_FILE, miotConfig);
         return { success: true, serviceToken: newMicoToken || miotConfig.serviceToken };
       }

@@ -42,8 +42,8 @@ export class MinaWebSocketClient extends EventEmitter {
   private shouldRun = false;
   private recentEvents: MinaEvent[] = [];
   private authRefreshHandler?: () => Promise<{ userId: string; serviceToken: string; deviceId?: string } | null>;
-  private isRefreshingToken = false;
-  private isAuthBackingOff = false;
+  private lastAuthRefreshTime = 0;
+  private authFailCount = 0;
 
   constructor() {
     super();
@@ -102,7 +102,6 @@ export class MinaWebSocketClient extends EventEmitter {
     if (stopAutoReconnect) {
       this.shouldRun = false;
     }
-    this.isAuthBackingOff = false;
 
     if (this.heartbeatInterval) {
       clearInterval(this.heartbeatInterval);
@@ -147,7 +146,7 @@ export class MinaWebSocketClient extends EventEmitter {
         this.connected = true;
         this.connecting = false;
         this.reconnectCount = 0; // Reset reconnection ladder upon successful connection
-        this.isAuthBackingOff = false;
+        this.authFailCount = 0;
         this.lastError = null;
         this.lastHeartbeat = new Date().toISOString();
         this.emit('connected', { userId: this.userId });
@@ -175,44 +174,29 @@ export class MinaWebSocketClient extends EventEmitter {
         this.lastError = errMsg;
         
         const isAuthRejection = errMsg.includes('403') || errMsg.includes('401');
-        if (isAuthRejection) {
-          this.isAuthBackingOff = true;
-          if (this.reconnectTimeout) {
-            clearTimeout(this.reconnectTimeout);
-            this.reconnectTimeout = null;
-          }
+        const now = Date.now();
+        // Allow token refresh only once every 15 minutes to prevent spamming/infinite loops
+        const canRefresh = this.authRefreshHandler && (now - this.lastAuthRefreshTime > 15 * 60 * 1000);
 
-          console.warn(`[Mina WebSocket] ⚠️ Mina 鉴权过期或握手受拒 (HTTP 401/403)。尝试触发全局 Token 自动无感续期...`);
-          if (this.authRefreshHandler && !this.isRefreshingToken) {
-            this.isRefreshingToken = true;
-            try {
-              const freshCreds = await this.authRefreshHandler();
-              if (freshCreds && freshCreds.serviceToken) {
-                this.serviceToken = freshCreds.serviceToken;
-                if (freshCreds.userId) this.userId = freshCreds.userId;
-                console.log(`[Mina WebSocket] ✅ Token 自动续期成功，立即使用新令牌重新发起 WebSocket 连接`);
-                this.isRefreshingToken = false;
-                this.isAuthBackingOff = false;
-                this.reconnectCount = 0;
-                if (this.shouldRun) {
-                  setTimeout(() => this.initWebSocket(), 2000);
-                  return;
-                }
-              }
-            } catch (refErr: any) {
-              console.warn('[Mina WebSocket] Token 自动续期失败:', refErr?.message);
-            } finally {
-              this.isRefreshingToken = false;
+        if (isAuthRejection && canRefresh) {
+          this.lastAuthRefreshTime = now;
+          this.authFailCount++;
+          console.warn(`[Mina WebSocket] ⚠️ Mina 鉴权过期 (HTTP 401/403)。尝试无感续期令牌...`);
+          try {
+            const freshCreds = await this.authRefreshHandler!();
+            if (freshCreds && freshCreds.serviceToken) {
+              this.serviceToken = freshCreds.serviceToken;
+              if (freshCreds.userId) this.userId = freshCreds.userId;
+              console.log(`[Mina WebSocket] ✅ Token 续期成功，将进行下一次平滑重连`);
             }
+          } catch (refErr: any) {
+            console.warn('[Mina WebSocket] Token 自动续期失败:', refErr?.message);
           }
-
-          // Backoff longer on auth rejection (90s) before attempting another probe
-          this.reconnectTimeout = setTimeout(() => {
-            this.isAuthBackingOff = false;
-            if (this.shouldRun) this.initWebSocket();
-          }, 90000);
+        } else if (isAuthRejection) {
+          this.authFailCount++;
         } else {
-          console.warn(`[Mina WebSocket] Network or TLS notice: ${errMsg}`);
+          // Normal socket/network closure notice
+          // Don't flood console with verbose error
         }
 
         this.recordEvent({
@@ -222,7 +206,7 @@ export class MinaWebSocketClient extends EventEmitter {
           deviceId: this.deviceId || undefined,
           data: { error: errMsg, isAuthRejection },
           summary: isAuthRejection
-            ? 'Mina 云端长连接鉴权受阻 (正在尝试 Token 自动无感续期与自适应退避)'
+            ? 'Mina 云端长连接鉴权受阻 (已进入自适应退避保护)'
             : `Mina 云端 WebSocket 状态: ${errMsg}`
         });
         try {
@@ -235,17 +219,20 @@ export class MinaWebSocketClient extends EventEmitter {
         this.connecting = false;
         this.emit('disconnected', { code, reason: reason.toString() });
 
-        // Infinite exponential backoff with jitter (never hard-stops while shouldRun is true)
         if (this.shouldRun) {
-          if (this.isAuthBackingOff) {
-            console.log(`[Mina WebSocket] 连接中断 (鉴权受拒，正处于 90s 静默退避保护中，避免触发风控频控)`);
-            return;
-          }
           this.reconnectCount++;
-          const baseDelay = Math.min(60000, 3000 * Math.pow(1.5, Math.min(this.reconnectCount, 8)));
-          const jitter = Math.floor(Math.random() * 1500);
+          // Progressive exponential backoff up to 5 minutes, with jitter
+          const baseDelay = Math.min(300000, 5000 * Math.pow(1.8, Math.min(this.reconnectCount, 6)));
+          const jitter = Math.floor(Math.random() * 2000);
           const delay = baseDelay + jitter;
-          console.log(`[Mina WebSocket] 连接中断 (code: ${code})，将在 ${(delay / 1000).toFixed(1)} 秒后尝试第 ${this.reconnectCount} 次自适应重连...`);
+          
+          if (this.reconnectCount <= 3 || this.reconnectCount % 5 === 0) {
+            console.log(`[Mina WebSocket] 长连接已断开 (code: ${code})，将在 ${(delay / 1000).toFixed(0)} 秒后尝试自适应重连 (重试次数: ${this.reconnectCount})`);
+          }
+          
+          if (this.reconnectTimeout) {
+            clearTimeout(this.reconnectTimeout);
+          }
           this.reconnectTimeout = setTimeout(() => {
             if (this.shouldRun) this.initWebSocket();
           }, delay);
