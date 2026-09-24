@@ -21,6 +21,7 @@ import { MultiRoomCastModal } from './components/MultiRoomCastModal';
 import { TrackInspectorModal } from './components/TrackInspectorModal';
 import { useTheme } from './context/ThemeContext';
 import { usePlaybackTimeActions } from './context/PlaybackTimeContext';
+import { useAppEvents } from './context/AppEventsContext';
 import { Song, Playlist, XiaomiDevice, MiotConfig, CastLog, User, SecurityStatus, DeviceCommandState, SleepTimerConfig, ABLoopConfig, AudioEngineSettings } from './types';
 import { INITIAL_SONGS, INITIAL_PLAYLISTS, INITIAL_XIAOMI_DEVICES } from './data/mockSongs';
 import { apiFetch, setStoredAuthToken, getAuthToken } from './utils/api';
@@ -29,6 +30,7 @@ import { CheckCircle2, AlertCircle, Radio, X } from 'lucide-react';
 
 export default function App() {
   const { themeConfig, isThemeModalOpen, setIsThemeModalOpen } = useTheme();
+  const { subscribe, isConnected } = useAppEvents();
 
   // User Auth & Database States
   const [user, setUser] = useState<User | null>(null);
@@ -587,17 +589,60 @@ export default function App() {
     }
   }, [volume]);
 
-  // Active synchronization with speaker queueEngine
+  // Real-time synchronization via Server-Sent Events (SSE) (Phase 5)
   useEffect(() => {
-    let isMounted = true;
+    const unsubQueue = subscribe('queue:change', (status: any) => {
+      if (!status) return;
+      // Synchronize speaker queue state in real-time
+      if (isCasting) {
+        if (status.isPlaying !== undefined && !status.isTransitioning) {
+          setIsPlaying(Boolean(status.isPlaying));
+        }
+        if (status.currentSong && status.currentSong.id !== currentSong?.id) {
+          setCurrentSong(status.currentSong);
+          timeActions.setDuration(status.currentSong.duration || 200);
+        }
+        if (typeof status.elapsedSeconds === 'number' && status.elapsedSeconds >= 0) {
+          timeActions.setCurrentTime(status.elapsedSeconds);
+        }
+      }
+      if (status?.queue && Array.isArray(status.queue) && status.queue.length > 0) {
+        setPlayQueue(prev => {
+          if (prev.length === status.queue.length && prev.every((s, i) => s.id === status.queue[i]?.id)) {
+            return prev;
+          }
+          return status.queue;
+        });
+      }
+    });
+
+    const unsubTick = subscribe('playback:tick', (tick: any) => {
+      if (!isCasting) return;
+      if (tick && typeof tick.elapsedSeconds === 'number') {
+        timeActions.setCurrentTime(tick.elapsedSeconds);
+        if (tick.duration) {
+          timeActions.setDuration(tick.duration);
+        }
+      }
+    });
+
+    return () => {
+      unsubQueue();
+      unsubTick();
+    };
+  }, [subscribe, isCasting, currentSong?.id]);
+
+  // Fallback sync ONLY when SSE connection is offline (Zero polling while SSE is active!)
+  useEffect(() => {
+    if (isConnected) return; // 0 HTTP polling requests while SSE real-time stream is connected
+
     const interval = setInterval(() => {
       if (typeof document !== 'undefined' && document.hidden) return;
       apiFetch('/api/queue')
         .then(res => res.json())
         .then(resData => {
-          if (!isMounted || !resData) return;
+          if (!resData) return;
           const status = resData.data || resData;
-          // Only synchronize playback position and active song if user is currently in casting mode
           if (isCasting && status) {
             if (status.isPlaying !== undefined && !status.isTransitioning) {
               setIsPlaying(Boolean(status.isPlaying));
@@ -610,7 +655,6 @@ export default function App() {
               timeActions.setCurrentTime(status.elapsedSeconds);
             }
           }
-          // Queue list sync when drawer is open
           if (isQueueDrawerOpen && status?.queue && Array.isArray(status.queue) && status.queue.length > 0) {
             setPlayQueue(prev => {
               if (prev.length === status.queue.length && prev.every((s, i) => s.id === status.queue[i]?.id)) {
@@ -621,13 +665,12 @@ export default function App() {
           }
         })
         .catch(() => {});
-    }, isCasting ? 1000 : (isQueueDrawerOpen ? 2500 : 6000));
+    }, isCasting ? 8000 : 20000);
 
     return () => {
-      isMounted = false;
       clearInterval(interval);
     };
-  }, [isCasting, isQueueDrawerOpen, currentSong?.id]);
+  }, [isConnected, isCasting, isQueueDrawerOpen, currentSong?.id]);
 
   // Audio event handlers
   const handlePlayPause = () => {

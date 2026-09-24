@@ -66,3 +66,50 @@ export function formatTime(seconds: number): string {
   return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 }
 
+/**
+ * High-performance O(log N) / O(1) active lyric finder with binary search & pointer caching.
+ */
+export function findActiveLyricIndex(
+  lyrics: LyricLine[],
+  currentTime: number,
+  previousIndex: number = -1
+): number {
+  const len = lyrics.length;
+  if (len === 0) return -1;
+  if (currentTime < lyrics[0].time) return -1;
+  if (currentTime >= lyrics[len - 1].time) return len - 1;
+
+  // 1. O(1) fast path: check if still on current line or stepped to next line
+  if (previousIndex >= 0 && previousIndex < len) {
+    const curTime = lyrics[previousIndex].time;
+    const nextTime = previousIndex + 1 < len ? lyrics[previousIndex + 1].time : Infinity;
+    if (currentTime >= curTime && currentTime < nextTime) {
+      return previousIndex;
+    }
+    if (previousIndex + 1 < len) {
+      const nextNextTime = previousIndex + 2 < len ? lyrics[previousIndex + 2].time : Infinity;
+      if (currentTime >= nextTime && currentTime < nextNextTime) {
+        return previousIndex + 1;
+      }
+    }
+  }
+
+  // 2. O(log N) binary search for seeking/jumping
+  let low = 0;
+  let high = len - 1;
+  let ans = 0;
+
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    if (lyrics[mid].time <= currentTime) {
+      ans = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  return ans;
+}
+
+

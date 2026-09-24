@@ -467,6 +467,68 @@ export class QueueEngine extends EventEmitter {
   }
 
   /**
+   * Insert a song directly after the currently playing song (Play Next)
+   */
+  public insertNext(song: Song): boolean {
+    if (!song) return false;
+    if (this.queue.length === 0) {
+      this.queue = [song];
+      this.currentIndex = 0;
+      this.emit('change', this.getStatus());
+      return true;
+    }
+    const insertAt = Math.min(this.currentIndex + 1, this.queue.length);
+    this.queue.splice(insertAt, 0, song);
+    this.emit('change', this.getStatus());
+    return true;
+  }
+
+  /**
+   * Reorder the queue: move item from fromIndex to toIndex
+   */
+  public reorder(fromIndex: number, toIndex: number): boolean {
+    if (
+      fromIndex < 0 ||
+      fromIndex >= this.queue.length ||
+      toIndex < 0 ||
+      toIndex >= this.queue.length ||
+      fromIndex === toIndex
+    ) {
+      return false;
+    }
+
+    const currentTrack = this.queue[this.currentIndex];
+    const [movedItem] = this.queue.splice(fromIndex, 1);
+    this.queue.splice(toIndex, 0, movedItem);
+
+    // Keep currentIndex synced with the current playing track
+    if (currentTrack) {
+      const newCurrentIdx = this.queue.findIndex(s => s.id === currentTrack.id);
+      if (newCurrentIdx !== -1) {
+        this.currentIndex = newCurrentIdx;
+      }
+    }
+
+    this.emit('change', this.getStatus());
+    return true;
+  }
+
+  /**
+   * Replace the entire queue with a new song order
+   */
+  public replaceQueue(newQueue: Song[], newCurrentIndex?: number): boolean {
+    if (!Array.isArray(newQueue)) return false;
+    this.queue = [...newQueue];
+    if (typeof newCurrentIndex === 'number' && newCurrentIndex >= 0 && newCurrentIndex < this.queue.length) {
+      this.currentIndex = newCurrentIndex;
+    } else {
+      this.currentIndex = Math.max(0, Math.min(this.currentIndex, this.queue.length - 1));
+    }
+    this.emit('change', this.getStatus());
+    return true;
+  }
+
+  /**
    * Remove a song from the queue
    */
   public removeSong(songId: string): boolean {

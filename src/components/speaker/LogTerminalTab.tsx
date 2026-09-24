@@ -79,7 +79,7 @@ export const LogTerminalTab: React.FC<LogTerminalTabProps> = ({
 
   useEffect(() => {
     fetchTranscodeStatus();
-    const timer = setInterval(fetchTranscodeStatus, 4000);
+    const timer = setInterval(fetchTranscodeStatus, 12000);
     return () => clearInterval(timer);
   }, []);
 

@@ -4,12 +4,15 @@ import App from './App.tsx';
 import './index.css';
 import { ThemeProvider } from './context/ThemeContext';
 import { PlaybackTimeProvider } from './context/PlaybackTimeContext';
+import { AppEventsProvider } from './context/AppEventsContext';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ThemeProvider>
       <PlaybackTimeProvider>
-        <App />
+        <AppEventsProvider>
+          <App />
+        </AppEventsProvider>
       </PlaybackTimeProvider>
     </ThemeProvider>
   </StrictMode>,

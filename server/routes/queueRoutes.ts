@@ -103,6 +103,42 @@ export function createQueueRouter(options: QueueRouterOptions): Router {
     });
   });
 
+  // Insert a song to play next
+  router.post('/insert-next', (req: Request, res: Response) => {
+    const { song } = req.body;
+    if (!song || !song.id) {
+      return res.status(400).json({ success: false, error: '歌曲信息缺失' });
+    }
+    const ok = queueEngine.insertNext(song);
+    res.json({
+      success: ok,
+      data: queueEngine.getStatus()
+    });
+  });
+
+  // Reorder queue item
+  router.post('/reorder', (req: Request, res: Response) => {
+    const { fromIndex, toIndex } = req.body;
+    const ok = queueEngine.reorder(Number(fromIndex), Number(toIndex));
+    res.json({
+      success: ok,
+      data: queueEngine.getStatus()
+    });
+  });
+
+  // Replace entire queue
+  router.post('/replace', (req: Request, res: Response) => {
+    const { queue, currentIndex } = req.body;
+    if (!Array.isArray(queue)) {
+      return res.status(400).json({ success: false, error: '队列必须是数组' });
+    }
+    const ok = queueEngine.replaceQueue(queue, currentIndex);
+    res.json({
+      success: ok,
+      data: queueEngine.getStatus()
+    });
+  });
+
   // Clear queue
   router.post('/clear', (req: Request, res: Response) => {
     queueEngine.clear();

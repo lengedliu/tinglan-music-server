@@ -58,6 +58,7 @@ import {
 } from 'lucide-react';
 import { XiaomiDevice, MiotConfig, CastLog, Song, DeviceCommandState, Playlist } from '../types';
 import { apiFetch, getAuthToken } from '../utils/api';
+import { useAppEvents } from '../context/AppEventsContext';
 import { VoiceCommandSection } from './VoiceCommandSection';
 import { LogTerminalTab } from './speaker/LogTerminalTab';
 import { useTheme } from '../context/ThemeContext';
@@ -119,6 +120,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
   playlists = [],
 }) => {
   const { isLight } = useTheme();
+  const { subscribe: subscribeAppEvents } = useAppEvents();
   const [activeSubTab, setActiveSubTab] = useState<'devices' | 'control' | 'tts' | 'voice' | 'rpc' | 'settings' | 'logs'>('devices');
   const [ttsInput, setTtsInput] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -309,32 +311,23 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
     };
 
     fetchWsStatus();
-    const interval = setInterval(fetchWsStatus, 8000);
+    const interval = setInterval(fetchWsStatus, 30000); // Relaxed fallback polling
 
-    // Setup SSE connection
-    let eventSource: EventSource | null = null;
-    try {
-      const token = getAuthToken();
-      const sseUrl = token ? `/api/miot/events?token=${encodeURIComponent(token)}` : '/api/miot/events';
-      eventSource = new EventSource(sseUrl);
-      eventSource.onmessage = (event) => {
-        try {
-          const parsed = JSON.parse(event.data);
-          setMinaLiveEvents(prev => [parsed, ...prev.slice(0, 49)]);
-        } catch {}
-      };
-    } catch {}
+    // Listen to real-time mina events from unified AppEvents SSE stream
+    const unsubMina = subscribeAppEvents('mina:event', (parsed: any) => {
+      if (parsed) {
+        setMinaLiveEvents(prev => [parsed, ...prev.slice(0, 49)]);
+      }
+    });
 
     return () => {
       clearInterval(interval);
-      if (eventSource) {
-        eventSource.close();
-      }
+      unsubMina();
       if (qrPollingTimerRef.current) {
         clearInterval(qrPollingTimerRef.current);
       }
     };
-  }, []);
+  }, [subscribeAppEvents]);
 
   const fetchStreamStatus = async () => {
     if (typeof document !== 'undefined' && document.hidden) return;
@@ -351,7 +344,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
 
   useEffect(() => {
     fetchStreamStatus();
-    const interval = setInterval(fetchStreamStatus, 10000);
+    const interval = setInterval(fetchStreamStatus, 30000); // Relaxed diagnostic polling
     return () => clearInterval(interval);
   }, []);
 

@@ -1,0 +1,24 @@
+[
+  {
+    "id": "pl-default-1",
+    "name": "我喜欢的音乐",
+    "description": "默认红心收藏歌单",
+    "coverUrl": "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?auto=format&fit=crop&w=600&q=80",
+    "songIds": [
+      "song-1",
+      "song-2"
+    ],
+    "createdAt": "2026-09-24"
+  },
+  {
+    "id": "pl-default-2",
+    "name": "清晨唤醒·舒缓原声",
+    "description": "适合在客厅小爱音箱上定时播放的晨间轻音乐",
+    "coverUrl": "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=600&q=80",
+    "songIds": [
+      "song-3",
+      "song-4"
+    ],
+    "createdAt": "2026-09-24"
+  }
+]

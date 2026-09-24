@@ -22,7 +22,7 @@ import {
   RotateCcw
 } from 'lucide-react';
 import { Song, XiaomiDevice, ABLoopConfig } from '../types';
-import { formatTime, parseLrc } from '../utils/lyricParser';
+import { formatTime, parseLrc, findActiveLyricIndex } from '../utils/lyricParser';
 import { useTheme } from '../context/ThemeContext';
 import { usePlaybackTime } from '../context/PlaybackTimeContext';
 
@@ -97,17 +97,11 @@ export const VinylPlayerModal: React.FC<VinylPlayerModalProps> = ({
   }, [currentSong?.lyrics]);
 
   // Current active lyric index
+  const prevLyricIndexRef = useRef<number>(-1);
   const activeLyricIndex = React.useMemo(() => {
-    if (lyricLines.length === 0) return -1;
-    let activeIdx = 0;
-    for (let i = 0; i < lyricLines.length; i++) {
-      if (currentTime >= lyricLines[i].time) {
-        activeIdx = i;
-      } else {
-        break;
-      }
-    }
-    return activeIdx;
+    const idx = findActiveLyricIndex(lyricLines, currentTime, prevLyricIndexRef.current);
+    prevLyricIndexRef.current = idx;
+    return idx;
   }, [lyricLines, currentTime]);
 
   // Auto-scroll lyrics

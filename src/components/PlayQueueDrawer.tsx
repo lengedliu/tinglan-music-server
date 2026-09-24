@@ -3,6 +3,7 @@ import { ListMusic, X, Play, Trash2, Shuffle, Disc, Repeat, Repeat1, Radio, Skip
 import { Song, XiaomiDevice } from '../types';
 import { formatTime } from '../utils/lyricParser';
 import { useTheme } from '../context/ThemeContext';
+import { VirtualList } from './VirtualList';
 
 interface PlayQueueDrawerProps {
   isOpen: boolean;
@@ -86,7 +87,7 @@ export const PlayQueueDrawer: React.FC<PlayQueueDrawerProps> = ({
           </button>
         </div>
 
-        {/* Toolbar Controls - High contrast buttons for light & dark themes */}
+        {/* Toolbar Controls */}
         <div className={`px-5 py-3 border-b flex items-center justify-between text-xs gap-2 ${
           isLight ? 'bg-zinc-100/90 border-zinc-200' : 'bg-zinc-900/50 border-white/5'
         }`}>
@@ -184,24 +185,31 @@ export const PlayQueueDrawer: React.FC<PlayQueueDrawerProps> = ({
           </div>
         </div>
 
-        {/* Queue List */}
-        <div className={`flex-1 overflow-y-auto p-4 space-y-2 scrollbar-thin ${isLight ? 'scrollbar-thumb-zinc-300' : 'scrollbar-thumb-zinc-800'}`}>
-          {playlist.length === 0 ? (
-            <div className={`h-full flex flex-col items-center justify-center space-y-3 ${isLight ? 'text-zinc-400' : 'text-zinc-500'}`}>
-              <Disc className="w-12 h-12 opacity-40 animate-spin duration-3000" />
-              <p className={`text-sm font-bold ${isLight ? 'text-zinc-700' : 'text-zinc-300'}`}>播放队列为空</p>
-              <p className="text-xs text-zinc-500">点击曲库的“播放全部”或任意单曲加入队列</p>
-            </div>
-          ) : (
-            playlist.map((song, idx) => {
+        {/* High Performance Virtualized Queue List (Scheme 4) */}
+        <div className="flex-1 overflow-hidden p-3">
+          <VirtualList<Song>
+            items={playlist}
+            itemHeight={68}
+            className={`h-full w-full pr-1 scrollbar-thin ${isLight ? 'scrollbar-thumb-zinc-300' : 'scrollbar-thumb-zinc-800'}`}
+            emptyPlaceholder={
+              <div className={`h-full flex flex-col items-center justify-center space-y-3 ${isLight ? 'text-zinc-400' : 'text-zinc-500'}`}>
+                <Disc className="w-12 h-12 opacity-40 animate-spin duration-3000" />
+                <p className={`text-sm font-bold ${isLight ? 'text-zinc-700' : 'text-zinc-300'}`}>播放队列为空</p>
+                <p className="text-xs text-zinc-500">点击曲库的“播放全部”或任意单曲加入队列</p>
+              </div>
+            }
+            renderItem={(song, idx) => {
               const isCurrent = currentSong?.id === song.id;
 
               return (
                 <div
                   key={`${song.id}-${idx}`}
-                  className={`group p-3 rounded-2xl flex items-center justify-between gap-3 transition ${
+                  style={{ height: '64px', marginBottom: '4px' }}
+                  className={`group p-2.5 rounded-2xl flex items-center justify-between gap-3 transition ${
                     isCurrent
                       ? 'bg-[#FF6700]/15 border border-[#FF6700]/30 shadow-[0_0_15px_rgba(255,103,0,0.15)]'
+                      : isLight
+                      ? 'bg-zinc-50 hover:bg-zinc-100 border border-zinc-200/80 text-zinc-900'
                       : 'bg-zinc-900/30 hover:bg-zinc-900 border border-white/5'
                   }`}
                 >
@@ -209,7 +217,7 @@ export const PlayQueueDrawer: React.FC<PlayQueueDrawerProps> = ({
                     onClick={() => onSelectSong(song)}
                     className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer"
                   >
-                    <div className="relative w-11 h-11 rounded-xl overflow-hidden flex-shrink-0 border border-white/10">
+                    <div className="relative w-10 h-10 rounded-xl overflow-hidden flex-shrink-0 border border-white/10">
                       <img
                         src={song.coverUrl}
                         alt={song.title}
@@ -218,35 +226,35 @@ export const PlayQueueDrawer: React.FC<PlayQueueDrawerProps> = ({
                       {isCurrent && (
                         <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
                           {isPlaying ? (
-                            <div className="flex items-end gap-0.5 h-3.5">
-                              <span className="w-1 bg-[#FF6700] animate-pulse h-3 rounded-full" />
-                              <span className="w-1 bg-[#FF6700] animate-pulse delay-75 h-4 rounded-full" />
+                            <div className="flex items-end gap-0.5 h-3">
+                              <span className="w-1 bg-[#FF6700] animate-pulse h-2.5 rounded-full" />
+                              <span className="w-1 bg-[#FF6700] animate-pulse delay-75 h-3.5 rounded-full" />
                               <span className="w-1 bg-[#FF6700] animate-pulse delay-150 h-2 rounded-full" />
                             </div>
                           ) : (
-                            <Play className="w-4 h-4 text-[#FF6700] fill-current" />
+                            <Play className="w-3.5 h-3.5 text-[#FF6700] fill-current" />
                           )}
                         </div>
                       )}
                     </div>
 
-                    <div className="min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-[10px] font-mono text-zinc-500 font-semibold">
+                        <span className={`text-[10px] font-mono ${isLight ? 'text-zinc-500' : 'text-zinc-500'} font-semibold`}>
                           {(idx + 1).toString().padStart(2, '0')}
                         </span>
-                        <h4 className={`text-xs font-bold truncate ${isCurrent ? 'text-[#FF6700]' : 'text-white'}`}>
+                        <h4 className={`text-xs font-bold truncate ${isCurrent ? 'text-[#FF6700]' : (isLight ? 'text-zinc-900' : 'text-white')}`}>
                           {song.title}
                         </h4>
                       </div>
-                      <p className="text-[11px] text-zinc-400 truncate mt-0.5">
+                      <p className={`text-[11px] truncate mt-0.5 ${isLight ? 'text-zinc-500' : 'text-zinc-400'}`}>
                         {song.artist}
                       </p>
                     </div>
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-mono text-zinc-500">
+                    <span className={`text-[10px] font-mono ${isLight ? 'text-zinc-500' : 'text-zinc-500'}`}>
                       {formatTime(song.duration)}
                     </span>
                     <button
@@ -259,8 +267,8 @@ export const PlayQueueDrawer: React.FC<PlayQueueDrawerProps> = ({
                   </div>
                 </div>
               );
-            })
-          )}
+            }}
+          />
         </div>
 
         {/* Footer info */}

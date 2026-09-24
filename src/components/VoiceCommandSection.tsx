@@ -93,7 +93,7 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
     pollTimerRef.current = setInterval(() => {
       if (typeof document !== 'undefined' && document.hidden) return;
       fetchVoiceStatus();
-    }, 3000);
+    }, 12000);
 
     return () => {
       if (pollTimerRef.current) clearInterval(pollTimerRef.current);

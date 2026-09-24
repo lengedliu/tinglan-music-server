@@ -16,7 +16,7 @@ import {
   Minus
 } from 'lucide-react';
 import { Song, XiaomiDevice } from '../types';
-import { parseLrc, formatTime } from '../utils/lyricParser';
+import { parseLrc, formatTime, findActiveLyricIndex } from '../utils/lyricParser';
 import { apiFetch } from '../utils/api';
 import { usePlaybackTime } from '../context/PlaybackTimeContext';
 
@@ -79,18 +79,12 @@ export const LyricsView: React.FC<LyricsViewProps> = ({
 
   // Adjusted time considering offset
   const effectiveTime = currentTime + lyricOffset;
+  const prevActiveIndexRef = useRef<number>(-1);
 
-  // Find index of currently active lyric
+  // Find index of currently active lyric (O(1) pointer tracking & O(log N) binary search)
   const activeIndex = useMemo(() => {
-    if (parsedLyrics.length === 0) return -1;
-    let idx = -1;
-    for (let i = 0; i < parsedLyrics.length; i++) {
-      if (effectiveTime >= parsedLyrics[i].time) {
-        idx = i;
-      } else {
-        break;
-      }
-    }
+    const idx = findActiveLyricIndex(parsedLyrics, effectiveTime, prevActiveIndexRef.current);
+    prevActiveIndexRef.current = idx;
     return idx;
   }, [parsedLyrics, effectiveTime]);
 

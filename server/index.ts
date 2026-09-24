@@ -3,6 +3,7 @@ export * from './core/playlistEngine.js';
 export * from './core/queueEngine.js';
 export * from './core/searchIndex.js';
 export * from './core/asyncMusicScanner.js';
+export * from './core/eventBus.js';
 export * from './streaming/ffmpegTranscoder.js';
 export * from './streaming/transcodeSemaphore.js';
 export * from './streaming/streamServer.js';

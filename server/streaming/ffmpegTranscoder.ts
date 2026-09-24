@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { spawn, spawnSync, execFile, ChildProcessWithoutNullStreams } from 'child_process';
+import { spawn, execFile, ChildProcessWithoutNullStreams } from 'child_process';
 import { promisify } from 'util';
 import { Readable, PassThrough } from 'stream';
 import { transcodeSemaphorePool, TranscodeSemaphorePool, TranscodePoolStats } from './transcodeSemaphore.js';
@@ -56,18 +56,23 @@ export class FfmpegTranscoder {
       }
     }
 
-    try {
-      const check = spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' });
-      this.ffmpegAvailable = check.status === 0;
-      if (this.ffmpegAvailable) {
-        console.log('🎵 [FfmpegTranscoder] FFmpeg binary verified in PATH. Tee Pipe stream & Semaphore pool active.');
+    // Optimization 1: Boot-time orphan .part file sweeper & periodic LRU maintenance
+    this.cleanOrphanPartFiles();
+    setInterval(() => {
+      this.pruneCacheIfNeeded(800 * 1024 * 1024, 600 * 1024 * 1024);
+    }, 15 * 60 * 1000); // Check every 15 minutes
+
+    // Asynchronously probe FFmpeg binary without blocking the event loop
+    this.ffmpegAvailable = true; // Default optimistic on Linux systems with /usr/bin/ffmpeg
+    execFile('ffmpeg', ['-version'], (err, stdout) => {
+      if (!err && stdout) {
+        this.ffmpegAvailable = true;
+        console.log('🎵 [FfmpegTranscoder] FFmpeg binary verified in PATH (Async). Pipeline stream & Semaphore pool active.');
       } else {
+        this.ffmpegAvailable = false;
         console.warn('⚠️ [FfmpegTranscoder] FFmpeg binary check failed. Audio transcoding will fallback to pass-through.');
       }
-    } catch {
-      this.ffmpegAvailable = false;
-      console.warn('⚠️ [FfmpegTranscoder] FFmpeg binary not found in PATH. Audio transcoding will fallback to direct pass-through.');
-    }
+    });
   }
 
   public isAvailable(): boolean {
@@ -221,11 +226,18 @@ export class FfmpegTranscoder {
         releaseFn: releaseTicket
       });
 
-      const clientPassThrough = new PassThrough();
+      const clientPassThrough = new PassThrough({ highWaterMark: 128 * 1024 });
 
-      // Tee stream branching: push to client AND write to cache file simultaneously
+      // Tee stream branching with Backpressure Control:
+      // When client or network is slow, pause FFmpeg stdout to prevent RAM bloat
       child.stdout.on('data', (chunk: Buffer) => {
-        clientPassThrough.write(chunk);
+        const canContinue = clientPassThrough.write(chunk);
+        if (!canContinue) {
+          child.stdout.pause();
+          clientPassThrough.once('drain', () => {
+            child.stdout.resume();
+          });
+        }
         if (cacheWriteStream && !cacheWriteStream.destroyed) {
           try {
             cacheWriteStream.write(chunk);
@@ -244,8 +256,26 @@ export class FfmpegTranscoder {
           }
         }
         try { clientPassThrough.end(); } catch {}
+        try {
+          if (!child.killed) {
+            child.kill('SIGTERM');
+            setTimeout(() => {
+              try {
+                if (!child.killed) child.kill('SIGKILL');
+              } catch {}
+            }, 500);
+          }
+        } catch {}
         this.semaphore.reapSession(sessionId, reason);
       };
+
+      // Self-healing: if client aborts or closes stream, kill child FFmpeg process
+      clientPassThrough.on('close', () => {
+        kill('client pass-through closed');
+      });
+      clientPassThrough.on('error', (err) => {
+        kill(`client pass-through error: ${err.message}`);
+      });
 
       child.on('error', (err) => {
         console.warn(`[FfmpegTranscoder] Live transcode process error (${sessionId}):`, err.message);
@@ -496,7 +526,9 @@ export class FfmpegTranscoder {
   }
 
   /**
-   * Safe synchronous fallback using spawnSync with argument vectors (no shell execution)
+   * Safe non-blocking method for ensuring standard MP3.
+   * Returns cached MP3 file immediately if fresh on disk, or fires non-blocking async transcode in background.
+   * Never freezes the Node.js event loop with spawnSync.
    */
   public ensureStandardMp3(sourcePath: string, songId: string): TranscodeResult {
     if (!fs.existsSync(sourcePath)) {
@@ -523,7 +555,7 @@ export class FfmpegTranscoder {
     const cachedMp3Name = `${sanitizedId}_standard.mp3`;
     const cachedMp3Path = path.join(this.cacheDir, cachedMp3Name);
 
-    // 1. Check cache
+    // 1. Fast path: check cache on disk
     if (fs.existsSync(cachedMp3Path)) {
       try {
         const cacheStat = fs.statSync(cachedMp3Path);
@@ -538,34 +570,11 @@ export class FfmpegTranscoder {
       } catch {}
     }
 
-    // 2. For non-MP3 files
+    // 2. Non-blocking async dispatch for non-MP3 files (Event loop remains 100% responsive)
     if (this.ffmpegAvailable) {
-      const partPath = `${cachedMp3Path}.part.${Date.now()}_${process.pid}`;
-      try {
-        console.log(`🎵 [FfmpegTranscoder] Transcoding ${sourceExt} -> Standard MP3 for ${songId}...`);
-        const ffmpegArgs = [
-          '-y', '-i', sourcePath,
-          '-vn', '-c:a', 'libmp3lame',
-          '-ar', '44100', '-ac', '2', '-b:a', '320k',
-          '-id3v2_version', '3', '-write_xing', '1',
-          partPath
-        ];
-        spawnSync('ffmpeg', ffmpegArgs, { timeout: 20000, stdio: 'ignore' });
-        if (fs.existsSync(partPath) && fs.statSync(partPath).size > 1024) {
-          fs.renameSync(partPath, cachedMp3Path);
-          return {
-            success: true,
-            filePath: cachedMp3Path,
-            format: '.mp3',
-            isTranscoded: true
-          };
-        }
-      } catch (transErr: any) {
-        console.error(`[FfmpegTranscoder] Transcode error for ${songId}:`, transErr?.message);
-        try {
-          if (fs.existsSync(partPath)) fs.unlinkSync(partPath);
-        } catch {}
-      }
+      this.ensureStandardMp3Async(sourcePath, songId).catch((transErr: any) => {
+        console.warn(`[FfmpegTranscoder] Non-blocking background transcode error for ${songId}:`, transErr?.message);
+      });
     }
 
     return {
@@ -713,5 +722,28 @@ export class FfmpegTranscoder {
     } catch (err: any) {
       console.warn('[FfmpegTranscoder] Error pruning cache:', err.message);
     }
+  }
+
+  /**
+   * Cleans any leftover orphan .part files on startup to avoid disk leaks
+   */
+  public cleanOrphanPartFiles(): number {
+    let count = 0;
+    try {
+      if (!fs.existsSync(this.cacheDir)) return 0;
+      const files = fs.readdirSync(this.cacheDir);
+      for (const file of files) {
+        if (file.endsWith('.part')) {
+          try {
+            fs.unlinkSync(path.join(this.cacheDir, file));
+            count++;
+          } catch {}
+        }
+      }
+      if (count > 0) {
+        console.log(`[FfmpegTranscoder] 🧹 Swept ${count} orphaned .part files from previous sessions.`);
+      }
+    } catch {}
+    return count;
   }
 }

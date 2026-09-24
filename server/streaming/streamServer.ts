@@ -129,13 +129,16 @@ export class StreamServer {
       return res.status(404).send('Audio track not found in music engine catalog');
     }
 
-    const reqUserAgent = String(req.headers['user-agent'] || '');
-    const isHardwareSpeaker = /stagefright|Lavf|gstreamer|xm_player|mico|xiaomi|vlc|mediaplayer/i.test(reqUserAgent);
-    const isBrowserClient = /Mozilla|Chrome|Safari|Firefox|Edg|AppleWebKit/i.test(reqUserAgent) && !isHardwareSpeaker;
     const clientIp = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1').replace('::ffff:', '');
     const matchedDev = this.deviceManager.getByIp(clientIp);
     const resolvedDid = matchedDev?.did || '';
     const resolvedModel = matchedDev?.model || 'wifispeaker';
+
+    const reqUserAgent = String(req.headers['user-agent'] || '');
+    // Optimization 2: Device IP Affinity Binding - if IP matches a registered XiaoAi speaker, 100% treat as hardware speaker regardless of UA
+    const isIpMatchedSpeaker = Boolean(matchedDev);
+    const isHardwareSpeaker = isIpMatchedSpeaker || /stagefright|Lavf|gstreamer|xm_player|mico|xiaomi|vlc|mediaplayer/i.test(reqUserAgent);
+    const isBrowserClient = !isHardwareSpeaker && /Mozilla|Chrome|Safari|Firefox|Edg|AppleWebKit/i.test(reqUserAgent);
 
     const mimeTypes: Record<string, string> = {
       '.wav': 'audio/wav',
@@ -229,8 +232,93 @@ export class StreamServer {
       }
     }
 
-    // 6. Full stream transcode if needed (only for actual audio stream delivery)
+    // 6. Live streaming & seek fast-paths for non-MP3 files (TTFB < 50ms)
     if (matchedExt !== '.mp3') {
+      const matchedSong = this.musicEngine.getById(cleanSongId);
+      const durationSec = matchedSong?.duration || 240;
+      const estimatedMp3Size = Math.max(1024 * 1024, Math.round(durationSec * (320 * 1000 / 8)) + 4096);
+
+      // 6a. Live Streaming from beginning (bytes=0- or no range) (TTFB < 50ms)
+      if (this.transcoder.isAvailable() && (!rangeHeader || rangeHeader === 'bytes=0-' || rangeHeader.startsWith('bytes=0-'))) {
+        const liveSession = await this.transcoder.createLiveTranscodeStreamAsync(localFilePath, 0, {
+          sessionId: `stream-${cleanSongId}-${Date.now()}`,
+          songId: cleanSongId,
+          persistCache: true,
+          clientIp,
+          userAgent: reqUserAgent,
+          deviceModel: resolvedModel,
+          timeoutMs: 3000
+        });
+
+        if (liveSession && !liveSession.isPassThrough) {
+          const isRange = Boolean(rangeHeader);
+          res.writeHead(isRange ? 206 : 200, {
+            'Content-Type': 'audio/mpeg',
+            ...(isRange ? { 'Content-Range': `bytes 0-${estimatedMp3Size - 1}/${estimatedMp3Size}` } : {}),
+            'Accept-Ranges': 'bytes',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'Access-Control-Allow-Origin': '*'
+          });
+
+          const onLiveClose = () => {
+            liveSession.notifyClientDisconnected(3000);
+          };
+          res.on('close', onLiveClose);
+          res.on('finish', () => {
+            res.off('close', onLiveClose);
+            liveSession.kill('client stream finished');
+          });
+
+          liveSession.stream.pipe(res);
+          return;
+        }
+      }
+
+      // 6b. Seeking on non-cached non-MP3 audio (Range: bytes=START-) (TTFB < 80ms)
+      if (this.transcoder.isAvailable() && rangeHeader) {
+        const rangeMatch = rangeHeader.match(/bytes=(\d+)-/);
+        if (rangeMatch) {
+          const startByte = parseInt(rangeMatch[1], 10);
+          if (startByte > 2048) {
+            const startSeconds = Math.max(0, Math.floor((startByte - 128) / (320000 / 8)));
+            const seekSession = await this.transcoder.createLiveTranscodeStreamAsync(localFilePath, startSeconds, {
+              sessionId: `seek-${cleanSongId}-${Date.now()}`,
+              songId: cleanSongId,
+              persistCache: false,
+              clientIp,
+              userAgent: reqUserAgent,
+              deviceModel: resolvedModel,
+              timeoutMs: 3000
+            });
+
+            if (seekSession && !seekSession.isPassThrough) {
+              res.writeHead(206, {
+                'Content-Range': `bytes ${startByte}-${estimatedMp3Size - 1}/${estimatedMp3Size}`,
+                'Accept-Ranges': 'bytes',
+                'Content-Type': 'audio/mpeg',
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive',
+                'Access-Control-Allow-Origin': '*'
+              });
+
+              const onSeekClose = () => {
+                seekSession.notifyClientDisconnected(3000);
+              };
+              res.on('close', onSeekClose);
+              res.on('finish', () => {
+                res.off('close', onSeekClose);
+                seekSession.kill('client seek finished');
+              });
+
+              seekSession.stream.pipe(res);
+              return;
+            }
+          }
+        }
+      }
+
+      // Fallback: full transcode
       const transcodeResult = await this.transcoder.ensureStandardMp3Async(localFilePath, cleanSongId, {
         deviceModel: resolvedModel,
         userAgent: reqUserAgent,

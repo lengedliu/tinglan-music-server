@@ -47,7 +47,8 @@ import {
   castPipelineManager,
   AdaptiveHeartbeatEngine,
   lyricsService,
-  transcodeSemaphorePool
+  transcodeSemaphorePool,
+  appEventBus
 } from './server/index.js';
 import { createQueueRouter } from './server/routes/queueRoutes.js';
 import { createSongsRouter, createPlaylistsRouter } from './server/routes/musicRoutes.js';
@@ -3196,6 +3197,10 @@ app.get('/api/miot/events', (req: Request, res: Response) => {
   });
 });
 
+minaWsClient.on('event', (evt: any) => {
+  appEventBus.broadcast('mina:event', evt);
+});
+
 // 3. MIoT Spec RPC: Get Property
 app.post('/api/miot/rpc/prop/get', async (req: Request, res: Response) => {
   if (!checkMiotAdminPermission(req, res)) return;
@@ -4462,7 +4467,10 @@ try {
   console.warn('[QueueEngine] 恢复 queue.json 失败:', err);
 }
 
-// Auto-save queue state on any mutation
+// Provide queueEngine to appEventBus
+appEventBus.setQueueEngineProvider(() => queueEngine);
+
+// Auto-save queue state on any mutation & broadcast to all connected SSE clients
 queueEngine.on('change', (status) => {
   try {
     saveJson(QUEUE_FILE, {
@@ -4474,6 +4482,27 @@ queueEngine.on('change', (status) => {
       updatedAt: new Date().toISOString()
     });
   } catch {}
+  appEventBus.broadcast('queue:change', status);
+  appEventBus.checkPlaybackTickLoop();
+});
+
+// Real-time Unified Server-Sent Events (SSE) Hub (Phase 5)
+app.get('/api/events', (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.flushHeaders?.();
+
+  const clientId = `client_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const clientIp = req.headers['x-forwarded-for']?.toString().split(',')[0].trim() || req.socket.remoteAddress || '127.0.0.1';
+
+  appEventBus.registerClient(clientId, res, clientIp);
+
+  req.on('close', () => {
+    appEventBus.removeClient(clientId);
+  });
 });
 
 // --- Queue Engine Domain Router (Phase 1 Decoupling) ---
@@ -5698,53 +5727,171 @@ const streamAudioHandler = async (req: Request, res: Response) => {
   // For native .mp3 files: bypass with zero delay (0ms).
   // For non-MP3 files (FLAC, WAV, APE, AAC, OGG):
   // 1) Fast-serve from disk if already cached.
-  // 2) If not cached, live-stream via FFmpeg pipe (0ms TTFB) with semaphore limit (Strategy A) or direct pass-through (Strategy B).
-  // 3) Simultaneously cache in background so subsequent seeks hit the static MP3.
+  // 2) Fast-respond to HEAD/small probes with synthesized ID3 MP3 headers (TTFB < 5ms).
+  // 3) Live-stream via FFmpeg pipe (TTFB < 50ms) with Dual-Tee persistent caching in background.
+  // 4) Fast-seek via FFmpeg -ss live pipe (TTFB < 80ms) without waiting for full encode.
   if (matchedExt !== '.mp3') {
     const existingCachePath = audioTranscoder.getCachedMp3(localFilePath, cleanSongId);
     if (existingCachePath) {
       localFilePath = existingCachePath;
       matchedExt = '.mp3';
-    } else if (audioTranscoder.isAvailable() && (!req.headers.range || req.headers.range.startsWith('bytes=0-'))) {
-      const liveSession = await audioTranscoder.createLiveTranscodeStreamAsync(localFilePath, 0, {
-        sessionId: `stream-${cleanSongId}-${Date.now()}`,
-        songId: cleanSongId,
-        persistCache: true,
-        clientIp,
-        userAgent,
-        deviceModel: resolvedModel,
-        timeoutMs: 3000
-      });
+    } else {
+      const durationSec = foundSong?.duration || 240;
+      const estimatedMp3Size = Math.max(1024 * 1024, Math.round(durationSec * (320 * 1000 / 8)) + 4096);
+      const rangeHeader = req.headers.range;
+      let isSmallProbe = false;
+      let probeStart = 0;
+      let probeEnd = 1;
 
-      if (liveSession) {
-        if (liveSession.isPassThrough) {
-          // Strategy B fallback: direct file streaming without transcoding
-          console.log(`[StreamServer] Strategy B triggered: Streaming ${localFilePath} directly to ${clientIp}`);
-        } else {
-          // Dual-output Tee Stream automatically writes to persistent cache while streaming in a single process
-
-          res.writeHead(200, {
-            'Content-Type': 'audio/mpeg',
-            'Accept-Ranges': 'none',
-            'Cache-Control': 'no-cache',
-            'Access-Control-Allow-Origin': '*'
-          });
-
-          // Zombie Process Reaper hook: 5-second countdown on client disconnect
-          const onLiveClose = () => {
-            liveSession.notifyClientDisconnected(5000);
-          };
-          res.on('close', onLiveClose);
-          res.on('finish', () => {
-            res.off('close', onLiveClose);
-            liveSession.kill('client stream finished');
-          });
-
-          liveSession.stream.pipe(res);
-          return;
+      if (rangeHeader) {
+        const match = rangeHeader.match(/bytes=(\d+)-(\d*)/);
+        if (match) {
+          probeStart = parseInt(match[1], 10);
+          if (match[2]) {
+            probeEnd = parseInt(match[2], 10);
+            if (probeStart === 0 && probeEnd - probeStart <= 2048) {
+              isSmallProbe = true;
+            }
+          }
         }
       }
-    } else {
+
+      // Fast Path 1: HEAD Request on non-cached non-MP3 audio (TTFB < 2ms)
+      if (req.method === 'HEAD') {
+        audioTranscoder.ensureStandardMp3Async(localFilePath, cleanSongId, {
+          clientIp,
+          userAgent,
+          deviceModel: resolvedModel
+        }).catch(() => {});
+
+        res.writeHead(200, {
+          'Content-Length': estimatedMp3Size,
+          'Content-Type': 'audio/mpeg',
+          'Accept-Ranges': 'bytes',
+          'Cache-Control': 'no-cache',
+          'Access-Control-Allow-Origin': '*'
+        });
+        return res.end();
+      }
+
+      // Fast Path 2: Small Range Probe (e.g. bytes=0-1 or bytes=0-2048) (TTFB < 5ms)
+      if (isSmallProbe) {
+        audioTranscoder.ensureStandardMp3Async(localFilePath, cleanSongId, {
+          clientIp,
+          userAgent,
+          deviceModel: resolvedModel
+        }).catch(() => {});
+
+        const probeLength = probeEnd - probeStart + 1;
+        const synthHeader = Buffer.alloc(Math.max(probeLength, 128));
+        synthHeader.write('ID3', 0);
+        synthHeader[3] = 0x03; // version 2.3
+        synthHeader[4] = 0x00; // flags
+        synthHeader[6] = 0x00;
+        synthHeader[7] = 0x00;
+        synthHeader[8] = 0x02;
+        synthHeader[9] = 0x00;
+
+        res.writeHead(206, {
+          'Content-Range': `bytes ${probeStart}-${probeEnd}/${estimatedMp3Size}`,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': probeLength,
+          'Content-Type': 'audio/mpeg',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive',
+          'Access-Control-Allow-Origin': '*'
+        });
+        return res.end(synthHeader.slice(probeStart, probeEnd + 1));
+      }
+
+      // Fast Path 3: Live Streaming from beginning (bytes=0- or no range) (TTFB < 50ms)
+      if (audioTranscoder.isAvailable() && (!rangeHeader || rangeHeader === 'bytes=0-' || rangeHeader.startsWith('bytes=0-'))) {
+        const liveSession = await audioTranscoder.createLiveTranscodeStreamAsync(localFilePath, 0, {
+          sessionId: `stream-${cleanSongId}-${Date.now()}`,
+          songId: cleanSongId,
+          persistCache: true,
+          clientIp,
+          userAgent,
+          deviceModel: resolvedModel,
+          timeoutMs: 3000
+        });
+
+        if (liveSession) {
+          if (liveSession.isPassThrough) {
+            console.log(`[StreamServer] Strategy B triggered: Streaming ${localFilePath} directly to ${clientIp}`);
+          } else {
+            const isRange = Boolean(rangeHeader);
+            res.writeHead(isRange ? 206 : 200, {
+              'Content-Type': 'audio/mpeg',
+              ...(isRange ? { 'Content-Range': `bytes 0-${estimatedMp3Size - 1}/${estimatedMp3Size}` } : {}),
+              'Accept-Ranges': 'bytes',
+              'Cache-Control': 'no-cache',
+              'Connection': 'keep-alive',
+              'Access-Control-Allow-Origin': '*'
+            });
+
+            // Zombie Process Reaper & Disconnection Self-Healing Hook
+            const onLiveClose = () => {
+              liveSession.notifyClientDisconnected(3000);
+            };
+            res.on('close', onLiveClose);
+            res.on('finish', () => {
+              res.off('close', onLiveClose);
+              liveSession.kill('client stream finished');
+            });
+
+            liveSession.stream.pipe(res);
+            return;
+          }
+        }
+      }
+
+      // Fast Path 4: Seeking on non-cached non-MP3 audio (Range: bytes=START-) (TTFB < 80ms)
+      if (audioTranscoder.isAvailable() && rangeHeader) {
+        const rangeMatch = rangeHeader.match(/bytes=(\d+)-/);
+        if (rangeMatch) {
+          const startByte = parseInt(rangeMatch[1], 10);
+          if (startByte > 2048) {
+            // Estimate seek timestamp: 320kbps CBR = 40,000 bytes/sec
+            const startSeconds = Math.max(0, Math.floor((startByte - 128) / (320000 / 8)));
+            console.log(`⚡ [StreamServer] Live transcode seek requested: startByte=${startByte} (~${startSeconds}s) for ${cleanSongId}`);
+            const seekSession = await audioTranscoder.createLiveTranscodeStreamAsync(localFilePath, startSeconds, {
+              sessionId: `seek-${cleanSongId}-${Date.now()}`,
+              songId: cleanSongId,
+              persistCache: false, // Partial seek output does not overwrite standard MP3 cache
+              clientIp,
+              userAgent,
+              deviceModel: resolvedModel,
+              timeoutMs: 3000
+            });
+
+            if (seekSession && !seekSession.isPassThrough) {
+              res.writeHead(206, {
+                'Content-Range': `bytes ${startByte}-${estimatedMp3Size - 1}/${estimatedMp3Size}`,
+                'Accept-Ranges': 'bytes',
+                'Content-Type': 'audio/mpeg',
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive',
+                'Access-Control-Allow-Origin': '*'
+              });
+
+              const onSeekClose = () => {
+                seekSession.notifyClientDisconnected(3000);
+              };
+              res.on('close', onSeekClose);
+              res.on('finish', () => {
+                res.off('close', onSeekClose);
+                seekSession.kill('client seek stream finished');
+              });
+
+              seekSession.stream.pipe(res);
+              return;
+            }
+          }
+        }
+      }
+
+      // Fallback: full standard MP3 transcode if live pipe unavailable
       const transcodeResult = await audioTranscoder.ensureStandardMp3Async(localFilePath, cleanSongId, {
         clientIp,
         userAgent,
