@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { JsonStore } from '../storage/jsonStore.js';
 
 export interface XiaomiDevice {
   did: string;
@@ -43,8 +44,7 @@ export class DeviceManager {
   private loadDevices() {
     try {
       if (fs.existsSync(this.devicesFile)) {
-        const raw = fs.readFileSync(this.devicesFile, 'utf-8');
-        this.devices = JSON.parse(raw) as XiaomiDevice[];
+        this.devices = JsonStore.readJson<XiaomiDevice[]>(this.devicesFile, []);
         this.enrichHardwareProfiles();
       } else {
         this.devices = [
@@ -95,11 +95,7 @@ export class DeviceManager {
   }
 
   public saveDevices() {
-    try {
-      fs.writeFileSync(this.devicesFile, JSON.stringify(this.devices, null, 2), 'utf-8');
-    } catch (err) {
-      console.error('[DeviceManager] Failed to save devices.json:', err);
-    }
+    JsonStore.saveJson(this.devicesFile, this.devices);
   }
 
   public getAll(): XiaomiDevice[] {

@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { parseBuffer } from 'music-metadata';
 import { FfmpegTranscoder } from '../streaming/ffmpegTranscoder.js';
+import { JsonStore } from '../storage/jsonStore.js';
 
 export interface Song {
   id: string;
@@ -52,23 +53,11 @@ export class MusicEngine {
   }
 
   private loadSongs() {
-    try {
-      if (fs.existsSync(this.songsFile)) {
-        const raw = fs.readFileSync(this.songsFile, 'utf-8');
-        this.songs = JSON.parse(raw) as Song[];
-      }
-    } catch (err) {
-      console.warn('[MusicEngine] Could not load songs.json, using empty catalog:', err);
-      this.songs = [];
-    }
+    this.songs = JsonStore.readJson<Song[]>(this.songsFile, []);
   }
 
   public saveSongs() {
-    try {
-      fs.writeFileSync(this.songsFile, JSON.stringify(this.songs, null, 2), 'utf-8');
-    } catch (err) {
-      console.error('[MusicEngine] Failed to save songs.json:', err);
-    }
+    JsonStore.saveJson(this.songsFile, this.songs);
   }
 
   public getAll(): Song[] {

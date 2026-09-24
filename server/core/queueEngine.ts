@@ -603,9 +603,10 @@ export class QueueEngine extends EventEmitter {
     this.clearTimer();
     if (!this.isPlaying) return;
 
-    // Add 2.0s buffer for stream latency & speaker decoder flush
-    const delayMs = Math.max(4000, (durationSeconds + 2.0) * 1000);
-    console.log(`[QueueEngine] ⏱️ 已设置精准自动切歌计时器: ${Math.round(delayMs / 1000)}秒后推进下一首 (当前歌曲:《${this.queue[this.currentIndex]?.title}》)`);
+    // Smart Ring Buffer Tail Flush: XiaoAi hardware buffers ~128KB-256KB (~2.5-3.5s of audio)
+    // Adding 2.5s tail grace buffer completely eliminates end-of-track clipping/swallowing
+    const delayMs = Math.max(4500, (durationSeconds + 2.5) * 1000);
+    console.log(`[QueueEngine] ⏱️ 已设置精准自动切歌计时器: ${Math.round(delayMs / 1000)}秒后推进下一首 (当前歌曲:《${this.queue[this.currentIndex]?.title}》, 含2.5s音箱硬件Buffer排空缓冲)`);
 
     this.autoAdvanceTimer = setTimeout(async () => {
       if (this.isPlaying && this.queue.length > 0 && !this.isTransitioning) {
@@ -624,7 +625,7 @@ export class QueueEngine extends EventEmitter {
     this.heartbeatTimer = setInterval(() => {
       if (!this.isPlaying || this.queue.length === 0 || this.songStartTime <= 0 || this.isTransitioning) return;
       const elapsed = Math.floor((Date.now() - this.songStartTime) / 1000);
-      const threshold = (this.currentDuration || 180) + 3;
+      const threshold = (this.currentDuration || 180) + 4; // 4.0s safe threshold to let speaker flush full buffer
 
       if (elapsed >= threshold) {
         console.log(`[QueueEngine] 🛡️ 守护心跳触发：当前曲目《${this.queue[this.currentIndex]?.title}》播放时间已达 ${elapsed}s (总长 ${this.currentDuration}s)，执行强制切播下一首！`);

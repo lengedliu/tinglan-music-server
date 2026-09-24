@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { Song, Playlist, XiaomiDevice, SongSortOption, LibrarySourceFilter } from '../types';
 import { useTheme } from '../context/ThemeContext';
+import { VirtualList } from './VirtualList';
 import { SongRow } from './library/SongRow';
 import { PlaylistTabs } from './library/PlaylistTabs';
 import { LibraryToolbar } from './library/LibraryToolbar';
