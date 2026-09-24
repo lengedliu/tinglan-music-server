@@ -7,6 +7,7 @@ import { MinaCloudCastStrategy } from './minaCloudStrategy.js';
 import { MiotCloudCastStrategy } from './miotCloudStrategy.js';
 import { MiioLanCastStrategy } from './miioLanStrategy.js';
 import { VoiceDirectiveCastStrategy } from './voiceDirectiveStrategy.js';
+import { JsonStore } from '../../storage/jsonStore.js';
 
 export interface DeviceStrategyProfile {
   deviceId: string;
@@ -30,7 +31,7 @@ export class CastPipelineManager {
   private profilesFile: string;
   private deviceProfiles: Map<string, DeviceStrategyProfile> = new Map();
 
-  constructor() {
+  constructor(dataDir?: string) {
     this.strategies = [
       new DlnaCastStrategy(),
       new MinaCloudCastStrategy(),
@@ -39,45 +40,44 @@ export class CastPipelineManager {
       new VoiceDirectiveCastStrategy()
     ].sort((a, b) => b.priority - a.priority);
 
-    this.profilesFile = path.join(process.cwd(), 'data', 'device_strategy_cache.json');
+    const baseDir = dataDir || process.env.DATA_DIR || path.join(process.cwd(), 'data');
+    this.profilesFile = path.join(baseDir, 'device_strategy_cache.json');
+    this.loadProfiles();
+  }
+
+  public setDataDir(dataDir: string) {
+    this.profilesFile = path.join(dataDir, 'device_strategy_cache.json');
     this.loadProfiles();
   }
 
   private loadProfiles() {
     try {
-      if (fs.existsSync(this.profilesFile)) {
-        const raw = fs.readFileSync(this.profilesFile, 'utf-8');
-        const list = JSON.parse(raw);
-        if (Array.isArray(list)) {
-          for (const item of list) {
-            if (item.deviceId) {
-              this.deviceProfiles.set(item.deviceId, {
-                totalCalls: item.totalCalls || 0,
-                successCount: item.successCount || (item.lastSuccessTime ? 1 : 0),
-                failCount: item.failCount || item.failStreak || 0,
-                healthScore: item.healthScore ?? 100,
-                ...item
-              });
-            }
+      const list = JsonStore.readJson<DeviceStrategyProfile[]>(this.profilesFile, []);
+      if (Array.isArray(list)) {
+        for (const item of list) {
+          if (item && item.deviceId) {
+            this.deviceProfiles.set(item.deviceId, {
+              totalCalls: item.totalCalls || 0,
+              successCount: item.successCount || (item.lastSuccessTime ? 1 : 0),
+              failCount: item.failCount || item.failStreak || 0,
+              healthScore: item.healthScore ?? 100,
+              ...item
+            });
           }
-          console.log(`[CastPipelineManager] Loaded ${this.deviceProfiles.size} device strategy profiles.`);
         }
+        console.log(`[CastPipelineManager] 📊 已成功从持久化快照装载 ${this.deviceProfiles.size} 个音箱投播自愈策略画像.`);
       }
-    } catch (err) {
-      console.warn('[CastPipelineManager] Could not parse device_strategy_cache.json:', err);
+    } catch (err: any) {
+      console.warn('[CastPipelineManager] Could not load device_strategy_cache:', err?.message);
     }
   }
 
   private persistProfiles() {
     try {
-      const dataDir = path.dirname(this.profilesFile);
-      if (!fs.existsSync(dataDir)) {
-        fs.mkdirSync(dataDir, { recursive: true });
-      }
       const arr = Array.from(this.deviceProfiles.values());
-      fs.writeFileSync(this.profilesFile, JSON.stringify(arr, null, 2), 'utf-8');
-    } catch (err) {
-      console.warn('[CastPipelineManager] Failed to persist device strategy cache:', err);
+      JsonStore.saveJson(this.profilesFile, arr);
+    } catch (err: any) {
+      console.warn('[CastPipelineManager] Failed to persist device strategy cache:', err?.message);
     }
   }
 

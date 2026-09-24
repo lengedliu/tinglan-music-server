@@ -55,6 +55,9 @@ import { createSongsRouter, createPlaylistsRouter } from './server/routes/musicR
 import { createAuthRouter, createSecurityRouter } from './server/routes/authRoutes.js';
 import { createDbRouter } from './server/routes/dbRoutes.js';
 import { createNavidromeRouter } from './server/routes/navidromeRoutes.js';
+import { createSubsonicRouter } from './server/routes/subsonicRoutes.js';
+import { createStreamRouter } from './server/routes/streamRoutes.js';
+import { createSystemRouter } from './server/routes/systemRoutes.js';
 
 const dynamicRequire = typeof require !== 'undefined'
   ? require
@@ -70,6 +73,7 @@ try {
 const app = express();
 // Port 3000 is the hardcoded entry port required for AI Studio ingress routing
 const PORT = 3000;
+const SERVER_START_TIME = Date.now();
 const API_KEY = process.env.API_KEY || '';
 
 app.use(express.json({ limit: '100mb' }));
@@ -152,7 +156,7 @@ for (const dir of [DATA_DIR, MUSIC_DIR, TRANSCODE_CACHE_DIR]) {
 
 // ---------------- 6-MODULE ARCHITECTURE CORE INSTANCES ----------------
 // 1. ffmpeg-transcoder: Audio Transcode Engine
-export const ffmpegTranscoder = new FfmpegTranscoder(TRANSCODE_CACHE_DIR);
+export const ffmpegTranscoder = new FfmpegTranscoder(TRANSCODE_CACHE_DIR, undefined, DATA_DIR);
 
 // 2. music-engine: Songs Metadata & Repository Engine
 export const musicEngine = new MusicEngine(MUSIC_DIR, DATA_DIR, ffmpegTranscoder);
@@ -6212,6 +6216,37 @@ app.post('/api/transcode/cache/clear', (req: Request, res: Response) => {
   });
 });
 
+// Cache quota limit & manual prune API
+app.post('/api/transcode/cache/quota', (req: Request, res: Response) => {
+  const { maxQuotaMb } = req.body || {};
+  const quotaMb = parseInt(maxQuotaMb, 10);
+  if (isNaN(quotaMb) || quotaMb < 100 || quotaMb > 50000) {
+    return res.status(400).json({
+      success: false,
+      message: '缓存配额必须为 100MB 至 50000MB (50GB) 之间的有效数值'
+    });
+  }
+  const maxBytes = quotaMb * 1024 * 1024;
+  audioTranscoder.quotaManager.setMaxQuotaBytes(maxBytes);
+  res.json({
+    success: true,
+    stats: audioTranscoder.quotaManager.getStats(),
+    message: `已将转码缓存上限成功更新为 ${quotaMb} MB (超过时自动淘汰至 80%)`
+  });
+});
+
+app.post('/api/transcode/cache/prune', (req: Request, res: Response) => {
+  const result = audioTranscoder.quotaManager.enforceQuota();
+  res.json({
+    success: true,
+    ...result,
+    stats: audioTranscoder.quotaManager.getStats(),
+    message: result.evictedCount > 0
+      ? `已执行智能 LRU 淘汰：清理 ${result.evictedCount} 首低频/超期音频，释放 ${result.freedMb}`
+      : '当前缓存占用健康，未超过配额上限，无需淘汰'
+  });
+});
+
 // ReplayGain & Loudness Normalization Settings API (Phase 2)
 app.get('/api/transcode/replaygain', (req: Request, res: Response) => {
   res.json({
@@ -6308,265 +6343,23 @@ app.post('/api/system/cast-profiles/reset', (req: Request, res: Response) => {
   }
 });
 
-// ---------------- SUBSONIC & OPENSUBSONIC REST API STANDARD ----------------
-const subsonicError = (req: Request, res: Response, code: number, message: string) => {
-  const format = String(req.query.f || 'json').toLowerCase();
-  const payload = {
-    "subsonic-response": {
-      status: "failed",
-      version: "1.16.1",
-      type: "TingLan-Music-Server",
-      serverVersion: "2.5.0",
-      openSubsonic: true,
-      error: { code, message }
-    }
-  };
-
-  if (format === 'xml') {
-    res.setHeader('Content-Type', 'text/xml');
-    return res.status(200).send(`<?xml version="1.0" encoding="UTF-8"?><subsonic-response status="failed" version="1.16.1"><error code="${code}" message="${message}"/></subsonic-response>`);
-  }
-
-  res.setHeader('Content-Type', 'application/json');
-  return res.status(200).json(payload);
-};
-
-const verifySubsonicAuth = (req: Request, res: Response): boolean => {
-  const u = String(req.query.u || '').trim();
-  const p = String(req.query.p || '').trim();
-  const t = String(req.query.t || '').trim();
-  const s = String(req.query.s || '').trim();
-
-  // If local loopback and no auth query provided, allow for internal probing
-  const clientIp = getClientIp(req);
-  const isLoopback = clientIp === '127.0.0.1' || clientIp === '::1' || clientIp === 'localhost';
-
-  storedUsers = loadJson(USERS_FILE, storedUsers);
-  if (!storedUsers || storedUsers.length === 0) {
-    return true; // No users initialized yet
-  }
-
-  if (!u) {
-    if (isLoopback) return true;
-    subsonicError(req, res, 10, "Required parameter is missing: u");
-    return false;
-  }
-
-  const user = storedUsers.find(userEntry => userEntry.username.toLowerCase() === u.toLowerCase());
-  if (!user) {
-    subsonicError(req, res, 40, "Wrong username or password");
-    return false;
-  }
-
-  if (user.status === 'disabled') {
-    subsonicError(req, res, 50, "User is not authorized");
-    return false;
-  }
-
-  // 1. Plaintext or hex-encoded password
-  if (p) {
-    let plainPass = p;
-    if (p.startsWith('enc:')) {
-      try {
-        plainPass = Buffer.from(p.slice(4), 'hex').toString('utf8');
-      } catch {}
-    }
-    try {
-      if (bcrypt.compareSync(plainPass, user.passwordHash)) {
-        return true;
-      }
-    } catch {}
-  }
-
-  // 2. MD5 token + salt authentication
-  if (t && s) {
-    // If client supplied user token
-    if (user.id === t || user.username === t) return true;
-    // Test against default admin credential if matching
-    const adminMd5 = crypto.createHash('md5').update('admin123' + s).digest('hex');
-    if (t.toLowerCase() === adminMd5.toLowerCase() && user.username === 'admin') {
-      return true;
-    }
-  }
-
-  subsonicError(req, res, 40, "Wrong username or password");
-  return false;
-};
-
-const subsonicResponse = (req: Request, res: Response, dataKey: string, dataValue: any) => {
-  const format = String(req.query.f || 'json').toLowerCase();
-  const payload = {
-    "subsonic-response": {
-      status: "ok",
-      version: "1.16.1",
-      type: "TingLan-Music-Server",
-      serverVersion: "2.5.0",
-      openSubsonic: true,
-      [dataKey]: dataValue
-    }
-  };
-
-  if (format === 'xml') {
-    res.setHeader('Content-Type', 'text/xml');
-    return res.send(`<?xml version="1.0" encoding="UTF-8"?><subsonic-response status="ok" version="1.16.1"><${dataKey}>${JSON.stringify(dataValue)}</${dataKey}></subsonic-response>`);
-  }
-
-  res.setHeader('Content-Type', 'application/json');
-  res.json(payload);
-};
-
-// Subsonic Ping
-const subsonicPing = (req: Request, res: Response) => {
-  if (!verifySubsonicAuth(req, res)) return;
-  subsonicResponse(req, res, "ping", {});
-};
-
-// Subsonic License
-const subsonicLicense = (req: Request, res: Response) => {
-  if (!verifySubsonicAuth(req, res)) return;
-  subsonicResponse(req, res, "license", { valid: true, email: "admin@tinglan.local" });
-};
-
-// Subsonic Music Folders
-const subsonicMusicFolders = (req: Request, res: Response) => {
-  if (!verifySubsonicAuth(req, res)) return;
-  subsonicResponse(req, res, "musicFolders", {
-    musicFolder: [{ id: 1, name: "听蓝音乐 HQ 音乐库" }]
-  });
-};
-
-// Subsonic Songs & Indexes
-const subsonicIndexes = (req: Request, res: Response) => {
-  if (!verifySubsonicAuth(req, res)) return;
-  const artistMap: Record<string, any[]> = {};
-  storedSongs.forEach(song => {
-    const letter = (song.artist[0] || 'A').toUpperCase();
-    if (!artistMap[letter]) artistMap[letter] = [];
-    artistMap[letter].push({
-      id: song.id,
-      name: song.artist,
-      coverArt: song.coverUrl,
-      albumCount: 1,
-      star: song.isFavorite
-    });
-  });
-
-  const indexList = Object.keys(artistMap).sort().map(letter => ({
-    name: letter,
-    artist: artistMap[letter]
-  }));
-
-  subsonicResponse(req, res, "indexes", {
-    lastModified: Date.now(),
-    index: indexList
-  });
-};
-
-// Subsonic Search 3
-const subsonicSearch = (req: Request, res: Response) => {
-  if (!verifySubsonicAuth(req, res)) return;
-  const query = String(req.query.query || '').toLowerCase();
-  const matched = storedSongs.filter(s => 
-    s.title.toLowerCase().includes(query) || 
-    s.artist.toLowerCase().includes(query) || 
-    s.album.toLowerCase().includes(query)
-  );
-
-  const songResults = matched.map(s => ({
-    id: s.id,
-    parent: "1",
-    isDir: false,
-    title: s.title,
-    artist: s.artist,
-    album: s.album,
-    duration: s.duration,
-    bitRate: 320,
-    track: 1,
-    year: s.year || 2024,
-    genre: s.genre || "Pop",
-    coverArt: s.coverUrl,
-    size: 15000000,
-    contentType: "audio/mpeg",
-    suffix: "mp3",
-    path: `${s.artist}/${s.album}/${s.title}.mp3`
-  }));
-
-  subsonicResponse(req, res, "searchResult3", { song: songResults });
-};
-
-// Subsonic Get Playlists
-const subsonicPlaylists = (req: Request, res: Response) => {
-  if (!verifySubsonicAuth(req, res)) return;
-  const list = storedPlaylists.map(p => ({
-    id: p.id,
-    name: p.name,
-    comment: p.description || "听蓝音乐自定义歌单",
-    songCount: p.songIds.length,
-    duration: p.songIds.length * 210,
-    created: p.createdAt,
-    coverArt: p.coverUrl || ""
-  }));
-
-  subsonicResponse(req, res, "playlists", { playlist: list });
-};
-
-// Subsonic Get Lyrics (Open-Source Multi-source Support)
-const subsonicGetLyrics = async (req: Request, res: Response) => {
-  if (!verifySubsonicAuth(req, res)) return;
-  const { artist, title } = req.query;
-  const song = storedSongs.find(s => 
-    (artist && s.artist.toLowerCase().includes(String(artist).toLowerCase())) ||
-    (title && s.title.toLowerCase().includes(String(title).toLowerCase()))
-  );
-
-  let lyricsVal = song?.lyrics || '';
-
-  if (!lyricsVal || lyricsVal.trim().length < 20 || lyricsVal.includes('听蓝高保真音乐库')) {
-    try {
-      const matchRes = await lyricsService.searchLyricsAsync({
-        title: String(title || song?.title || ''),
-        artist: String(artist || song?.artist || ''),
-        duration: song?.duration,
-        existingLyrics: song?.lyrics
-      });
-      if (matchRes.lyrics) {
-        lyricsVal = matchRes.lyrics;
-        if (song && matchRes.source !== 'generated') {
-          song.lyrics = matchRes.lyrics;
-          saveJson(SONGS_FILE, storedSongs);
-        }
-      }
-    } catch (e: any) {
-      console.warn('[Subsonic] getLyrics search failed:', e.message);
-    }
-  }
-
-  subsonicResponse(req, res, "lyrics", {
-    artist: song?.artist || String(artist || "未知歌手"),
-    title: song?.title || String(title || "未知曲目"),
-    value: lyricsVal || "[00:00.00]听蓝音乐 - 高保真音频播放中\n[00:05.00]享受无损音质"
-  });
-};
-
-// Subsonic Stream Redirect / Proxy
-const subsonicStream = (req: Request, res: Response) => {
-  if (!verifySubsonicAuth(req, res)) return;
-  const id = String(req.query.id || req.params.songId || '');
-  req.params.songId = id;
-  return streamAudioHandler(req, res);
-};
-
-// Mount Subsonic Endpoints under /rest/* and /api/subsonic/*
-app.all('/rest/ping*', subsonicPing);
-app.all('/rest/getLicense*', subsonicLicense);
-app.all('/rest/getMusicFolders*', subsonicMusicFolders);
-app.all('/rest/getIndexes*', subsonicIndexes);
-app.all('/rest/getArtists*', subsonicIndexes);
-app.all('/rest/search3*', subsonicSearch);
-app.all('/rest/getPlaylists*', subsonicPlaylists);
-app.all('/rest/getLyrics*', subsonicGetLyrics);
-app.all('/rest/stream*', subsonicStream);
-
+// ---------------- SUBSONIC DOMAIN ROUTER ----------------
+const subsonicRouter = createSubsonicRouter({
+  getStoredSongs: () => storedSongs,
+  getStoredPlaylists: () => storedPlaylists,
+  getStoredUsers: () => {
+    storedUsers = loadJson(USERS_FILE, storedUsers);
+    return storedUsers;
+  },
+  saveStoredSongs: (songs) => {
+    storedSongs = songs;
+    saveJson(SONGS_FILE, storedSongs);
+  },
+  streamHandler: streamAudioHandler,
+  lyricsService,
+  getClientIp
+});
+app.use('/rest', subsonicRouter);
 app.get('/api/subsonic/info', (req: Request, res: Response) => {
   res.json({
     status: "ok",
@@ -6585,44 +6378,21 @@ app.get('/api/subsonic/info', (req: Request, res: Response) => {
   });
 });
 
-// ---------------- ONLINE LYRICS SEARCH & AUTO-MATCH API ----------------
-app.post('/api/lyrics/search', async (req: Request, res: Response) => {
-  try {
-    const { title, artist, songId, duration, forceOnline } = req.body;
-    let song = songId ? storedSongs.find(s => s.id === songId) : null;
-
-    const cleanTitle = String(title || song?.title || '').trim();
-    const cleanArtist = String(artist || song?.artist || '').trim();
-    const songDuration = duration || song?.duration;
-
-    const searchResult = await lyricsService.searchLyricsAsync({
-      title: cleanTitle,
-      artist: cleanArtist,
-      duration: songDuration,
-      forceOnline: Boolean(forceOnline),
-      existingLyrics: song?.lyrics
-    });
-
-    // If a valid lyric was retrieved and we have a songId, update the stored song
-    if (song && searchResult.lyrics && searchResult.source !== 'generated') {
-      song.lyrics = searchResult.lyrics;
-      saveJson(SONGS_FILE, storedSongs);
-    }
-
-    return res.json({
-      success: true,
-      lyrics: searchResult.lyrics,
-      source: searchResult.source,
-      providerName: searchResult.providerName,
-      isSynced: searchResult.isSynced,
-      title: searchResult.title || cleanTitle,
-      artist: searchResult.artist || cleanArtist
-    });
-  } catch (err: any) {
-    console.error('[API /api/lyrics/search] Error:', err);
-    return res.status(500).json({ success: false, message: '检索歌词时发生错误', error: err.message });
-  }
+// ---------------- SYSTEM & HEALTH & AI ROUTER ----------------
+const systemRouter = createSystemRouter({
+  musicDir: MUSIC_DIR,
+  dataDir: DATA_DIR,
+  serverStartTime: SERVER_START_TIME,
+  getStoredSongs: () => storedSongs,
+  saveStoredSongs: (songs) => {
+    storedSongs = songs;
+    saveJson(SONGS_FILE, storedSongs);
+  },
+  lyricsService,
+  queueEngine,
+  xiaomiDevices: () => xiaomiDevices
 });
+app.use('/api', systemRouter);
 
 // ---------------- NAVIDROME / SUBSONIC REMOTE SERVER INTEGRATION (Phase 1 Decoupling) ----------------
 app.use("/api/navidrome", createNavidromeRouter({
@@ -6645,37 +6415,6 @@ app.use("/api/navidrome", createNavidromeRouter({
     saveJson(PLAYLISTS_FILE, storedPlaylists);
   }
 }));
-
-// AI Music Insight & Recommendation (server-side Gemini)
-app.post('/api/ai/music-insight', async (req: Request, res: Response) => {
-  try {
-    const { title, artist, genre } = req.body;
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return res.json({
-        success: true,
-        insight: `《${title || '曲目'}》是一首经典的${genre || '音乐'}作品。如需获取专属 AI 鉴赏与风格解析，请在环境变量或系统设置中配置 GEMINI_API_KEY。`
-      });
-    }
-
-    const ai = new GoogleGenAI({ apiKey });
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: `为歌曲《${title || '未命名'}》${artist ? `（艺术家：${artist}）` : ''}${genre ? `（流派：${genre}）` : ''}写一段简短优美（80字以内）的鉴赏语与情绪共鸣分析。`,
-    });
-
-    return res.json({
-      success: true,
-      insight: response.text || '暂无解析'
-    });
-  } catch (err: any) {
-    return res.json({
-      success: false,
-      insight: 'AI 乐评生成暂不可用',
-      error: err.message
-    });
-  }
-});
 
 // Start server with Vite middleware in development or static in production
 async function startServer() {

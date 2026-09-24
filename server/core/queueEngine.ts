@@ -1,5 +1,7 @@
 import { EventEmitter } from 'events';
+import path from 'path';
 import { Song } from './musicEngine.js';
+import { JsonStore } from '../storage/jsonStore.js';
 
 export type QueueLoopMode = 'all' | 'one' | 'shuffle';
 
@@ -16,6 +18,19 @@ export interface QueueStatus {
   elapsedSeconds: number;
   remainingSeconds: number;
   totalSongs: number;
+}
+
+export interface PersistedQueueSnapshot {
+  queue: Song[];
+  currentIndex: number;
+  loopMode: QueueLoopMode;
+  targetDid: string;
+  targetDeviceName: string;
+  isPlaying: boolean;
+  songStartTime: number;
+  currentDuration: number;
+  currentSongStarted: boolean;
+  savedAt: number;
 }
 
 export type CastDispatcherFn = (song: Song, targetDid: string, seekSeconds?: number) => Promise<{ success: boolean; message?: string; error?: string }>;
@@ -40,9 +55,95 @@ export class QueueEngine extends EventEmitter {
   private isTransitioning: boolean = false;
   private preheatHandler: ((song: Song, targetDid: string, isDeep?: boolean) => void) | null = null;
   private deepPreheatDoneForIndex: number = -1;
+  private stateFilePath: string;
 
-  constructor() {
+  constructor(dataDir?: string) {
     super();
+    const resolvedDataDir = dataDir || process.env.DATA_DIR || path.join(process.cwd(), 'data');
+    this.stateFilePath = path.join(resolvedDataDir, 'queue_snapshot.json');
+    this.loadPersistedState();
+  }
+
+  public setDataDir(dataDir: string) {
+    this.stateFilePath = path.join(dataDir, 'queue_snapshot.json');
+    this.loadPersistedState();
+  }
+
+  /**
+   * Persist current runtime snapshot atomically to KV storage
+   */
+  public saveSnapshot() {
+    try {
+      const snapshot: PersistedQueueSnapshot = {
+        queue: this.queue,
+        currentIndex: this.currentIndex,
+        loopMode: this.loopMode,
+        targetDid: this.targetDid,
+        targetDeviceName: this.targetDeviceName,
+        isPlaying: this.isPlaying,
+        songStartTime: this.songStartTime,
+        currentDuration: this.currentDuration,
+        currentSongStarted: this.currentSongStarted,
+        savedAt: Date.now()
+      };
+      JsonStore.saveJson(this.stateFilePath, snapshot);
+    } catch (err: any) {
+      console.warn('[QueueEngine] Failed to save queue snapshot:', err?.message);
+    }
+  }
+
+  /**
+   * Load and seamlessly resume state from persisted KV snapshot
+   */
+  public loadPersistedState() {
+    try {
+      const saved = JsonStore.readJson<PersistedQueueSnapshot | null>(this.stateFilePath, null);
+      if (!saved || !Array.isArray(saved.queue) || saved.queue.length === 0) {
+        return;
+      }
+
+      this.queue = saved.queue;
+      this.currentIndex = Math.max(0, Math.min(saved.currentIndex || 0, this.queue.length - 1));
+      this.loopMode = saved.loopMode || 'all';
+      this.targetDid = saved.targetDid || '';
+      this.targetDeviceName = saved.targetDeviceName || '';
+
+      const now = Date.now();
+      const duration = saved.currentDuration || 180;
+      this.currentDuration = duration;
+
+      if (saved.isPlaying && saved.songStartTime > 0) {
+        const elapsed = Math.floor((now - saved.songStartTime) / 1000);
+        if (elapsed < duration && elapsed >= 0) {
+          // Song is still actively playing on speaker during hot restart!
+          const remaining = duration - elapsed;
+          this.isPlaying = true;
+          this.currentSongStarted = true;
+          this.songStartTime = saved.songStartTime;
+          console.log(`[QueueEngine] 🔄 成功从快照无缝恢复热重启前播放态: 第 ${this.currentIndex + 1}/${this.queue.length} 首《${this.queue[this.currentIndex]?.title}》, 已播 ${elapsed}s, 剩余 ${remaining}s`);
+          this.scheduleAutoAdvance(remaining);
+          this.startHeartbeat();
+        } else {
+          // Track finished while server was restarting: keep position ready
+          this.isPlaying = false;
+          this.currentSongStarted = false;
+          this.songStartTime = 0;
+          console.log(`[QueueEngine] 📂 已加载持久化播放队列快照: 共 ${this.queue.length} 首, 停留在第 ${this.currentIndex + 1} 首《${this.queue[this.currentIndex]?.title}》`);
+        }
+      } else {
+        this.isPlaying = false;
+        this.currentSongStarted = false;
+      }
+    } catch (err: any) {
+      console.warn('[QueueEngine] Failed to restore queue snapshot:', err?.message);
+    }
+  }
+
+  public override emit(event: string | symbol, ...args: any[]): boolean {
+    if (event === 'change') {
+      this.saveSnapshot();
+    }
+    return super.emit(event, ...args);
   }
 
   public setCastDispatcher(dispatcher: CastDispatcherFn) {

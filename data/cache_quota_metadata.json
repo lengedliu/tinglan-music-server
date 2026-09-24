@@ -1,0 +1,12 @@
+{
+  "song-1_standard.mp3": {
+    "songId": "song-1",
+    "fileName": "song-1_standard.mp3",
+    "filePath": "/app/applet/data/transcode_cache/song-1_standard.mp3",
+    "sizeBytes": 1202721,
+    "format": ".mp3",
+    "createdAt": 1790249681729.595,
+    "lastAccessedAt": 1790251375626.524,
+    "accessCount": 1
+  }
+}

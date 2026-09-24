@@ -4,6 +4,7 @@ import { spawn, execFile, ChildProcessWithoutNullStreams } from 'child_process';
 import { promisify } from 'util';
 import { Readable, PassThrough } from 'stream';
 import { transcodeSemaphorePool, TranscodeSemaphorePool, TranscodePoolStats } from './transcodeSemaphore.js';
+import { CacheQuotaManager, CacheManagerStats } from './cacheQuotaManager.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -43,10 +44,12 @@ export class FfmpegTranscoder {
   private cacheDir: string;
   private inFlightTranscodes: Map<string, Promise<TranscodeResult>> = new Map();
   public semaphore: TranscodeSemaphorePool;
+  public quotaManager: CacheQuotaManager;
 
-  constructor(cacheDir: string, customSemaphore?: TranscodeSemaphorePool) {
+  constructor(cacheDir: string, customSemaphore?: TranscodeSemaphorePool, dataDir?: string) {
     this.cacheDir = cacheDir;
     this.semaphore = customSemaphore || transcodeSemaphorePool;
+    this.quotaManager = new CacheQuotaManager(this.cacheDir, dataDir);
 
     if (!fs.existsSync(this.cacheDir)) {
       try {
@@ -56,11 +59,8 @@ export class FfmpegTranscoder {
       }
     }
 
-    // Optimization 1: Boot-time orphan .part file sweeper & periodic LRU maintenance
+    // Optimization 1: Boot-time orphan .part file sweeper
     this.cleanOrphanPartFiles();
-    setInterval(() => {
-      this.pruneCacheIfNeeded(800 * 1024 * 1024, 600 * 1024 * 1024);
-    }, 15 * 60 * 1000); // Check every 15 minutes
 
     // Asynchronously probe FFmpeg binary without blocking the event loop
     this.ffmpegAvailable = true; // Default optimistic on Linux systems with /usr/bin/ffmpeg
@@ -99,6 +99,8 @@ export class FfmpegTranscoder {
         const cacheStat = fs.statSync(cachedMp3Path);
         const sourceStat = fs.statSync(sourcePath);
         if (cacheStat.size > 1024 && cacheStat.mtimeMs >= sourceStat.mtimeMs) {
+          // Touch cache for LRU/LFU frequency tracking
+          this.quotaManager.touchCache(path.basename(cachedMp3Path), cachedMp3Path, sourcePath);
           return cachedMp3Path;
         }
       }
@@ -324,7 +326,11 @@ export class FfmpegTranscoder {
             try {
               if (code === 0 && fs.existsSync(tmpCachePath!) && fs.statSync(tmpCachePath!).size > 1024) {
                 fs.renameSync(tmpCachePath!, targetCachePath!);
-                console.log(`✨ [FfmpegTranscoder] Tee Stream dual-output completed: Standard MP3 cached to ${path.basename(targetCachePath!)} (Single FFmpeg run)`);
+                const finalSize = fs.statSync(targetCachePath!).size;
+                const fileName = path.basename(targetCachePath!);
+                const cleanId = (options.songId || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+                this.quotaManager.registerNewCache(fileName, cleanId, finalSize, sourcePath);
+                console.log(`✨ [FfmpegTranscoder] Tee Stream dual-output completed: Standard MP3 cached to ${fileName} (Single FFmpeg run)`);
               } else if (tmpCachePath && fs.existsSync(tmpCachePath)) {
                 fs.unlinkSync(tmpCachePath);
               }
@@ -549,7 +555,9 @@ export class FfmpegTranscoder {
             await execFileAsync('ffmpeg', args, { timeout: 45000 });
             if (fs.existsSync(partPath) && fs.statSync(partPath).size > 1024) {
               await fs.promises.rename(partPath, cachedMp3Path);
-              this.pruneCacheIfNeeded();
+              const finalSize = fs.statSync(cachedMp3Path).size;
+              const fileName = path.basename(cachedMp3Path);
+              this.quotaManager.registerNewCache(fileName, songId, finalSize, sourcePath);
               return {
                 success: true,
                 filePath: cachedMp3Path,
@@ -698,105 +706,34 @@ export class FfmpegTranscoder {
   }
 
   /**
-   * Returns cache stats (total files, bytes, readable MB)
+   * Returns cache stats (total files, bytes, readable MB, quota details)
    */
-  public getCacheStats(): CacheStats {
-    try {
-      if (!fs.existsSync(this.cacheDir)) {
-        return { count: 0, totalSizeBytes: 0, totalSizeMb: '0.0 MB' };
-      }
-      const files = fs.readdirSync(this.cacheDir);
-      let totalBytes = 0;
-      let count = 0;
-      for (const file of files) {
-        const filePath = path.join(this.cacheDir, file);
-        try {
-          const stat = fs.statSync(filePath);
-          if (stat.isFile()) {
-            totalBytes += stat.size;
-            count++;
-          }
-        } catch {}
-      }
-      return {
-        count,
-        totalSizeBytes: totalBytes,
-        totalSizeMb: `${(totalBytes / (1024 * 1024)).toFixed(1)} MB`
-      };
-    } catch {
-      return { count: 0, totalSizeBytes: 0, totalSizeMb: '0.0 MB' };
-    }
+  public getCacheStats(): CacheStats & { quota?: CacheManagerStats } {
+    const quotaStats = this.quotaManager.getStats();
+    return {
+      count: quotaStats.count,
+      totalSizeBytes: quotaStats.totalSizeBytes,
+      totalSizeMb: quotaStats.totalSizeMb,
+      quota: quotaStats
+    };
   }
 
   /**
    * Clears all transcode cache files
    */
   public clearCache(): { clearedCount: number; freedMb: string } {
-    let count = 0;
-    let bytes = 0;
-    try {
-      if (fs.existsSync(this.cacheDir)) {
-        const files = fs.readdirSync(this.cacheDir);
-        for (const file of files) {
-          const filePath = path.join(this.cacheDir, file);
-          try {
-            const stat = fs.statSync(filePath);
-            bytes += stat.size;
-            fs.unlinkSync(filePath);
-            count++;
-          } catch {}
-        }
-      }
-    } catch (err) {
-      console.error('[FfmpegTranscoder] Error clearing cache:', err);
-    }
+    const result = this.quotaManager.clearAll();
     return {
-      clearedCount: count,
-      freedMb: `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+      clearedCount: result.clearedCount,
+      freedMb: result.freedMb
     };
   }
 
   /**
    * Automatically enforces a maximum storage limit on the transcode cache using LRU eviction.
-   * Default capacity: 500 MB (prunes down to ~400 MB).
    */
-  public pruneCacheIfNeeded(maxBytes: number = 500 * 1024 * 1024, targetBytes: number = 400 * 1024 * 1024): void {
-    try {
-      if (!fs.existsSync(this.cacheDir)) return;
-      const fileNames = fs.readdirSync(this.cacheDir);
-      const fileEntries: Array<{ filePath: string; size: number; mtimeMs: number }> = [];
-      let totalBytes = 0;
-
-      for (const name of fileNames) {
-        const fullPath = path.join(this.cacheDir, name);
-        try {
-          const stat = fs.statSync(fullPath);
-          if (stat.isFile()) {
-            fileEntries.push({ filePath: fullPath, size: stat.size, mtimeMs: stat.mtimeMs });
-            totalBytes += stat.size;
-          }
-        } catch {}
-      }
-
-      if (totalBytes <= maxBytes) return;
-
-      console.log(`[FfmpegTranscoder] 🧹 Transcode cache (${(totalBytes / (1024 * 1024)).toFixed(1)} MB) exceeds limit (${(maxBytes / (1024 * 1024)).toFixed(0)} MB), triggering LRU pruning...`);
-
-      // Sort ascending by modification time (oldest first)
-      fileEntries.sort((a, b) => a.mtimeMs - b.mtimeMs);
-
-      for (const entry of fileEntries) {
-        try {
-          fs.unlinkSync(entry.filePath);
-          totalBytes -= entry.size;
-          if (totalBytes <= targetBytes) break;
-        } catch {}
-      }
-
-      console.log(`[FfmpegTranscoder] ✅ Cache pruned to ${(totalBytes / (1024 * 1024)).toFixed(1)} MB.`);
-    } catch (err: any) {
-      console.warn('[FfmpegTranscoder] Error pruning cache:', err.message);
-    }
+  public pruneCacheIfNeeded(maxBytes?: number, targetBytes?: number): void {
+    this.quotaManager.enforceQuota(maxBytes, targetBytes);
   }
 
   /**

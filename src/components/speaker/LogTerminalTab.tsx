@@ -14,7 +14,10 @@ import {
   Zap,
   Activity,
   Trash2,
-  RefreshCw
+  RefreshCw,
+  HardDrive,
+  Sparkles,
+  Sliders
 } from 'lucide-react';
 import { CastLog, XiaomiDevice } from '../../types';
 import { useTheme } from '../../context/ThemeContext';
@@ -61,9 +64,28 @@ export const LogTerminalTab: React.FC<LogTerminalTabProps> = ({
     cache?: {
       count: number;
       totalSizeMb: string;
+      quota?: {
+        count: number;
+        totalSizeBytes: number;
+        totalSizeMb: string;
+        quotaBytes: number;
+        quotaMb: string;
+        usageRatio: number;
+        pruneTargetMb: string;
+        maxTtlDays: number;
+        evictionCountTotal: number;
+        topFiles?: Array<{
+          fileName: string;
+          sizeMb: string;
+          accessCount: number;
+          lastAccessedStr: string;
+        }>;
+      };
     };
   } | null>(null);
   const [isUpdatingConcurrency, setIsUpdatingConcurrency] = useState(false);
+  const [isPruning, setIsPruning] = useState(false);
+  const [cacheActionMessage, setCacheActionMessage] = useState<string | null>(null);
 
   const fetchTranscodeStatus = async () => {
     try {
@@ -97,9 +119,45 @@ export const LogTerminalTab: React.FC<LogTerminalTabProps> = ({
     }
   };
 
+  const handleSetQuota = async (quotaMb: number) => {
+    try {
+      const res = await fetch('/api/transcode/cache/quota', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ maxQuotaMb: quotaMb })
+      });
+      const data = await res.json();
+      if (data.message) {
+        setCacheActionMessage(data.message);
+        setTimeout(() => setCacheActionMessage(null), 3000);
+      }
+      await fetchTranscodeStatus();
+    } catch {}
+  };
+
+  const handleTriggerPrune = async () => {
+    setIsPruning(true);
+    try {
+      const res = await fetch('/api/transcode/cache/prune', { method: 'POST' });
+      const data = await res.json();
+      if (data.message) {
+        setCacheActionMessage(data.message);
+        setTimeout(() => setCacheActionMessage(null), 3500);
+      }
+      await fetchTranscodeStatus();
+    } catch {} finally {
+      setIsPruning(false);
+    }
+  };
+
   const handleClearCache = async () => {
     try {
-      await fetch('/api/transcode/cache/clear', { method: 'POST' });
+      const res = await fetch('/api/transcode/cache/clear', { method: 'POST' });
+      const data = await res.json();
+      if (data.message) {
+        setCacheActionMessage(data.message);
+        setTimeout(() => setCacheActionMessage(null), 3000);
+      }
       await fetchTranscodeStatus();
     } catch {}
   };
@@ -259,20 +317,95 @@ export const LogTerminalTab: React.FC<LogTerminalTabProps> = ({
                   <option value={4}>4 (高性能主机)</option>
                   <option value={6}>6 (专用转码机)</option>
                 </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Sub-Panel: Cache Quota & LRU Lifecycle Governance */}
+          {transcodeInfo?.cache && (
+            <div className={`mt-3 pt-3 border-t flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs ${
+              isLight ? 'border-zinc-200' : 'border-white/10'
+            }`}>
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="flex items-center gap-1.5 font-bold">
+                  <HardDrive className="w-3.5 h-3.5 text-blue-400" />
+                  <span>转码缓存配额治理:</span>
+                </div>
+                <span className="font-mono font-bold text-blue-400">
+                  {transcodeInfo.cache.totalSizeMb}
+                </span>
+                <span className="text-zinc-500">/</span>
+                <span className="font-mono text-zinc-400">
+                  {transcodeInfo.cache.quota?.quotaMb || '2048 MB'}
+                </span>
+                <span className="text-zinc-500 font-mono text-[11px]">
+                  ({transcodeInfo.cache.count} 首音频)
+                </span>
+                {transcodeInfo.cache.quota && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                    TTL {transcodeInfo.cache.quota.maxTtlDays}天过期 · 水位线 {transcodeInfo.cache.quota.pruneTargetMb}
+                  </span>
+                )}
+                {transcodeInfo.cache.quota?.evictionCountTotal ? (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    已累计淘汰 {transcodeInfo.cache.quota.evictionCountTotal} 首
+                  </span>
+                ) : null}
+              </div>
+
+              {/* Cache Actions */}
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1">
+                  <span className="text-[11px] text-zinc-500">配额上限:</span>
+                  <select
+                    value={parseInt(transcodeInfo.cache.quota?.quotaMb || '2048', 10)}
+                    onChange={(e) => handleSetQuota(parseInt(e.target.value, 10))}
+                    aria-label="缓存上限配额"
+                    className={`text-xs px-2 py-1 rounded-lg border font-mono font-bold focus:outline-none ${
+                      isLight ? 'bg-white border-zinc-200 text-zinc-900' : 'bg-zinc-800 border-white/10 text-blue-400'
+                    }`}
+                  >
+                    <option value={512}>512 MB (轻量)</option>
+                    <option value={1024}>1024 MB (1 GB)</option>
+                    <option value={2048}>2048 MB (2 GB 推荐)</option>
+                    <option value={4096}>4096 MB (4 GB)</option>
+                    <option value={8192}>8192 MB (8 GB 大曲库)</option>
+                  </select>
+                </div>
+
+                <button
+                  type="button"
+                  disabled={isPruning}
+                  onClick={handleTriggerPrune}
+                  title="立即触发智能 LRU 检查并清理超期/超额临时文件"
+                  className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-xs font-medium transition cursor-pointer ${
+                    isLight ? 'bg-white border-zinc-200 hover:bg-orange-50 text-orange-600' : 'bg-zinc-800 border-white/10 hover:bg-orange-500/10 text-orange-400'
+                  }`}
+                >
+                  <Sparkles className={`w-3 h-3 ${isPruning ? 'animate-spin' : ''}`} />
+                  <span>LRU淘汰</span>
+                </button>
 
                 <button
                   type="button"
                   onClick={handleClearCache}
-                  title="清空已转码的标准 MP3 缓存"
-                  className={`p-1.5 rounded-lg border text-xs text-zinc-400 hover:text-rose-400 transition ml-1 cursor-pointer ${
-                    isLight ? 'bg-white border-zinc-200 hover:bg-zinc-100' : 'bg-zinc-800 border-white/10 hover:bg-zinc-700'
+                  title="清空所有转码缓存文件"
+                  className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-xs font-medium transition cursor-pointer ${
+                    isLight ? 'bg-white border-zinc-200 hover:bg-rose-50 text-rose-600' : 'bg-zinc-800 border-white/10 hover:bg-rose-500/10 text-rose-400'
                   }`}
                 >
-                  <RefreshCw className="w-3.5 h-3.5" />
+                  <Trash2 className="w-3 h-3" />
+                  <span>清空</span>
                 </button>
               </div>
             </div>
-          </div>
+          )}
+
+          {cacheActionMessage && (
+            <div className="mt-2.5 px-3 py-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-medium animate-in fade-in">
+              {cacheActionMessage}
+            </div>
+          )}
         </div>
       )}
 
