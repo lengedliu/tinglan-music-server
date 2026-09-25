@@ -8,6 +8,7 @@ interface AuthModalProps {
   onLoginSuccess: (user: UserType, token: string) => void;
   isSecurityRequired?: boolean;
   allowRegistration?: boolean;
+  isDefaultAdminPassword?: boolean;
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({ 
@@ -15,12 +16,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   onClose, 
   onLoginSuccess,
   isSecurityRequired = false,
-  allowRegistration = true
+  allowRegistration = true,
+  isDefaultAdminPassword = false
 }) => {
   const [isRegister, setIsRegister] = useState(false);
-  const [username, setUsername] = useState('admin');
+  const [username, setUsername] = useState(isDefaultAdminPassword ? 'admin' : '');
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('admin123');
+  const [password, setPassword] = useState(isDefaultAdminPassword ? 'admin123' : '');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -34,12 +36,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       if (!allowRegistration && isRegister) {
         setIsRegister(false);
       }
-      if (!isRegister && !username) {
-        setUsername('admin');
-        setPassword('admin123');
+      if (!isRegister) {
+        if (isDefaultAdminPassword) {
+          if (!username) setUsername('admin');
+          if (!password) setPassword('admin123');
+        } else {
+          // If custom password, do not pre-fill with obsolete default credentials
+          if (password === 'admin123') setPassword('');
+        }
       }
     }
-  }, [isOpen, isRegister, allowRegistration]);
+  }, [isOpen, isRegister, allowRegistration, isDefaultAdminPassword]);
 
   if (!isOpen) return null;
 
@@ -196,7 +203,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <input
                 type="text"
                 required
-                placeholder={isRegister ? '自定义用户名 (如: admin)' : '输入用户名 (默认: admin) 或邮箱'}
+                placeholder={isRegister ? '自定义用户名 (如: admin)' : (isDefaultAdminPassword ? '输入用户名 (默认: admin) 或邮箱' : '输入用户名或邮箱')}
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 className="w-full pl-10 pr-4 py-3 bg-[#09090b] border-2 border-zinc-600 focus:border-[#FF6700] rounded-xl text-sm font-medium text-white placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-[#FF6700]/30 transition"
@@ -232,7 +239,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <input
                 type="password"
                 required
-                placeholder={isRegister ? '设置 6 位以上安全密码' : '输入密码 (默认: admin123)'}
+                placeholder={isRegister ? '设置 6 位以上安全密码' : (isDefaultAdminPassword ? '输入密码 (默认: admin123)' : '输入密码')}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full pl-10 pr-4 py-3 bg-[#09090b] border-2 border-zinc-600 focus:border-[#FF6700] rounded-xl text-sm font-medium text-white placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-[#FF6700]/30 transition"
@@ -272,8 +279,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </button>
         </form>
 
-        {/* Quick Admin Login Preset */}
-        {!isRegister && (
+        {/* Quick Admin Login Preset - Only show when default password is still active */}
+        {!isRegister && isDefaultAdminPassword && (
           <div className="pt-2 border-t border-zinc-700/80 space-y-2">
             <button
               type="button"

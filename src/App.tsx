@@ -19,6 +19,7 @@ import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
 import { VinylPlayerModal } from './components/VinylPlayerModal';
 import { MultiRoomCastModal } from './components/MultiRoomCastModal';
 import { TrackInspectorModal } from './components/TrackInspectorModal';
+import { ForceChangePasswordModal } from './components/ForceChangePasswordModal';
 import { useTheme } from './context/ThemeContext';
 import { usePlaybackTimeActions } from './context/PlaybackTimeContext';
 import { useAppEvents } from './context/AppEventsContext';
@@ -43,6 +44,8 @@ export default function App() {
   });
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [securityStatus, setSecurityStatus] = useState<SecurityStatus | null>(null);
+  const [isForcePasswordModalOpen, setIsForcePasswordModalOpen] = useState(false);
+  const [dismissedDefaultPasswordAlert, setDismissedDefaultPasswordAlert] = useState(false);
 
   // Navigation: 音乐曲库, 歌词播放, 智能音箱, Subsonic API, 设置, 赞助
   const [activeTab, setActiveTab] = useState<'library' | 'lyrics' | 'xiaomi' | 'subsonic' | 'settings' | 'sponsor'>(() => {
@@ -530,6 +533,20 @@ export default function App() {
     loadAllAppData();
     checkSecurityStatus();
   };
+
+  // Compute whether the default admin password (admin123) is currently active
+  const isUsingDefaultAdminPassword = Boolean(
+    user?.isDefaultPassword || 
+    (user?.role === 'admin' && securityStatus?.isDefaultAdminPassword) ||
+    (!user && securityStatus?.isDefaultAdminPassword && !securityStatus?.authRequired)
+  );
+
+  // Automatically pop up the ForceChangePasswordModal when default admin password is detected
+  useEffect(() => {
+    if (isUsingDefaultAdminPassword && !dismissedDefaultPasswordAlert) {
+      setIsForcePasswordModalOpen(true);
+    }
+  }, [isUsingDefaultAdminPassword, dismissedDefaultPasswordAlert]);
 
   const handleLogout = () => {
     setUser(null);
@@ -2120,6 +2137,29 @@ export default function App() {
           }}
         />
 
+        {/* Top Warning Ribbon for Default Admin Password */}
+        {isUsingDefaultAdminPassword && (
+          <div className="bg-gradient-to-r from-amber-600 via-rose-600 to-amber-600 text-white text-xs px-4 py-2 flex items-center justify-between shadow-md relative z-50 animate-fade-in">
+            <div className="max-w-7xl mx-auto w-full flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                <span className="p-1 rounded bg-black/20 text-amber-200 flex-shrink-0 animate-pulse">⚠️</span>
+                <span className="font-semibold truncate">
+                  首次部署安全强提醒：当前管理员账号 (admin) 仍在使用默认弱密码 admin123，极易遭遇公网爆破。
+                </span>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setIsForcePasswordModalOpen(true)}
+                  className="px-3 py-1 rounded-lg bg-white text-zinc-900 font-bold hover:bg-amber-100 transition shadow-sm cursor-pointer"
+                >
+                  立即修改密码
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Header Navigation */}
         <Navbar
           activeTab={activeTab}
@@ -2513,12 +2553,32 @@ export default function App() {
         onLoginSuccess={handleLoginSuccess}
         isSecurityRequired={isMandatoryAuth}
         allowRegistration={securityStatus?.allowRegistration !== false}
+        isDefaultAdminPassword={securityStatus?.isDefaultAdminPassword ?? false}
       />
 
       {/* Quick Theme Selector Modal */}
       <ThemeSelectorModal
         isOpen={isThemeModalOpen}
         onClose={() => setIsThemeModalOpen(false)}
+      />
+
+      {/* Force Change Admin Default Password Modal (P0 Security) */}
+      <ForceChangePasswordModal
+        isOpen={isForcePasswordModalOpen}
+        onClose={() => {
+          setIsForcePasswordModalOpen(false);
+          setDismissedDefaultPasswordAlert(true);
+        }}
+        onPasswordChanged={() => {
+          checkSecurityStatus();
+          if (user) {
+            setUser(prev => prev ? ({ ...prev, isDefaultPassword: false }) : null);
+          }
+          setSecurityStatus(prev => prev ? ({ ...prev, isDefaultAdminPassword: false }) : null);
+          setDismissedDefaultPasswordAlert(true);
+          showToast('管理员密码已成功更新！', '系统安全加固完成，初始弱口令已清除', 'success');
+        }}
+        username={user?.username || 'admin'}
       />
 
     </div>

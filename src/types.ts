@@ -163,6 +163,7 @@ export interface User {
   role: 'admin' | 'user';
   avatarUrl?: string;
   status?: 'active' | 'disabled';
+  isDefaultPassword?: boolean;
   createdAt: string;
   lastLoginAt?: string;
 }
@@ -227,6 +228,7 @@ export interface SecurityStatus {
   clientIp: string;
   isLan: boolean;
   hasDefaultAdmin?: boolean;
+  isDefaultAdminPassword?: boolean;
   userCount?: number;
 }
 

@@ -43,6 +43,14 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
     const authRequired = isAuthRequiredForRequest(req);
     const allowRegistration = typeof securitySettings.allowRegistration === 'boolean' ? securitySettings.allowRegistration : true;
 
+    const adminUser = storedUsers.find(u => u.username === 'admin');
+    let isDefaultAdminPassword = false;
+    if (adminUser && adminUser.passwordHash) {
+      try {
+        isDefaultAdminPassword = bcrypt.compareSync('admin123', adminUser.passwordHash);
+      } catch {}
+    }
+
     res.json({
       success: true,
       authRequired,
@@ -54,7 +62,8 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
       allowUserMiotTts: Boolean(securitySettings.allowUserMiotTts),
       clientIp,
       isLan,
-      hasDefaultAdmin: storedUsers.some(u => u.username === 'admin'),
+      hasDefaultAdmin: Boolean(adminUser),
+      isDefaultAdminPassword,
       userCount: storedUsers.length,
       status: {
         success: true,
@@ -67,7 +76,8 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
         allowUserMiotTts: Boolean(securitySettings.allowUserMiotTts),
         clientIp,
         isLan,
-        hasDefaultAdmin: storedUsers.some(u => u.username === 'admin'),
+        hasDefaultAdmin: Boolean(adminUser),
+        isDefaultAdminPassword,
         userCount: storedUsers.length
       },
       settings: {
@@ -250,6 +260,13 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
       user.lastLoginAt = new Date().toISOString();
       setStoredUsers(storedUsers);
 
+      let isDefaultPassword = false;
+      if (user.username === 'admin' && user.passwordHash) {
+        try {
+          isDefaultPassword = bcrypt.compareSync('admin123', user.passwordHash);
+        } catch {}
+      }
+
       const token = jwt.sign(
         { userId: user.id, username: user.username, role: user.role },
         jwtSecret,
@@ -260,7 +277,8 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
       return res.json({
         success: true,
         message: '登录成功！',
-        user: userWithoutPassword,
+        user: { ...userWithoutPassword, isDefaultPassword },
+        isDefaultPassword,
         token
       });
     } catch (err: any) {
@@ -283,8 +301,14 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
       if (!user) {
         return res.status(404).json({ success: false, user: null });
       }
+      let isDefaultPassword = false;
+      if (user.username === 'admin' && user.passwordHash) {
+        try {
+          isDefaultPassword = bcrypt.compareSync('admin123', user.passwordHash);
+        } catch {}
+      }
       const { passwordHash: _, ...userWithoutPassword } = user;
-      return res.json({ success: true, user: userWithoutPassword });
+      return res.json({ success: true, user: { ...userWithoutPassword, isDefaultPassword } });
     } catch (e) {
       return res.status(401).json({ success: false, user: null });
     }
@@ -569,6 +593,14 @@ export function createSecurityRouter(options: Pick<AuthRouterOptions, 'getSecuri
     const isAuthRequired = isAuthRequiredForRequest(req);
     const allowRegistration = typeof securitySettings.allowRegistration === 'boolean' ? securitySettings.allowRegistration : true;
 
+    const adminUser = storedUsers.find(u => u.username === 'admin');
+    let isDefaultAdminPassword = false;
+    if (adminUser && adminUser.passwordHash) {
+      try {
+        isDefaultAdminPassword = bcrypt.compareSync('admin123', adminUser.passwordHash);
+      } catch {}
+    }
+
     res.json({
       success: true,
       authRequired: isAuthRequired,
@@ -580,6 +612,9 @@ export function createSecurityRouter(options: Pick<AuthRouterOptions, 'getSecuri
       allowUserMiotTts: Boolean(securitySettings.allowUserMiotTts),
       clientIp,
       isLan,
+      isDefaultAdminPassword,
+      hasDefaultAdmin: Boolean(adminUser),
+      userCount: storedUsers.length,
       settings: {
         ...securitySettings,
         allowRegistration
@@ -595,16 +630,15 @@ export function createSecurityRouter(options: Pick<AuthRouterOptions, 'getSecuri
         allowUserMiotTts: Boolean(securitySettings.allowUserMiotTts),
         clientIp,
         isLan,
-        hasDefaultAdmin: storedUsers.some(u => u.username === 'admin'),
+        isDefaultAdminPassword,
+        hasDefaultAdmin: Boolean(adminUser),
         userCount: storedUsers.length
       },
       clientInfo: {
         ip: clientIp,
         isLan,
         isAuthRequired
-      },
-      hasDefaultAdmin: storedUsers.some(u => u.username === 'admin'),
-      userCount: storedUsers.length
+      }
     });
   });
 
