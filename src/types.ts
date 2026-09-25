@@ -415,6 +415,109 @@ export interface QueueStatus {
   probe?: HardwareProbeStatus;
 }
 
+// ---------------- P0: 服务端离线定时休眠与叫醒任务 ----------------
+export interface ScheduledTask {
+  id: string;
+  userId?: string;
+  title: string;
+  type: 'sleep_timer' | 'alarm' | 'routine';
+  cronExpr?: string;
+  targetTime?: string;
+  targetDid: string;
+  targetDeviceName?: string;
+  playlistId?: string;
+  songId?: string;
+  action: 'pause' | 'play_song' | 'play_playlist' | 'volume_fade' | 'tts_alarm';
+  volume?: number;
+  fadeDurationSeconds?: number;
+  repeatDays?: number[]; // [0,1,2,3,4,5,6]
+  isEnabled: boolean;
+  lastExecutedAt?: string;
+  nextRunAt?: string;
+  ttsText?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ---------------- P1: 多房间音箱编组与全屋广播分区 ----------------
+export interface SpeakerGroup {
+  id: string;
+  name: string;
+  description?: string;
+  masterDid?: string;
+  memberDids: string[];
+  masterVolume: number;
+  volumeOffsets: Record<string, number>;
+  icon?: string;
+  isDefault?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ---------------- P2: 智能歌单动态规则与设备个性化 ----------------
+export interface SmartPlaylistCondition {
+  field: 'genre' | 'artist' | 'rating' | 'playCount' | 'year' | 'title' | 'duration';
+  operator: 'equals' | 'contains' | 'greaterThan' | 'lessThan' | 'in';
+  value: any;
+}
+
+export interface SmartPlaylistRule {
+  id: string;
+  playlistId: string;
+  ruleName: string;
+  conditions: SmartPlaylistCondition[];
+  matchType: 'all' | 'any';
+  sortBy: 'recently_added' | 'rating' | 'play_count' | 'title' | 'artist' | 'random';
+  limitCount: number;
+  autoRefresh: boolean;
+  lastComputedAt?: string;
+  updatedAt: string;
+}
+
+export interface DeviceCustomization {
+  deviceDid: string;
+  customName?: string;
+  roomName?: string;
+  icon?: string;
+  hotkeyMappings?: Record<string, string>;
+  defaultVolume?: number;
+  maxVolumeLimit?: number;
+  defaultEqPresetId?: string;
+  updatedAt: string;
+}
+
+// ---------------- P3: 音频指纹识别缓存与断点续播 ----------------
+export interface FingerprintCacheItem {
+  songId: string;
+  fingerprintHash?: string;
+  acoustid?: string;
+  musicbrainzId?: string;
+  title?: string;
+  artist?: string;
+  album?: string;
+  coverUrl?: string;
+  genre?: string;
+  year?: number;
+  lyrics?: string;
+  matchedAt: string;
+}
+
+export interface PlaybackCheckpoint {
+  id: string;
+  deviceDid?: string;
+  userId?: string;
+  songId: string;
+  positionSeconds: number;
+  durationSeconds: number;
+  queueContext?: {
+    queueSongIds?: string[];
+    currentIndex?: number;
+    loopMode?: string;
+  };
+  updatedAt: string;
+}
+
+
 
 
 

@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { queueEngine, QueueLoopMode } from '../core/queueEngine.js';
+import { playbackCheckpointRepository } from '../core/repositories/playbackCheckpointRepository.js';
 
 export interface QueueRouterOptions {
   getTargetDevice: (did?: string) => { did: string; name: string } | undefined;
@@ -209,6 +210,40 @@ export function createQueueRouter(options: QueueRouterOptions): Router {
       success: true,
       data: queueEngine.getStatus()
     });
+  });
+
+  // P3: Save playback checkpoint
+  router.post('/checkpoint', (req: Request, res: Response) => {
+    try {
+      const { deviceDid, songId, positionSeconds, durationSeconds, queueContext } = req.body;
+      const clientUser = (req as any).user;
+      if (!songId) {
+        return res.status(400).json({ success: false, error: '缺少歌曲 ID' });
+      }
+      const saved = playbackCheckpointRepository.saveCheckpoint({
+        deviceDid,
+        userId: clientUser?.id,
+        songId,
+        positionSeconds: Number(positionSeconds) || 0,
+        durationSeconds: Number(durationSeconds) || 0,
+        queueContext
+      });
+      res.json({ success: true, checkpoint: saved });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // P3: Get latest playback checkpoint
+  router.get('/checkpoint', (req: Request, res: Response) => {
+    try {
+      const did = req.query.did as string | undefined;
+      const clientUser = (req as any).user;
+      const checkpoint = playbackCheckpointRepository.getCheckpoint(did, clientUser?.id);
+      res.json({ success: true, checkpoint: checkpoint || null });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
   });
 
   return router;

@@ -1,4 +1,4 @@
-import { XiaomiDevice, DeviceManager } from './deviceManager.js';
+import { XiaomiDevice, DeviceManager, deviceManager } from './deviceManager.js';
 import { dlnaEngine } from '../dlnaEngine.js';
 import { miotRpcEngine } from '../miotRpc.js';
 import { minaWsClient } from '../minaWebSocket.js';
@@ -442,3 +442,5 @@ export class XiaomiAdapter {
     };
   }
 }
+
+export const xiaomiAdapter = new XiaomiAdapter(deviceManager);

@@ -140,6 +140,20 @@ export const LyricsView: React.FC<LyricsViewProps> = ({
     );
   }
 
+  const updateAndPersistOffset = (newOffset: number) => {
+    setLyricOffset(newOffset);
+    if (currentSong?.id) {
+      apiFetch(`/api/songs/${encodeURIComponent(currentSong.id)}/lyrics/offset`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          offsetMs: Math.round(newOffset * 1000),
+          rawLrc: localLyrics
+        })
+      }).catch(() => {});
+    }
+  };
+
   return (
     <div className="space-y-4 sm:space-y-6 pb-36 sm:pb-28">
       
@@ -170,22 +184,22 @@ export const LyricsView: React.FC<LyricsViewProps> = ({
               {lyricOffset > 0 ? `+${lyricOffset.toFixed(1)}s` : `${lyricOffset.toFixed(1)}s`}
             </span>
             <button
-              onClick={() => setLyricOffset(prev => prev - 0.5)}
+              onClick={() => updateAndPersistOffset(lyricOffset - 0.5)}
               className="p-1 hover:bg-white/10 rounded text-zinc-400 hover:text-white"
-              title="歌词延后 0.5 秒"
+              title="歌词延后 0.5 秒 (已自动同步云端)"
             >
               <Minus className="w-3 h-3" />
             </button>
             <button
-              onClick={() => setLyricOffset(prev => prev + 0.5)}
+              onClick={() => updateAndPersistOffset(lyricOffset + 0.5)}
               className="p-1 hover:bg-white/10 rounded text-zinc-400 hover:text-white"
-              title="歌词提前 0.5 秒"
+              title="歌词提前 0.5 秒 (已自动同步云端)"
             >
               <Plus className="w-3 h-3" />
             </button>
             {lyricOffset !== 0 && (
               <button
-                onClick={() => setLyricOffset(0)}
+                onClick={() => updateAndPersistOffset(0)}
                 className="p-1 hover:bg-white/10 rounded text-[#FF6700]"
                 title="复位时间差"
               >

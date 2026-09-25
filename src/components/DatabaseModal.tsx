@@ -185,8 +185,49 @@ export const DatabaseModal: React.FC<DatabaseModalProps> = ({ isOpen, onClose, o
                 <p className="text-base font-bold text-white">{dbStatus.totalPlaylists ?? 0} 个</p>
               </div>
               <div className="p-2.5 rounded-xl bg-zinc-900 border border-white/5">
-                <p className="text-[10px] text-zinc-500 uppercase">核心数据表</p>
-                <p className="text-base font-bold text-[#FF6700]">{dbStatus.tablesCount ?? 5} 张</p>
+                <p className="text-[10px] text-zinc-500 uppercase">持久化数据表</p>
+                <p className="text-base font-bold text-[#FF6700]">{dbStatus.tablesCount ?? 14} 张</p>
+              </div>
+            </div>
+
+            {/* P0-P3 Schema Table Grid */}
+            <div className="pt-2 border-t border-white/5">
+              <p className="text-[11px] font-semibold text-zinc-400 mb-2 flex items-center gap-1.5">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                已装载持久化数据表清单 (P0 - P3 分层架构)
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                <div className="p-2 rounded-lg bg-zinc-900/60 border border-white/5 space-y-1">
+                  <div className="flex items-center justify-between font-mono font-medium text-amber-400">
+                    <span>⚡ P0: 离线调度引擎</span>
+                    <span className="text-[10px] text-zinc-500">1 表</span>
+                  </div>
+                  <p className="text-zinc-400 font-mono text-[10px]">• scheduled_tasks (离线休眠/叫醒闹钟/定时计划)</p>
+                </div>
+
+                <div className="p-2 rounded-lg bg-zinc-900/60 border border-white/5 space-y-1">
+                  <div className="flex items-center justify-between font-mono font-medium text-blue-400">
+                    <span>📡 P1: 音箱编组与广播</span>
+                    <span className="text-[10px] text-zinc-500">1 表</span>
+                  </div>
+                  <p className="text-zinc-400 font-mono text-[10px]">• speaker_groups (多房间编组/主音量与偏移)</p>
+                </div>
+
+                <div className="p-2 rounded-lg bg-zinc-900/60 border border-white/5 space-y-1">
+                  <div className="flex items-center justify-between font-mono font-medium text-purple-400">
+                    <span>🎯 P2: 智能规则与定制</span>
+                    <span className="text-[10px] text-zinc-500">2 表</span>
+                  </div>
+                  <p className="text-zinc-400 font-mono text-[10px]">• smart_playlist_rules (流派/评分/过滤条件)<br />• device_customizations (别名/房间/快捷键)</p>
+                </div>
+
+                <div className="p-2 rounded-lg bg-zinc-900/60 border border-white/5 space-y-1">
+                  <div className="flex items-center justify-between font-mono font-medium text-emerald-400">
+                    <span>💾 P3: 指纹刮削与断点</span>
+                    <span className="text-[10px] text-zinc-500">2 表</span>
+                  </div>
+                  <p className="text-zinc-400 font-mono text-[10px]">• audio_fingerprint_cache (AcoustID指纹)<br />• playback_checkpoints (设备跨端断点续播)</p>
+                </div>
               </div>
             </div>
           </div>

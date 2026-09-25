@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   X, 
   Speaker, 
@@ -11,9 +11,13 @@ import {
   RefreshCw, 
   Layers, 
   Sparkles,
-  Sliders
+  Sliders,
+  BookmarkPlus,
+  Trash2,
+  Send,
+  Users
 } from 'lucide-react';
-import { XiaomiDevice, Song } from '../types';
+import { XiaomiDevice, Song, SpeakerGroup } from '../types';
 import { useTheme } from '../context/ThemeContext';
 import { apiFetch } from '../utils/api';
 
@@ -51,6 +55,108 @@ export const MultiRoomCastModal: React.FC<MultiRoomCastModalProps> = ({
   const [isBroadcasting, setIsBroadcasting] = useState(false);
   const [lastResults, setLastResults] = useState<{ did: string; name: string; success: boolean; message: string }[] | null>(null);
 
+  // P1 Speaker Groups
+  const [groups, setGroups] = useState<SpeakerGroup[]>([]);
+  const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
+  const [showSaveGroup, setShowSaveGroup] = useState<boolean>(false);
+  const [newGroupName, setNewGroupName] = useState<string>('');
+  const [ttsBroadcastText, setTtsBroadcastText] = useState<string>('');
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchGroups();
+    }
+  }, [isOpen]);
+
+  const fetchGroups = async () => {
+    try {
+      const res = await apiFetch('/api/groups');
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setGroups(data.groups || []);
+      }
+    } catch (e) {
+      console.warn('Failed to load speaker groups:', e);
+    }
+  };
+
+  const handleApplyGroup = (grp: SpeakerGroup) => {
+    setActiveGroupId(grp.id);
+    setSelectedDids(grp.memberDids);
+    setMasterVolume(grp.masterVolume || 45);
+    if (grp.volumeOffsets) {
+      const newVols: Record<string, number> = {};
+      devices.forEach(d => {
+        const offset = grp.volumeOffsets[d.did] || 0;
+        newVols[d.did] = Math.min(100, Math.max(0, (grp.masterVolume || 45) + offset));
+      });
+      setDeviceVolumes(newVols);
+    }
+    onShowToast('已套用音箱编组', `已加载「${grp.name}」(${grp.memberDids.length} 台设备)`, 'info');
+  };
+
+  const handleSaveCurrentAsGroup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newGroupName.trim() || selectedDids.length === 0) return;
+
+    try {
+      const res = await apiFetch('/api/groups', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newGroupName.trim(),
+          memberDids: selectedDids,
+          masterVolume,
+          volumeOffsets: {},
+          icon: 'Users'
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        onShowToast('编组保存成功', `已持久化「${newGroupName}」到数据库 (P1)`, 'success');
+        setNewGroupName('');
+        setShowSaveGroup(false);
+        fetchGroups();
+      }
+    } catch (e: any) {
+      onShowToast('保存编组失败', e.message, 'error');
+    }
+  };
+
+  const handleDeleteGroup = async (id: string, name: string) => {
+    try {
+      const res = await apiFetch(`/api/groups/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        onShowToast('编组已删除', `已移除「${name}」`, 'info');
+        setGroups(prev => prev.filter(g => g.id !== id));
+        if (activeGroupId === id) setActiveGroupId(null);
+      }
+    } catch (e: any) {
+      onShowToast('删除失败', e.message, 'error');
+    }
+  };
+
+  const handleGroupTtsBroadcast = async () => {
+    if (!ttsBroadcastText.trim() || selectedDids.length === 0) return;
+    try {
+      const res = await apiFetch('/api/miot/group-cast', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dids: selectedDids,
+          action: 'tts',
+          text: ttsBroadcastText.trim()
+        })
+      });
+      if (res.ok) {
+        onShowToast('全屋语音广播已发送', `已向 ${selectedDids.length} 台音箱播报`, 'success');
+        setTtsBroadcastText('');
+      }
+    } catch (e: any) {
+      onShowToast('全屋播报失败', e.message, 'error');
+    }
+  };
+
   if (!isOpen) return null;
 
   const toggleSelectDevice = (did: string) => {
@@ -69,7 +175,6 @@ export const MultiRoomCastModal: React.FC<MultiRoomCastModalProps> = ({
 
   const handleMasterVolumeChange = async (vol: number) => {
     setMasterVolume(vol);
-    // Update local state map
     const updated: Record<string, number> = { ...deviceVolumes };
     selectedDids.forEach(did => {
       updated[did] = vol;
@@ -150,7 +255,7 @@ export const MultiRoomCastModal: React.FC<MultiRoomCastModalProps> = ({
     }
 
     try {
-      const res = await apiFetch('/api/miot/group-cast', {
+      await apiFetch('/api/miot/group-cast', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -158,7 +263,6 @@ export const MultiRoomCastModal: React.FC<MultiRoomCastModalProps> = ({
           action
         })
       });
-      const data = await res.json();
       onShowToast(
         action === 'play' ? '全屋同步恢复' : '全屋同步暂停',
         `已向 ${selectedDids.length} 台设备下发指令`,
@@ -186,10 +290,10 @@ export const MultiRoomCastModal: React.FC<MultiRoomCastModalProps> = ({
             </div>
             <div>
               <h3 className="text-base font-bold flex items-center gap-2">
-                全屋多音箱同播 · Multi-Room Group Cast
+                全屋多音箱编组与广播 · Multi-Room (P1)
               </h3>
               <p className="text-xs text-zinc-500">
-                勾选局域网多台小爱音箱，一键多路并发串流与音量联合调控
+                多房间编组持久化 · 一键多路并发串流 · 主音量协同
               </p>
             </div>
           </div>
@@ -206,6 +310,78 @@ export const MultiRoomCastModal: React.FC<MultiRoomCastModalProps> = ({
 
         {/* Modal Body */}
         <div className="p-6 overflow-y-auto space-y-6 flex-1">
+          {/* Preset Speaker Groups (P1) */}
+          <div className={`p-4 rounded-xl border space-y-3 ${isLight ? 'bg-zinc-50 border-zinc-200' : 'bg-zinc-900/60 border-white/5'}`}>
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-blue-400 flex items-center gap-1.5 uppercase tracking-wider">
+                <Users className="w-4 h-4" />
+                预设音箱编组 (P1)
+              </span>
+              <button
+                onClick={() => setShowSaveGroup(!showSaveGroup)}
+                className="text-xs text-[#FF6700] hover:underline flex items-center gap-1 font-semibold"
+              >
+                <BookmarkPlus className="w-3.5 h-3.5" />
+                保存当前为新编组
+              </button>
+            </div>
+
+            {/* Group Chips */}
+            <div className="flex flex-wrap gap-2">
+              {groups.map(grp => {
+                const isActive = activeGroupId === grp.id;
+                return (
+                  <div
+                    key={grp.id}
+                    className={`flex items-center gap-1.5 py-1 px-2.5 rounded-xl border text-xs transition ${
+                      isActive
+                        ? 'bg-blue-500/20 border-blue-500 text-blue-300 font-bold shadow-sm'
+                        : 'bg-zinc-950/60 border-white/10 text-zinc-300 hover:border-white/20'
+                    }`}
+                  >
+                    <button
+                      onClick={() => handleApplyGroup(grp)}
+                      className="flex items-center gap-1.5 text-left"
+                    >
+                      <Radio className="w-3.5 h-3.5 text-blue-400" />
+                      <span>{grp.name}</span>
+                      <span className="text-[10px] opacity-60">({grp.memberDids.length}台)</span>
+                    </button>
+                    {!grp.isDefault && (
+                      <button
+                        onClick={() => handleDeleteGroup(grp.id, grp.name)}
+                        className="ml-1 text-zinc-500 hover:text-rose-400 p-0.5"
+                        title="删除编组"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Save New Group Form */}
+            {showSaveGroup && (
+              <form onSubmit={handleSaveCurrentAsGroup} className="flex gap-2 pt-2 border-t border-white/5">
+                <input
+                  type="text"
+                  placeholder="输入新编组名称 (例: 客厅+餐厅)..."
+                  value={newGroupName}
+                  onChange={(e) => setNewGroupName(e.target.value)}
+                  className="flex-1 px-3 py-1.5 bg-zinc-950 border border-white/10 rounded-xl text-xs text-white"
+                />
+                <button
+                  type="submit"
+                  disabled={!newGroupName.trim() || selectedDids.length === 0}
+                  className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded-xl text-xs font-bold transition"
+                >
+                  保存
+                </button>
+              </form>
+            )}
+          </div>
+
           {/* Current Broadcast Track Indicator */}
           {currentSong && (
             <div className={`p-3.5 rounded-xl border flex items-center gap-3 ${
@@ -229,7 +405,7 @@ export const MultiRoomCastModal: React.FC<MultiRoomCastModalProps> = ({
             <div className="flex items-center justify-between mb-2">
               <span className="text-xs font-bold text-zinc-300 flex items-center gap-1.5">
                 <Volume2 className="w-4 h-4 text-[#FF6700]" />
-                全屋主音量同步联动
+                编组主音量联动调控
               </span>
               <span className="text-xs font-mono font-bold text-[#FF6700]">{masterVolume}%</span>
             </div>
@@ -246,149 +422,159 @@ export const MultiRoomCastModal: React.FC<MultiRoomCastModalProps> = ({
             </p>
           </div>
 
+          {/* Quick Whole-home TTS Broadcast */}
+          <div className={`p-4 rounded-xl border space-y-2 ${isLight ? 'bg-zinc-50 border-zinc-200' : 'bg-zinc-900/50 border-white/5'}`}>
+            <span className="text-xs font-bold text-purple-400 flex items-center gap-1.5">
+              <Send className="w-3.5 h-3.5" />
+              编组一键全屋 TTS 语音喊话
+            </span>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="输入全屋喊话内容 (例: 开饭啦！)..."
+                value={ttsBroadcastText}
+                onChange={(e) => setTtsBroadcastText(e.target.value)}
+                className="flex-1 px-3 py-1.5 bg-zinc-950 border border-white/10 rounded-xl text-xs text-white"
+              />
+              <button
+                type="button"
+                onClick={handleGroupTtsBroadcast}
+                disabled={!ttsBroadcastText.trim() || selectedDids.length === 0}
+                className="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 disabled:opacity-40 text-white rounded-xl text-xs font-bold transition flex items-center gap-1"
+              >
+                <Send className="w-3 h-3" />
+                广播
+              </button>
+            </div>
+          </div>
+
           {/* Device Selection List */}
           <div>
             <div className="flex items-center justify-between mb-3">
               <span className="text-xs font-bold uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
-                <Speaker className="w-3.5 h-3.5 text-[#FF6700]" />
-                选择参与同播的小爱音箱 ({selectedDids.length}/{devices.length})
+                <Speaker className="w-4 h-4 text-emerald-400" />
+                音箱成员列表 ({selectedDids.length}/{devices.length})
               </span>
               <button
                 onClick={toggleSelectAll}
-                className="text-xs text-[#FF6700] hover:underline font-medium"
+                className="text-xs text-[#FF6700] hover:underline font-semibold"
               >
-                {selectedDids.length === devices.length ? '取消全选' : '全选所有音箱'}
+                {selectedDids.length === devices.length ? '全部取消' : '全选音箱'}
               </button>
             </div>
 
-            <div className="space-y-2.5">
-              {devices.length > 0 ? (
-                devices.map((device) => {
-                  const isChecked = selectedDids.includes(device.did);
-                  const vol = deviceVolumes[device.did] ?? (device.status?.volume ?? 45);
+            <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
+              {devices.map((device) => {
+                const isSelected = selectedDids.includes(device.did);
+                const currentVol = deviceVolumes[device.did] ?? (device.status?.volume ?? 45);
 
-                  return (
-                    <div 
-                      key={device.did}
-                      className={`p-3 rounded-xl border transition flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
-                        isChecked 
-                          ? isLight 
-                            ? 'bg-orange-50/50 border-orange-300' 
-                            : 'bg-zinc-900/90 border-[#FF6700]/40'
-                          : isLight 
-                            ? 'bg-zinc-50 border-zinc-200 opacity-70' 
-                            : 'bg-zinc-900/40 border-white/5 opacity-60'
-                      }`}
-                    >
+                return (
+                  <div
+                    key={device.did}
+                    className={`p-3.5 rounded-xl border transition flex flex-col gap-2 ${
+                      isSelected
+                        ? isLight
+                          ? 'bg-orange-50/40 border-orange-300 shadow-sm'
+                          : 'bg-[#FF6700]/10 border-[#FF6700]/40'
+                        : isLight
+                        ? 'bg-zinc-50 border-zinc-200 opacity-60'
+                        : 'bg-zinc-900/40 border-white/5 opacity-60'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
                       <div 
                         onClick={() => toggleSelectDevice(device.did)}
-                        className="flex items-center gap-3 cursor-pointer min-w-0 flex-1"
+                        className="flex items-center gap-3 cursor-pointer flex-1 min-w-0"
                       >
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => {}} // Controlled via parent div click
-                          className="w-4 h-4 rounded text-[#FF6700] accent-[#FF6700] cursor-pointer"
-                        />
-                        <div className="min-w-0">
+                        <div className={`w-5 h-5 rounded-md border flex items-center justify-center transition ${
+                          isSelected 
+                            ? 'bg-[#FF6700] border-[#FF6700] text-white' 
+                            : 'border-white/20 bg-zinc-800'
+                        }`}>
+                          {isSelected && <Check className="w-3.5 h-3.5" />}
+                        </div>
+
+                        <div className="min-w-0 flex-1">
                           <div className="text-sm font-bold truncate flex items-center gap-2">
                             {device.name}
-                            {device.status?.playing && (
-                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                                正在发声
-                              </span>
-                            )}
+                            <span className="text-[10px] font-normal px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-white/5">
+                              {device.model || 'Sound'}
+                            </span>
                           </div>
-                          <div className="text-xs text-zinc-400 font-mono truncate">
-                            {device.model || '小爱音箱'} • {device.ip || '云端直连'}
+                          <div className="text-[11px] text-zinc-400 flex items-center gap-2">
+                            <span>IP: {device.ip || '云端在线'}</span>
+                            <span>·</span>
+                            <span>{device.status?.playing ? '🟢 正在播放' : '⚪ 待命中'}</span>
                           </div>
                         </div>
                       </div>
 
-                      {/* Individual Volume Control */}
-                      {isChecked && (
-                        <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
-                          <Volume2 className="w-3.5 h-3.5 text-zinc-500" />
-                          <input
-                            type="range"
-                            min="0"
-                            max="100"
-                            value={vol}
-                            onChange={(e) => handleDeviceVolumeChange(device.did, parseInt(e.target.value, 10))}
-                            className="w-20 h-1.5 accent-[#FF6700] rounded-lg cursor-pointer bg-zinc-700"
-                          />
-                          <span className="text-xs font-mono text-zinc-400 w-8 text-right">{vol}%</span>
-                        </div>
-                      )}
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-mono font-bold text-zinc-400">{currentVol}%</span>
+                      </div>
                     </div>
-                  );
-                })
-              ) : (
-                <div className="text-center py-6 text-zinc-500 text-xs">
-                  暂未检测到小米音箱，请先在“智能音箱”中扫描或登录米家账号
-                </div>
-              )}
+
+                    {/* Individual Device Volume Slider */}
+                    {isSelected && (
+                      <div className="flex items-center gap-2 pt-1 border-t border-white/5">
+                        <Volume2 className="w-3.5 h-3.5 text-zinc-500" />
+                        <input
+                          type="range"
+                          min="0"
+                          max="100"
+                          value={currentVol}
+                          onChange={(e) => handleDeviceVolumeChange(device.did, parseInt(e.target.value, 10))}
+                          className="w-full h-1 accent-[#FF6700] rounded-lg cursor-pointer bg-zinc-700"
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
-
-          {/* Last Broadcast Response Detail */}
-          {lastResults && (
-            <div className={`p-3 rounded-xl border text-xs space-y-1 ${
-              isLight ? 'bg-zinc-100 border-zinc-200' : 'bg-black/40 border-white/5'
-            }`}>
-              <div className="font-bold text-zinc-400 mb-1.5">最近一次同播响应状态:</div>
-              {lastResults.map(r => (
-                <div key={r.did} className="flex items-center justify-between font-mono">
-                  <span className="text-zinc-300">{r.name}:</span>
-                  <span className={r.success ? 'text-emerald-400' : 'text-red-400'}>
-                    {r.success ? '✓ 成功' : `✕ ${r.message}`}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
 
-        {/* Footer Actions */}
-        <div className={`px-6 py-4 border-t flex items-center justify-between ${
-          isLight ? 'border-zinc-200 bg-zinc-50' : 'border-white/10 bg-zinc-900/50'
+        {/* Modal Footer Controls */}
+        <div className={`px-6 py-4 border-t flex items-center justify-between gap-3 ${
+          isLight ? 'border-zinc-200 bg-zinc-50' : 'border-white/10 bg-zinc-900/80'
         }`}>
           <div className="flex items-center gap-2">
             <button
-              onClick={() => handleGroupControl('pause')}
-              className={`px-3 py-2 rounded-xl text-xs font-medium border flex items-center gap-1.5 transition ${
-                isLight ? 'border-zinc-300 hover:bg-zinc-200 text-zinc-800' : 'border-white/15 hover:bg-white/10 text-white'
-              }`}
+              onClick={() => handleGroupControl('play')}
+              disabled={selectedDids.length === 0}
+              className="px-3.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-xs font-bold text-white transition flex items-center gap-1.5 border border-white/10"
             >
-              <Pause className="w-3.5 h-3.5" />
-              全屋暂停
+              <Play className="w-3.5 h-3.5 text-emerald-400" />
+              全屋恢复
             </button>
             <button
-              onClick={() => handleGroupControl('play')}
-              className={`px-3 py-2 rounded-xl text-xs font-medium border flex items-center gap-1.5 transition ${
-                isLight ? 'border-zinc-300 hover:bg-zinc-200 text-zinc-800' : 'border-white/15 hover:bg-white/10 text-white'
-              }`}
+              onClick={() => handleGroupControl('pause')}
+              disabled={selectedDids.length === 0}
+              className="px-3.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-xs font-bold text-white transition flex items-center gap-1.5 border border-white/10"
             >
-              <Play className="w-3.5 h-3.5 fill-current" />
-              全屋恢复
+              <Pause className="w-3.5 h-3.5 text-amber-400" />
+              全屋暂停
             </button>
           </div>
 
           <button
+            id="btn-confirm-multi-room-cast"
             onClick={handleGroupCastSong}
-            disabled={isBroadcasting || selectedDids.length === 0}
-            className={`px-5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg transition ${
-              isBroadcasting || selectedDids.length === 0
-                ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
-                : 'bg-[#FF6700] hover:bg-[#e55c00] text-white shadow-[#FF6700]/30 active:scale-95'
-            }`}
+            disabled={isBroadcasting || selectedDids.length === 0 || !currentSong}
+            className="px-5 py-2.5 rounded-xl bg-[#FF6700] hover:bg-[#ff7b1a] disabled:opacity-40 text-sm font-bold text-white shadow-lg shadow-[#FF6700]/25 transition flex items-center gap-2"
           >
             {isBroadcasting ? (
-              <RefreshCw className="w-4 h-4 animate-spin" />
+              <>
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                正在广播串流...
+              </>
             ) : (
-              <Speaker className="w-4 h-4 animate-pulse" />
+              <>
+                <Radio className="w-4 h-4" />
+                向勾选设备全屋推流 ({selectedDids.length})
+              </>
             )}
-            <span>{isBroadcasting ? '广播下发中...' : `一键全屋同播 (${selectedDids.length}台)`}</span>
           </button>
         </div>
       </div>

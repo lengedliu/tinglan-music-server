@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { parseBuffer } from 'music-metadata';
 import { FfmpegTranscoder } from '../streaming/ffmpegTranscoder.js';
-import { JsonStore } from '../storage/jsonStore.js';
+import { musicRepository } from './repositories/musicRepository.js';
 
 export interface Song {
   id: string;
@@ -41,18 +41,14 @@ export interface Song {
 export class MusicEngine {
   private musicDir: string;
   private dataDir: string;
-  private songsFile: string;
-  private songs: Song[] = [];
   private transcoder: FfmpegTranscoder;
 
   constructor(musicDir: string, dataDir: string, transcoder: FfmpegTranscoder) {
     this.musicDir = musicDir;
     this.dataDir = dataDir;
-    this.songsFile = path.join(dataDir, 'songs.json');
     this.transcoder = transcoder;
 
     this.ensureDirectories();
-    this.loadSongs();
     this.preSeedSampleTracks();
   }
 
@@ -68,39 +64,29 @@ export class MusicEngine {
     }
   }
 
-  private loadSongs() {
-    this.songs = JsonStore.readJson<Song[]>(this.songsFile, []);
-  }
-
   public saveSongs() {
-    JsonStore.saveJson(this.songsFile, this.songs);
+    musicRepository.schedulePersistSongs(200);
   }
 
   public getAll(): Song[] {
-    return this.songs;
+    return musicRepository.getAllSongs();
   }
 
   public setSongs(songs: Song[]): void {
-    this.songs = songs;
+    musicRepository.setSongs(songs);
   }
 
   public reload(): void {
-    this.loadSongs();
+    // Rely on musicRepository as canonical source of truth
+    musicRepository.schedulePersistSongs(100);
   }
 
   public getById(id: string): Song | undefined {
-    const cleanId = (id || '').replace(/\.(wav|mp3|flac|m4a|ogg|aac|opus|ape|dsf|dff)$/i, '');
-    const decodedId = decodeURIComponent(id || '');
-    const decodedCleanId = decodeURIComponent(cleanId);
-
-    return this.songs.find(
-      s => s.id === id || s.id === cleanId || s.id === decodedId || s.id === decodedCleanId
-    );
+    return musicRepository.getSongById(id);
   }
 
   public addSong(song: Song) {
-    this.songs.unshift(song);
-    this.saveSongs();
+    musicRepository.addOrUpdateSong(song);
 
     // Trigger background warm transcode to standard MP3 under semaphore
     if (song.localFilename) {
@@ -116,13 +102,12 @@ export class MusicEngine {
   }
 
   public deleteSong(id: string): boolean {
-    const initialLen = this.songs.length;
-    this.songs = this.songs.filter(s => s.id !== id);
-    if (this.songs.length < initialLen) {
-      this.saveSongs();
+    const deleted = musicRepository.deleteSong(id);
+    if (deleted) {
+      const safeId = path.basename(id);
       // Remove disk files if exist
-      for (const ext of ['.wav', '.mp3', '.flac', '.m4a', '.ogg', '.aac', '.ape']) {
-        const p = path.join(this.musicDir, `${id}${ext}`);
+      for (const ext of ['.wav', '.mp3', '.flac', '.m4a', '.ogg', '.aac', '.ape', '.opus', '.dsf', '.dff']) {
+        const p = path.join(this.musicDir, `${safeId}${ext}`);
         if (fs.existsSync(p)) {
           try {
             fs.unlinkSync(p);
@@ -135,21 +120,16 @@ export class MusicEngine {
   }
 
   public toggleFavorite(id: string): Song | null {
-    const song = this.songs.find(s => s.id === id);
-    if (song) {
-      song.isFavorite = !song.isFavorite;
-      this.saveSongs();
-      return song;
-    }
-    return null;
+    const toggled = musicRepository.toggleFavorite(id);
+    return toggled ? (musicRepository.getSongById(id) || null) : null;
   }
 
   public updateSong(id: string, updates: Partial<Song>): Song | null {
-    const song = this.songs.find(s => s.id === id);
+    const song = musicRepository.getSongById(id);
     if (song) {
-      Object.assign(song, updates);
-      this.saveSongs();
-      return song;
+      const updated = { ...song, ...updates };
+      musicRepository.addOrUpdateSong(updated);
+      return updated;
     }
     return null;
   }

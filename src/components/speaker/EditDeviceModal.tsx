@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Edit3, X } from 'lucide-react';
+import { Edit3, X, Home, Shield, Tag } from 'lucide-react';
 import { XiaomiDevice } from '../../types';
+import { apiFetch } from '../../utils/api';
 
 interface EditDeviceModalProps {
   isOpen: boolean;
@@ -22,6 +23,11 @@ export const EditDeviceModal: React.FC<EditDeviceModalProps> = ({
   const [editDevHardware, setEditDevHardware] = useState('');
   const [editDevToken, setEditDevToken] = useState('');
 
+  // P2 Customization fields
+  const [roomName, setRoomName] = useState('客厅');
+  const [customAlias, setCustomAlias] = useState('');
+  const [maxVolumeLimit, setMaxVolumeLimit] = useState<number>(100);
+
   useEffect(() => {
     if (device) {
       setEditDevName(device.name || '');
@@ -30,12 +36,24 @@ export const EditDeviceModal: React.FC<EditDeviceModalProps> = ({
       setEditDevModel(device.model || 'xiaomi.wifispeaker.sound');
       setEditDevHardware(device.hardware || 'Sound');
       setEditDevToken('');
+
+      // Fetch P2 customization
+      apiFetch(`/api/miot/${device.did}/customization`)
+        .then(res => res.json())
+        .then(data => {
+          if (data?.customization) {
+            setRoomName(data.customization.roomName || '客厅');
+            setCustomAlias(data.customization.customName || '');
+            setMaxVolumeLimit(data.customization.maxVolumeLimit ?? 100);
+          }
+        })
+        .catch(() => {});
     }
   }, [device]);
 
   if (!isOpen || !device) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editDevName.trim() || !editDevIp.trim()) return;
 
@@ -55,20 +73,34 @@ export const EditDeviceModal: React.FC<EditDeviceModalProps> = ({
     }
 
     onUpdateDevice(device.did, updates);
+
+    // Save P2 customization
+    try {
+      await apiFetch(`/api/miot/${device.did}/customization`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customName: customAlias.trim() || editDevName.trim(),
+          roomName: roomName.trim(),
+          maxVolumeLimit
+        })
+      });
+    } catch (e) {}
+
     onClose();
   };
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
-      <div className="bg-zinc-900/95 border border-white/10 rounded-3xl p-6 sm:p-8 w-full max-w-md shadow-2xl space-y-6">
+      <div className="bg-zinc-900/95 border border-white/10 rounded-3xl p-6 sm:p-8 w-full max-w-md shadow-2xl space-y-5 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between pb-3 border-b border-white/10">
           <div className="flex items-center gap-3">
             <div className="p-2.5 rounded-2xl bg-[#FF6700]/20 text-[#FF6700] border border-[#FF6700]/30 shadow-[0_0_12px_rgba(255,103,0,0.25)]">
               <Edit3 className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-lg font-bold text-white tracking-tight">编辑音箱配置</h3>
-              <p className="text-xs text-zinc-400">修改名称、局域网 IP 或型号硬件参数</p>
+              <h3 className="text-lg font-bold text-white tracking-tight">编辑音箱与个性化配置</h3>
+              <p className="text-xs text-zinc-400">硬件参数 · 房间别名 · 安全音量限制 (P2)</p>
             </div>
           </div>
           <button
@@ -92,6 +124,37 @@ export const EditDeviceModal: React.FC<EditDeviceModalProps> = ({
             />
           </div>
 
+          {/* P2 Room and Alias */}
+          <div className="grid grid-cols-2 gap-3 p-3 rounded-2xl bg-zinc-950/60 border border-white/5">
+            <div>
+              <label className="block text-[11px] text-zinc-400 mb-1 font-medium flex items-center gap-1">
+                <Home className="w-3 h-3 text-purple-400" />
+                所在房间 (P2)
+              </label>
+              <input
+                type="text"
+                placeholder="例如: 客厅 / 主卧"
+                value={roomName}
+                onChange={(e) => setRoomName(e.target.value)}
+                className="w-full px-3 py-1.5 bg-zinc-900 border border-white/10 rounded-xl text-xs text-white"
+              />
+            </div>
+            <div>
+              <label className="block text-[11px] text-zinc-400 mb-1 font-medium flex items-center gap-1">
+                <Shield className="w-3 h-3 text-emerald-400" />
+                最高音量限制 ({maxVolumeLimit}%)
+              </label>
+              <input
+                type="range"
+                min="30"
+                max="100"
+                value={maxVolumeLimit}
+                onChange={(e) => setMaxVolumeLimit(Number(e.target.value))}
+                className="w-full accent-[#FF6700] mt-1"
+              />
+            </div>
+          </div>
+
           <div>
             <label className="block text-xs text-zinc-400 mb-1 font-medium">局域网 IP 地址 *</label>
             <input
@@ -100,7 +163,7 @@ export const EditDeviceModal: React.FC<EditDeviceModalProps> = ({
               placeholder="例如：192.168.31.108"
               value={editDevIp}
               onChange={(e) => setEditDevIp(e.target.value)}
-              className="w-full px-4 py-2.5 bg-zinc-950/80 border border-white/10 rounded-xl text-sm text-zinc-100 font-mono focus:outline-none focus:border-[#FF6700] transition"
+              className="w-full px-4 py-2 bg-zinc-950/80 border border-white/10 rounded-xl text-xs text-zinc-100 font-mono focus:outline-none focus:border-[#FF6700] transition"
             />
           </div>
 
@@ -117,7 +180,7 @@ export const EditDeviceModal: React.FC<EditDeviceModalProps> = ({
 
           <div>
             <label className="block text-xs text-zinc-400 mb-1.5 font-medium">快速切换机型预设</label>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-2">
               {[
                 { name: '小爱音箱 Pro', model: 'xiaomi.wifispeaker.lx06', hw: 'LX06' },
                 { name: '小爱音箱 Play', model: 'xiaomi.wifispeaker.l05c', hw: 'L05C' },

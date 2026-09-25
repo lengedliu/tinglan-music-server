@@ -4,7 +4,10 @@ import path from 'path';
 import { parseFile, parseBuffer } from 'music-metadata';
 import { asyncMusicScanner } from '../core/asyncMusicScanner.js';
 import { musicRepository } from '../core/repositories/musicRepository.js';
+import { interactionRepository } from '../core/repositories/interactionRepository.js';
 import { DynamicPlaylistEngine } from '../core/dynamicPlaylistEngine.js';
+import { smartPlaylistRepository, SmartPlaylistRule } from '../core/repositories/smartPlaylistRepository.js';
+import { fingerprintCacheRepository } from '../core/repositories/fingerprintCacheRepository.js';
 
 export interface SongsRouterOptions {
   getSongs: () => any[];
@@ -441,8 +444,20 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
   // Track playback event (increment playCount, record listening history)
   router.post('/:id/play', (req: Request, res: Response) => {
     const { id } = req.params;
-    const { device, duration, title, artist } = req.body || {};
+    const { device, duration, title, artist, playedSeconds } = req.body || {};
     const song = getSongs().find(s => s.id === id || s.id.replace(/\.[^.]+$/, '') === id);
+    const clientUser = (req as any).user;
+
+    // Record into persistent interaction repository (SQLite + JSON)
+    const historyEntry = interactionRepository.recordPlayHistory({
+      userId: clientUser?.id,
+      songId: id,
+      songTitle: title || song?.title || '未知曲目',
+      songArtist: artist || song?.artist || '未知艺术家',
+      deviceName: device || '网页播放器',
+      durationSeconds: duration || song?.duration || 0,
+      playedSeconds: playedSeconds || 0
+    });
 
     if (dynamicPlaylistEngine) {
       const result = dynamicPlaylistEngine.recordPlay(id, {
@@ -451,16 +466,88 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
         device: device || '网页播放器',
         duration: duration || song?.duration
       });
-      return res.json({ success: true, ...result });
+      return res.json({ success: true, historyEntry, ...result });
     }
-    res.json({ success: true, playCount: 1, lastPlayedAt: Date.now() });
+    res.json({ success: true, historyEntry, playCount: 1, lastPlayedAt: Date.now() });
+  });
+
+  // Get recent play history
+  router.get('/history/recent', (req: Request, res: Response) => {
+    const clientUser = (req as any).user;
+    const limit = parseInt(String(req.query.limit || '50'), 10);
+    const history = interactionRepository.getRecentHistory(clientUser?.id, limit);
+    res.json({ success: true, history });
+  });
+
+  // Get user interactions (favorites, ratings, play count)
+  router.get('/user/interactions', (req: Request, res: Response) => {
+    const clientUser = (req as any).user;
+    if (!clientUser?.id) {
+      return res.json({ success: true, interactions: [] });
+    }
+    const interactions = interactionRepository.getUserInteractions(clientUser.id);
+    res.json({ success: true, interactions });
+  });
+
+  // Set favorite state
+  router.post('/:id/favorite', (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { isFavorite } = req.body || {};
+    const clientUser = (req as any).user;
+    const favValue = typeof isFavorite === 'boolean' ? isFavorite : true;
+
+    if (clientUser?.id) {
+      interactionRepository.setFavorite(clientUser.id, id, favValue);
+    }
+
+    // Also sync global song object isFavorite for single-user fallback
+    const songs = getSongs();
+    const song = songs.find(s => s.id === id || s.id.replace(/\.[^.]+$/, '') === id);
+    if (song) {
+      song.isFavorite = favValue;
+      setSongs(songs);
+    }
+    res.json({ success: true, songId: id, isFavorite: favValue });
+  });
+
+  // Set song rating (1-5 stars)
+  router.post('/:id/rating', (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { rating } = req.body || {};
+    const clientUser = (req as any).user;
+    const ratingNum = parseInt(String(rating || 0), 10);
+
+    if (clientUser?.id) {
+      interactionRepository.setRating(clientUser.id, id, ratingNum);
+    }
+    res.json({ success: true, songId: id, rating: ratingNum });
+  });
+
+  // Save customized lyrics offset
+  router.post('/:id/lyrics/offset', (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { offsetMs, rawLrc, translatedLrc } = req.body || {};
+    const offset = parseInt(String(offsetMs || 0), 10);
+    const cached = interactionRepository.saveLyricsOffset(id, offset, rawLrc, translatedLrc);
+    res.json({ success: true, lyrics: cached });
   });
 
   // Batch or scrobble playback
   router.post('/scrobble', (req: Request, res: Response) => {
-    const { songId, device, duration, title, artist } = req.body || {};
+    const { songId, device, duration, title, artist, playedSeconds } = req.body || {};
     if (!songId) return res.status(400).json({ error: 'songId required' });
     const song = getSongs().find(s => s.id === songId || s.id.replace(/\.[^.]+$/, '') === songId);
+    const clientUser = (req as any).user;
+
+    const historyEntry = interactionRepository.recordPlayHistory({
+      userId: clientUser?.id,
+      songId,
+      songTitle: title || song?.title || '未知曲目',
+      songArtist: artist || song?.artist || '未知艺术家',
+      deviceName: device || '小米音箱/局域网设备',
+      durationSeconds: duration || song?.duration || 0,
+      playedSeconds: playedSeconds || 0
+    });
 
     if (dynamicPlaylistEngine) {
       const result = dynamicPlaylistEngine.recordPlay(songId, {
@@ -469,9 +556,40 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
         device: device || '小米音箱/局域网设备',
         duration: duration || song?.duration
       });
-      return res.json({ success: true, ...result });
+      return res.json({ success: true, historyEntry, ...result });
     }
-    res.json({ success: true });
+    res.json({ success: true, historyEntry });
+  });
+
+  // P3: Get cached audio fingerprint & metadata
+  router.get('/:id/fingerprint', (req: Request, res: Response) => {
+    const { id } = req.params;
+    const cached = fingerprintCacheRepository.getBySongId(id);
+    if (cached) {
+      return res.json({ success: true, cached: true, fingerprint: cached });
+    }
+    return res.json({ success: true, cached: false, fingerprint: null });
+  });
+
+  // P3: Save scraped audio fingerprint & metadata
+  router.post('/:id/fingerprint', (req: Request, res: Response) => {
+    const { id } = req.params;
+    const body = req.body;
+    const saved = fingerprintCacheRepository.upsert({
+      songId: id,
+      fingerprintHash: body.fingerprintHash,
+      acoustid: body.acoustid,
+      musicbrainzId: body.musicbrainzId,
+      title: body.title,
+      artist: body.artist,
+      album: body.album,
+      coverUrl: body.coverUrl,
+      genre: body.genre,
+      year: body.year,
+      lyrics: body.lyrics,
+      matchedAt: new Date().toISOString()
+    });
+    return res.json({ success: true, message: '音频指纹元数据缓存已更新', fingerprint: saved });
   });
 
   return router;
@@ -483,6 +601,74 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
 export function createPlaylistsRouter(options: PlaylistsRouterOptions): Router {
   const router = Router();
   const { getPlaylists, setPlaylists, getSongs, dynamicPlaylistEngine } = options;
+
+  // P2: List all smart playlist rules
+  router.get('/smart-rules', (req: Request, res: Response) => {
+    const rules = smartPlaylistRepository.getAllRules();
+    res.json({ success: true, rules });
+  });
+
+  // P2: Get smart playlist rule by playlist ID
+  router.get('/:id/smart-rule', (req: Request, res: Response) => {
+    const { id } = req.params;
+    const rule = smartPlaylistRepository.getRuleByPlaylistId(id);
+    res.json({ success: true, rule: rule || null });
+  });
+
+  // P2: Create or update smart playlist rule
+  router.post('/:id/smart-rule', (req: Request, res: Response) => {
+    const { id } = req.params;
+    const body = req.body;
+    const rule: SmartPlaylistRule = {
+      id: body.id || `rule_${id}`,
+      playlistId: id,
+      ruleName: body.ruleName || '智能过滤规则',
+      conditions: Array.isArray(body.conditions) ? body.conditions : [],
+      matchType: body.matchType || 'all',
+      sortBy: body.sortBy || 'recently_added',
+      limitCount: body.limitCount ? Number(body.limitCount) : 50,
+      autoRefresh: body.autoRefresh !== undefined ? Boolean(body.autoRefresh) : true,
+      lastComputedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    const saved = smartPlaylistRepository.upsertRule(rule);
+
+    // If autoApply is requested, compute and update playlist songIds immediately
+    if (body.autoApply && getSongs) {
+      const allSongs = getSongs();
+      const matched = smartPlaylistRepository.evaluateRules(allSongs, saved);
+      const storedPlaylists = getPlaylists();
+      const pl = storedPlaylists.find(p => p.id === id);
+      if (pl) {
+        pl.songIds = matched.map(m => m.id);
+        setPlaylists(storedPlaylists);
+      }
+    }
+
+    res.json({ success: true, message: '智能规则已保存', rule: saved });
+  });
+
+  // P2: Dynamically evaluate smart playlist rule
+  router.post('/:id/evaluate-smart-rule', (req: Request, res: Response) => {
+    const { id } = req.params;
+    const rule = smartPlaylistRepository.getRuleByPlaylistId(id) || req.body.rule;
+    if (!rule) {
+      return res.status(400).json({ success: false, error: '未找到智能规则配置' });
+    }
+    const allSongs = getSongs ? getSongs() : [];
+    const matchedSongs = smartPlaylistRepository.evaluateRules(allSongs, rule);
+
+    if (req.body.applyToPlaylist) {
+      const storedPlaylists = getPlaylists();
+      const pl = storedPlaylists.find(p => p.id === id);
+      if (pl) {
+        pl.songIds = matchedSongs.map(s => s.id);
+        setPlaylists(storedPlaylists);
+      }
+    }
+
+    res.json({ success: true, count: matchedSongs.length, songs: matchedSongs });
+  });
 
   // Smart Dynamic Playlists Overview (常听榜, 最近播放, 无损精选)
   router.get('/dynamic', (req: Request, res: Response) => {

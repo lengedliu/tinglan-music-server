@@ -51,6 +51,23 @@ export function createDbRouter(options: DbRouterOptions): Router {
     const currentSongs = getStoredSongs();
     const currentPlaylists = getStoredPlaylists();
 
+    const tableNames = [
+      'users',
+      'songs',
+      'playlists',
+      'user_song_interactions',
+      'play_history',
+      'cast_audit_logs',
+      'lyrics_store',
+      'device_eq_presets',
+      'scheduled_tasks',
+      'speaker_groups',
+      'smart_playlist_rules',
+      'device_customizations',
+      'audio_fingerprint_cache',
+      'playback_checkpoints'
+    ];
+
     return res.json({
       success: true,
       config: sanitizeDbConfig(activeDbConfig),
@@ -58,7 +75,8 @@ export function createDbRouter(options: DbRouterOptions): Router {
         engine: activeDbConfig.engine,
         isConnected: true,
         engineName: engineNames[activeDbConfig.engine] || 'SQLite 3',
-        tablesCount: sqliteDb ? 3 : 0,
+        tablesCount: sqliteDb ? tableNames.length : 0,
+        tables: tableNames,
         totalUsers: storedUsers.length,
         totalSongs: currentSongs.length,
         totalPlaylists: currentPlaylists.length

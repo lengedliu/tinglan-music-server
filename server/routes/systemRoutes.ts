@@ -3,6 +3,7 @@ import os from 'os';
 import fs from 'fs';
 import { GoogleGenAI } from '@google/genai';
 import { Song } from '../core/musicEngine.js';
+import { interactionRepository } from '../core/repositories/interactionRepository.js';
 
 export interface SystemRouterOptions {
   musicDir: string;
@@ -201,6 +202,40 @@ export function createSystemRouter(options: SystemRouterOptions): Router {
       options.castPipelineManager?.resetAllProfiles();
       res.json({ success: true, message: '已重置所有音箱的自学习策略画像' });
     }
+  });
+
+  // --- Device & User EQ Presets ---
+  router.get('/system/eq-presets', (req: Request, res: Response) => {
+    const { deviceDid } = req.query;
+    const clientUser = (req as any).user;
+    const presets = interactionRepository.getEqPresets(deviceDid as string | undefined, clientUser?.id);
+    res.json({ success: true, presets });
+  });
+
+  router.post('/system/eq-presets', (req: Request, res: Response) => {
+    const { id, deviceDid, presetName, bands, targetLufs, bassBoost, spatialAudio } = req.body || {};
+    const clientUser = (req as any).user;
+    if (!presetName || !Array.isArray(bands)) {
+      return res.status(400).json({ success: false, error: 'presetName and bands are required' });
+    }
+    const saved = interactionRepository.saveEqPreset({
+      id,
+      deviceDid,
+      userId: clientUser?.id,
+      presetName,
+      bands,
+      targetLufs: typeof targetLufs === 'number' ? targetLufs : -16.0,
+      bassBoost: Boolean(bassBoost),
+      spatialAudio: Boolean(spatialAudio)
+    });
+    res.json({ success: true, preset: saved });
+  });
+
+  // --- Cast Audit Logs ---
+  router.get('/system/audit-logs', (req: Request, res: Response) => {
+    const limit = parseInt(String(req.query.limit || '100'), 10);
+    const logs = interactionRepository.getCastAuditLogs(limit);
+    res.json({ success: true, logs });
   });
 
   return router;

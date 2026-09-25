@@ -3,6 +3,9 @@ import path from 'path';
 import { Song } from '../musicEngine.js';
 import { Playlist } from '../playlistEngine.js';
 import { musicSearchIndex, SearchOptions } from '../searchIndex.js';
+import { DEFAULT_SONGS, DEFAULT_PLAYLISTS } from '../defaultData.js';
+
+export { DEFAULT_SONGS, DEFAULT_PLAYLISTS };
 
 /**
  * MusicRepository (Single Source of Truth for Catalog & Playlists)
@@ -48,18 +51,18 @@ export class MusicRepository {
       if (fs.existsSync(this.songsFile)) {
         const raw = fs.readFileSync(this.songsFile, 'utf-8');
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
+        if (Array.isArray(parsed) && parsed.length > 0) {
           this.setSongs(parsed, false);
           console.log(`[MusicRepository] Loaded ${this.songs.length} tracks from disk & indexed.`);
           return;
         }
       }
     } catch (err) {
-      console.warn('[MusicRepository] Could not parse songs.json, starting with empty catalog:', err);
+      console.warn('[MusicRepository] Could not parse songs.json, falling back to defaults:', err);
     }
-    this.songs = [];
-    this.songsMap.clear();
-    musicSearchIndex.buildIndex([]);
+    // Pre-populate with default tracks on clean startup
+    this.setSongs(DEFAULT_SONGS, true);
+    console.log(`[MusicRepository] Initialized catalog with ${this.songs.length} default high-fidelity tracks.`);
   }
 
   private loadPlaylists() {
@@ -67,15 +70,16 @@ export class MusicRepository {
       if (fs.existsSync(this.playlistsFile)) {
         const raw = fs.readFileSync(this.playlistsFile, 'utf-8');
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
+        if (Array.isArray(parsed) && parsed.length > 0) {
           this.playlists = parsed;
           return;
         }
       }
     } catch (err) {
-      console.warn('[MusicRepository] Could not parse playlists.json:', err);
+      console.warn('[MusicRepository] Could not parse playlists.json, falling back to defaults:', err);
     }
-    this.playlists = [];
+    this.playlists = [...DEFAULT_PLAYLISTS];
+    this.schedulePersistPlaylists(300);
   }
 
   /**

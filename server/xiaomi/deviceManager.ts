@@ -1,15 +1,6 @@
-import fs from 'fs';
-import path from 'path';
-import { JsonStore } from '../storage/jsonStore.js';
+import { deviceRepository, XiaomiDeviceEntity } from '../core/repositories/deviceRepository.js';
 
-export interface XiaomiDevice {
-  did: string;
-  name: string;
-  model: string;
-  mac?: string;
-  ip?: string;
-  token?: string;
-  online?: boolean;
+export interface XiaomiDevice extends XiaomiDeviceEntity {
   deviceType?: 'speaker' | 'touchscreen' | 'soundbar' | 'clock';
   currentVolume?: number;
   currentTrack?: string;
@@ -32,56 +23,14 @@ export const PLAY_MODELS = ['LX05', 'L05B', 'L05C', 'L07A', 'xiaomi.wifispeaker.
 
 export class DeviceManager {
   private dataDir: string;
-  private devicesFile: string;
-  private devices: XiaomiDevice[] = [];
 
-  constructor(dataDir: string) {
-    this.dataDir = dataDir;
-    this.devicesFile = path.join(dataDir, 'devices.json');
-    this.loadDevices();
-  }
-
-  private loadDevices() {
-    try {
-      if (fs.existsSync(this.devicesFile)) {
-        this.devices = JsonStore.readJson<XiaomiDevice[]>(this.devicesFile, []);
-        this.enrichHardwareProfiles();
-      } else {
-        this.devices = [
-          {
-            did: 'dev-001',
-            name: '客厅 Xiaomi Sound Pro',
-            model: 'xiaomi.wifispeaker.l16a',
-            mac: '68:AB:12:34:56:78',
-            ip: '192.168.31.50',
-            online: true,
-            deviceType: 'speaker',
-            currentVolume: 45,
-            room: '客厅'
-          },
-          {
-            did: 'dev-002',
-            name: '主卧 小爱触屏音箱 Pro 8',
-            model: 'xiaomi.wifispeaker.x08a',
-            mac: '68:AB:12:34:56:79',
-            ip: '192.168.31.51',
-            online: true,
-            deviceType: 'touchscreen',
-            currentVolume: 30,
-            room: '主卧'
-          }
-        ];
-        this.enrichHardwareProfiles();
-        this.saveDevices();
-      }
-    } catch (err) {
-      console.warn('[DeviceManager] Could not load devices.json:', err);
-      this.devices = [];
-    }
+  constructor(dataDir?: string) {
+    this.dataDir = dataDir || process.cwd();
   }
 
   public enrichHardwareProfiles() {
-    this.devices.forEach(d => {
+    const devs = deviceRepository.getAllDevices();
+    devs.forEach((d: any) => {
       const modelUpper = (d.model || '').toUpperCase();
       const isTouch = TOUCHSCREEN_MODELS.some(m => modelUpper.includes(m.toUpperCase())) || d.deviceType === 'touchscreen';
       d.hardwareProfile = {
@@ -95,49 +44,53 @@ export class DeviceManager {
   }
 
   public saveDevices() {
-    JsonStore.saveJson(this.devicesFile, this.devices);
+    deviceRepository.persistDevices();
   }
 
   public getAll(): XiaomiDevice[] {
-    return this.devices;
+    this.enrichHardwareProfiles();
+    return deviceRepository.getAllDevices() as XiaomiDevice[];
   }
 
   public reload(): void {
-    this.loadDevices();
+    // Reloaded from deviceRepository
+    this.enrichHardwareProfiles();
   }
 
   public getByDid(did: string): XiaomiDevice | undefined {
-    return this.devices.find(d => d.did === did);
+    return deviceRepository.getDeviceByDid(did) as XiaomiDevice | undefined;
   }
 
   public getByIp(ip: string): XiaomiDevice | undefined {
     if (!ip) return undefined;
     const cleanIp = ip.replace(/^::ffff:/, '');
-    return this.devices.find(d => d.ip && cleanIp.includes(d.ip));
+    return deviceRepository.getDeviceByIp(cleanIp) as XiaomiDevice | undefined;
   }
 
   public setDevices(newDevices: XiaomiDevice[]) {
-    this.devices = newDevices;
+    deviceRepository.setDevices(newDevices as any[]);
     this.enrichHardwareProfiles();
-    this.saveDevices();
   }
 
   public updateDevice(did: string, updates: Partial<XiaomiDevice>): XiaomiDevice | null {
-    const dev = this.devices.find(d => d.did === did);
+    const dev = deviceRepository.getDeviceByDid(did);
     if (!dev) return null;
-    Object.assign(dev, updates);
+    const merged = { ...dev, ...updates };
+    deviceRepository.addOrUpdateDevice(merged as any);
     this.enrichHardwareProfiles();
-    this.saveDevices();
-    return dev;
+    return deviceRepository.getDeviceByDid(did) as XiaomiDevice;
   }
 
   public updatePlaybackState(did: string, isPlaying: boolean, trackName?: string, volume?: number) {
-    const dev = this.devices.find(d => d.did === did);
+    const dev = deviceRepository.getDeviceByDid(did);
     if (dev) {
-      dev.isPlaying = isPlaying;
-      if (trackName !== undefined) dev.currentTrack = trackName;
-      if (volume !== undefined) dev.currentVolume = volume;
-      this.saveDevices();
+      const updates: any = { isPlaying };
+      if (trackName !== undefined) updates.currentTrack = trackName;
+      if (volume !== undefined) updates.currentVolume = volume;
+      deviceRepository.addOrUpdateDevice({ ...dev, ...updates } as any);
     }
   }
 }
+
+export const deviceManager = new DeviceManager();
+

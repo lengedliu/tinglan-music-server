@@ -1,6 +1,6 @@
 import dgram from 'dgram';
 import net from 'net';
-import { XiaomiDevice, DeviceManager } from './deviceManager.js';
+import { XiaomiDevice, DeviceManager, deviceManager } from './deviceManager.js';
 import { xiaomiCircuitBreaker } from '../circuitBreaker.js';
 
 export interface HeartbeatStatus {
@@ -514,3 +514,5 @@ export class AdaptiveHeartbeatEngine {
     });
   }
 }
+
+export const adaptiveHeartbeatEngine = new AdaptiveHeartbeatEngine(deviceManager);

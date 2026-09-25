@@ -17,12 +17,13 @@ export interface XiaomiDeviceEntity {
   ip?: string;
   token?: string;
   mac?: string;
-  platform?: 'mina' | 'miio';
-  source?: 'cloud' | 'lan' | 'hybrid';
+  platform?: 'mina' | 'miio' | 'miot' | 'dlna' | string;
+  source?: 'cloud' | 'lan' | 'hybrid' | string;
   online?: boolean;
   isOnline?: boolean;
   capabilities?: DeviceCapabilities;
   hardware?: string;
+  [key: string]: any;
 }
 
 export class DeviceRepository {

@@ -1,149 +1,105 @@
 import express, { Request, Response } from 'express';
-import { Readable } from 'stream';
 import path from 'path';
 import fs from 'fs';
-import os from 'os';
-import net from 'net';
-import dgram from 'dgram';
 import crypto from 'crypto';
-import { execSync } from 'child_process';
-import { createRequire } from 'module';
 import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
-import pg from 'pg';
-import mysql from 'mysql2/promise';
-import { parseFile, parseBuffer } from 'music-metadata';
 import { createServer as createViteServer } from 'vite';
-import { xiaomiPassport, getPersistentClientDeviceId, generateMinaRequestId, buildMinaHeaders } from './server/xiaomiPassport.js';
-import { minaWsClient } from './server/minaWebSocket.js';
-import { miotRpcEngine, XIAOAI_MIOT_SPEC } from './server/miotRpc.js';
-import { deviceDiscoveryEngine } from './server/deviceDiscovery.js';
-import { xiaoaiResolverEngine, extractDevicesFromMinaResponse } from './server/xiaoaiResolver.js';
-import { ttsEngine, POPULAR_TTS_VOICES } from './server/ttsEngine.js';
-import { dlnaEngine } from './server/dlnaEngine.js';
-import { voiceCommandService } from './server/voiceCommandService.js';
-import {
-  encryptSecret,
-  decryptSecret,
-  prepareConfigForDisk,
-  restoreConfigFromDisk,
-  prepareDevicesForDisk,
-  restoreDevicesFromDisk,
-  maskSecret
-} from './server/secureVault.js';
-import { xiaomiCircuitBreaker } from './server/circuitBreaker.js';
-import { GoogleGenAI } from '@google/genai';
+
 import { MiotConfig } from './src/types.js';
 import {
+  loadJson,
+  saveJson,
+  flushAllPendingWritesSync,
+  configureStoragePaths
+} from './server/storage/jsonStorage.js';
+import { initSqliteDatabase } from './server/storage/sqliteInit.js';
+import {
+  getClientIp,
+  isPrivateOrLocalIp,
+  isAuthRequiredForRequest,
+  checkLoginRateLimit,
+  recordLoginAttempt,
+  generateStreamToken,
+  verifyStreamToken,
+  isSafeRemoteStreamUrl,
+  createCsrfMiddleware,
+  createAuthMiddleware,
+  SecuritySettings
+} from './server/core/security.js';
+import { ensureSampleTracksSeeded } from './server/core/sampleTracks.js';
+import {
+  restoreSessionAndDevicesOnStartup,
+  bindVoiceCommandCallbacks
+} from './server/core/bootstrap.js';
+
+import {
+  FfmpegTranscoder,
   MusicEngine,
   PlaylistEngine,
-  QueueEngine,
-  QueueLoopMode,
-  queueEngine,
-  FfmpegTranscoder,
-  StreamServer,
   DeviceManager,
+  StreamServer,
   XiaomiAdapter,
-  castPipelineManager,
   AdaptiveHeartbeatEngine,
+  queueEngine,
+  musicRepository,
+  deviceRepository,
+  interactionRepository,
+  scheduledTaskRepository,
+  speakerGroupRepository,
+  smartPlaylistRepository,
+  deviceCustomizationRepository,
+  fingerprintCacheRepository,
+  playbackCheckpointRepository,
+  taskSchedulerEngine,
+  appEventBus,
   lyricsService,
   transcodeSemaphorePool,
-  appEventBus
+  castPipelineManager,
+  castLogs,
+  getLocalNetworkIps,
+  sendMiioCommand,
+  dispatchCastSongDirectly,
+  callMinaCloudApi
 } from './server/index.js';
-import { createQueueRouter } from './server/routes/queueRoutes.js';
-import { createSongsRouter, createPlaylistsRouter } from './server/routes/musicRoutes.js';
+
 import { DynamicPlaylistEngine } from './server/core/dynamicPlaylistEngine.js';
+import { ttsEngine } from './server/ttsEngine.js';
 import { createAuthRouter, createSecurityRouter } from './server/routes/authRoutes.js';
 import { createDbRouter } from './server/routes/dbRoutes.js';
-import { createNavidromeRouter } from './server/routes/navidromeRoutes.js';
+import { createTtsRouter } from './server/routes/ttsRoutes.js';
+import { createSongsRouter, createPlaylistsRouter } from './server/routes/musicRoutes.js';
+import { createMiotRouter } from './server/routes/miotRoutes.js';
+import { createQueueRouter } from './server/routes/queueRoutes.js';
 import { createSubsonicRouter } from './server/routes/subsonicRoutes.js';
-import { createStreamRouter } from './server/routes/streamRoutes.js';
 import { createSystemRouter } from './server/routes/systemRoutes.js';
-
-const dynamicRequire = typeof require !== 'undefined'
-  ? require
-  : createRequire((import.meta && import.meta.url) ? import.meta.url : 'file://' + __filename);
-
-let sqlite3: any = null;
-try {
-  sqlite3 = dynamicRequire('sqlite3');
-} catch (err: any) {
-  console.warn('[Database] sqlite3 module could not be loaded in current GLIBC environment. Falling back to JSON DB & PostgreSQL/MySQL driver.', err.message);
-}
+import { createNavidromeRouter } from './server/routes/navidromeRoutes.js';
+import { createStreamRouter } from './server/routes/streamRoutes.js';
+import { createTaskRouter } from './server/routes/taskRoutes.js';
+import { createGroupRouter } from './server/routes/groupRoutes.js';
 
 const app = express();
-// Port 3000 is the hardcoded entry port required for AI Studio ingress routing
 const PORT = 3000;
 const SERVER_START_TIME = Date.now();
 const API_KEY = process.env.API_KEY || '';
 
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ extended: true, limit: '100mb' }));
+app.use(createCsrfMiddleware());
 
-// CSRF & LAN Origin Protection Middleware (P2 security)
-// Protects the home server from malicious external cross-site requests (e.g. drive-by CSRF attacks on speakers)
-app.use((req, res, next) => {
-  // Safe read-only methods don't mutate state
-  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
-    return next();
-  }
-
-  const origin = (req.headers['origin'] || req.headers['referer'] || '') as string;
-  if (!origin) {
-    // Non-browser local tools (curl, scripts, hardware speaker direct calls) do not send Origin/Referer
-    return next();
-  }
-
-  try {
-    const originUrl = new URL(origin);
-    const hostHeader = (req.headers['x-forwarded-host'] || req.headers['host'] || '') as string;
-    const cleanHost = hostHeader.split(':')[0].toLowerCase();
-    const originHost = originUrl.hostname.toLowerCase();
-
-    // 1. Same-origin or same-host match
-    if (originHost === cleanHost || originUrl.host.toLowerCase() === hostHeader.toLowerCase()) {
-      return next();
-    }
-
-    // 2. Localhost and loopback
-    if (originHost === 'localhost' || originHost === '127.0.0.1' || originHost === '::1') {
-      return next();
-    }
-
-    // 3. RFC 1918 Private LAN ranges (192.168.x.x, 10.x.x.x, 172.16.x.x - 172.31.x.x)
-    if (
-      /^192\.168\.\d{1,3}\.\d{1,3}$/.test(originHost) ||
-      /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(originHost) ||
-      /^172\.(1[6-9]|2[0-9]|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(originHost) ||
-      /^.*\.local$/.test(originHost)
-    ) {
-      return next();
-    }
-
-    // 4. Cloud preview / AI Studio deployment domains
-    if (
-      originHost.endsWith('.run.app') ||
-      originHost.endsWith('.google.com') ||
-      originHost.endsWith('.aistudio.google.com')
-    ) {
-      return next();
-    }
-
-    // Untrusted external origin attempting a state-mutating POST/PUT/DELETE
-    console.warn(`🛡️ [CSRF Protection] Blocked cross-origin ${req.method} request to ${req.path} from untrusted origin: ${origin}`);
-    return res.status(403).json({
-      error: 'Cross-Site Request Blocked',
-      message: '跨站请求伪造保护（CSRF Protection）已拦截来自非受信任外部网站的控制指令。'
-    });
-  } catch {
-    return next();
-  }
-});
-
-// Directories
+// Storage & Working Directories
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
 const MUSIC_DIR = process.env.MUSIC_DIR || path.join(process.cwd(), 'music');
 const TRANSCODE_CACHE_DIR = path.join(DATA_DIR, 'transcode_cache');
+const SONGS_FILE = path.join(DATA_DIR, 'songs.json');
+const PLAYLISTS_FILE = path.join(DATA_DIR, 'playlists.json');
+const DEVICES_FILE = path.join(DATA_DIR, 'devices.json');
+const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
+const QUEUE_FILE = path.join(DATA_DIR, 'queue.json');
+const NAVIDROME_FILE = path.join(DATA_DIR, 'navidrome.json');
+const USERS_FILE = path.join(DATA_DIR, 'users.json');
+const DB_CONFIG_FILE = path.join(DATA_DIR, 'db_config.json');
+const SECURITY_FILE = path.join(DATA_DIR, 'security.json');
+const SQLITE_FILE = path.join(DATA_DIR, 'tinglan.sqlite');
 
 for (const dir of [DATA_DIR, MUSIC_DIR, TRANSCODE_CACHE_DIR]) {
   if (!fs.existsSync(dir)) {
@@ -155,43 +111,37 @@ for (const dir of [DATA_DIR, MUSIC_DIR, TRANSCODE_CACHE_DIR]) {
   }
 }
 
+configureStoragePaths({
+  DATA_DIR,
+  MUSIC_DIR,
+  CONFIG_FILE,
+  DEVICES_FILE,
+  NAVIDROME_FILE,
+  DB_CONFIG_FILE
+});
+
 // ---------------- 6-MODULE ARCHITECTURE CORE INSTANCES ----------------
-// 1. ffmpeg-transcoder: Audio Transcode Engine
 export const ffmpegTranscoder = new FfmpegTranscoder(TRANSCODE_CACHE_DIR, undefined, DATA_DIR);
-
-// 2. music-engine: Songs Metadata & Repository Engine
 export const musicEngine = new MusicEngine(MUSIC_DIR, DATA_DIR, ffmpegTranscoder);
-
-// 3. playlist-engine: Queue, Playlist & Track Dispatching Engine
 export const playlistEngine = new PlaylistEngine(DATA_DIR);
-
-// 4. device-manager: XiaoAi Device Inventory & Model Matrix
 export const deviceManager = new DeviceManager(DATA_DIR);
-
-// 5. stream-server: RFC 7233 HTTP 206 Partial Content Stream Service
 export const streamServer = new StreamServer(MUSIC_DIR, musicEngine, ffmpegTranscoder, deviceManager, PORT);
-
-// 6. xiaomi-adapter: Multi-tier Cast Dispatcher (UBUS / MIoT / miIO / DLNA)
 export const xiaomiAdapter = new XiaomiAdapter(deviceManager);
-
-// 7. adaptive-heartbeat-engine: Smart Adaptive Heartbeat & Self-Healing State Synchronizer
 export const adaptiveHeartbeatEngine = new AdaptiveHeartbeatEngine(deviceManager);
-
+export const dynamicPlaylistEngine = new DynamicPlaylistEngine(DATA_DIR);
 const audioTranscoder = ffmpegTranscoder;
 
-// 8. dynamic-playlist-engine: Smart Top Played, Recently Played, and Lossless Dynamic Engine
-export const dynamicPlaylistEngine = new DynamicPlaylistEngine(DATA_DIR);
+// Seed sample harmonic tracks in background
+ensureSampleTracksSeeded(MUSIC_DIR);
 
 // Cryptographically secure, persistent JWT secret
 const JWT_SECRET_FILE = path.join(DATA_DIR, '.jwt_secret');
-let JWT_SECRET = process.env.JWT_SECRET;
+let JWT_SECRET = process.env.JWT_SECRET || '';
 if (!JWT_SECRET) {
   if (fs.existsSync(JWT_SECRET_FILE)) {
     try {
       JWT_SECRET = fs.readFileSync(JWT_SECRET_FILE, 'utf-8').trim();
-    } catch (e) {
-      // ignore
-    }
+    } catch {}
   }
   if (!JWT_SECRET || JWT_SECRET.length < 16) {
     JWT_SECRET = crypto.randomBytes(32).toString('hex');
@@ -204,274 +154,160 @@ if (!JWT_SECRET) {
   }
 }
 
-// Helper to generate gentle musical acoustic tones as genuine WAV files
-function generateHarmonicWav(durationSeconds = 25, chordFreqs: number[] = [261.63, 329.63, 392.00, 523.25]): Buffer {
-  const sampleRate = 44100;
-  const numSamples = Math.floor(sampleRate * durationSeconds);
-  const dataSize = numSamples * 2; // 16-bit mono
-  const buffer = Buffer.alloc(44 + dataSize);
-
-  // RIFF Header
-  buffer.write('RIFF', 0);
-  buffer.writeUInt32LE(36 + dataSize, 4);
-  buffer.write('WAVE', 8);
-  buffer.write('fmt ', 12);
-  buffer.writeUInt32LE(16, 16); // Subchunk1Size
-  buffer.writeUInt16LE(1, 20); // AudioFormat PCM
-  buffer.writeUInt16LE(1, 22); // NumChannels = 1
-  buffer.writeUInt32LE(sampleRate, 24); // SampleRate
-  buffer.writeUInt32LE(sampleRate * 2, 28); // ByteRate
-  buffer.writeUInt16LE(2, 32); // BlockAlign
-  buffer.writeUInt16LE(16, 34); // BitsPerSample
-  buffer.write('data', 36);
-  buffer.writeUInt32LE(dataSize, 40);
-
-  const noteDuration = 0.6; // note changes every 0.6s
-  for (let i = 0; i < numSamples; i++) {
-    const t = i / sampleRate;
-    const noteIdx = Math.floor(t / noteDuration) % chordFreqs.length;
-    const freq = chordFreqs[noteIdx];
-    const notePhase = (t % noteDuration) / noteDuration;
-    const env = Math.exp(-notePhase * 3.5) * Math.sin(Math.min(1, notePhase * 40) * Math.PI / 2);
-    
-    // Warm harmonics
-    const sampleVal = (
-      Math.sin(2 * Math.PI * freq * t) * 0.6 +
-      Math.sin(2 * Math.PI * freq * 2 * t) * 0.25 +
-      Math.sin(2 * Math.PI * freq * 3 * t) * 0.15
-    ) * env * 0.45;
-
-    const intSample = Math.floor(Math.max(-32768, Math.min(32767, sampleVal * 32767)));
-    buffer.writeInt16LE(intSample, 44 + i * 2);
-  }
-
-  return buffer;
-}
-
-// Pre-seed sample tracks in MUSIC_DIR if not present
-const sampleTracksConfig = [
-  { id: 'song-1', freqs: [220, 261.63, 329.63, 440, 523.25] },
-  { id: 'song-2', freqs: [293.66, 329.63, 392.00, 440, 587.33] },
-  { id: 'song-3', freqs: [174.61, 220.00, 261.63, 349.23, 440] },
-  { id: 'song-4', freqs: [196.00, 246.94, 293.66, 392.00, 493.88] },
-  { id: 'song-5', freqs: [130.81, 164.81, 196.00, 261.63, 329.63] },
-  { id: 'song-6', freqs: [146.83, 220.00, 293.66, 370.00, 440] },
+// User accounts & authentication
+const DEFAULT_REGULAR_USER_AVATAR = 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=300&q=80';
+const DEFAULT_ADMIN_USER_AVATAR = 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80';
+const USER_AVATAR_PRESETS = [
+  'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=300&q=80',
+  'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=300&q=80',
+  'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?auto=format&fit=crop&w=300&q=80',
+  'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=300&q=80',
+  'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&w=300&q=80',
+  'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?auto=format&fit=crop&w=300&q=80'
 ];
 
-for (const track of sampleTracksConfig) {
-  const filePath = path.join(MUSIC_DIR, `${track.id}.wav`);
-  if (!fs.existsSync(filePath)) {
+function getDefaultUserAvatar(role: string = 'user', username: string = 'user'): string {
+  if (role === 'admin' || username === 'admin') return DEFAULT_ADMIN_USER_AVATAR;
+  let hash = 0;
+  for (let i = 0; i < username.length; i++) hash = username.charCodeAt(i) + ((hash << 5) - hash);
+  return USER_AVATAR_PRESETS[Math.abs(hash) % USER_AVATAR_PRESETS.length];
+}
+
+const defaultAdminUser = {
+  id: 'usr-admin-001',
+  username: 'admin',
+  email: 'admin@tinglan.audio',
+  passwordHash: bcrypt.hashSync('admin123', 10),
+  role: 'admin',
+  avatarUrl: DEFAULT_ADMIN_USER_AVATAR,
+  createdAt: new Date().toISOString()
+};
+
+let storedUsers: any[] = loadJson(USERS_FILE, [defaultAdminUser]);
+if (!storedUsers.some(u => u.username === 'admin')) {
+  storedUsers.unshift(defaultAdminUser);
+}
+storedUsers.forEach(u => {
+  if (!u.avatarUrl) u.avatarUrl = getDefaultUserAvatar(u.role, u.username);
+});
+saveJson(USERS_FILE, storedUsers);
+
+// Database configuration
+let activeDbConfig = loadJson(DB_CONFIG_FILE, {
+  engine: 'sqlite',
+  postgresConfig: { host: 'localhost', port: 5432, user: 'postgres', password: '', database: 'tinglan_db' },
+  mysqlConfig: { host: 'localhost', port: 3306, user: 'root', password: '', database: 'tinglan_db' }
+});
+const sqliteDb = initSqliteDatabase(SQLITE_FILE, defaultAdminUser);
+if (sqliteDb) {
+  interactionRepository.setSqliteDb(sqliteDb);
+  scheduledTaskRepository.setSqliteDb(sqliteDb);
+  speakerGroupRepository.setSqliteDb(sqliteDb);
+  smartPlaylistRepository.setSqliteDb(sqliteDb);
+  deviceCustomizationRepository.setSqliteDb(sqliteDb);
+  fingerprintCacheRepository.setSqliteDb(sqliteDb);
+  playbackCheckpointRepository.setSqliteDb(sqliteDb);
+}
+
+// ---------------- TASK SCHEDULER ENGINE SETUP (P0) ----------------
+taskSchedulerEngine.setHandlers({
+  pauseDevice: async (did: string) => {
+    const dev = deviceRepository.getDeviceByDid(did) || deviceRepository.getAllDevices().find(d => (d as any).deviceID === did);
+    if (!dev) return;
     try {
-      const wavBuffer = generateHarmonicWav(30, track.freqs);
-      fs.writeFileSync(filePath, wavBuffer);
-    } catch (err) {
-      console.error(`Failed to pre-seed ${track.id}.wav`, err);
+      await xiaomiAdapter.setPlaybackOperation(
+        dev,
+        'pause',
+        (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry, miotConfig, (cfg) => saveJson(CONFIG_FILE, cfg)),
+        (ip, token, method, params, timeoutMs) => sendMiioCommand(ip, token, method, params, timeoutMs || 2500),
+        miotConfig
+      );
+    } catch (err: any) {
+      console.warn('[TaskScheduler] Pause device error:', err.message);
     }
+  },
+  playSongOnDevice: async (did: string, songId: string) => {
+    const song = musicRepository.getSongById(songId);
+    if (!song) return false;
+    const res = await dispatchCastSongDirectly({
+      song,
+      targetDid: did,
+      miotConfig,
+      saveMiotConfigFn: (cfg) => saveJson(CONFIG_FILE, cfg),
+      serverPort: PORT,
+      jwtSecret: JWT_SECRET,
+      activeStreamIps
+    });
+    return res.success;
+  },
+  playPlaylistOnDevice: async (did: string, playlistId: string) => {
+    const pl = musicRepository.getAllPlaylists().find(p => p.id === playlistId);
+    if (!pl || !pl.songIds || pl.songIds.length === 0) return false;
+    const firstSong = musicRepository.getSongById(pl.songIds[0]);
+    if (!firstSong) return false;
+    const res = await dispatchCastSongDirectly({
+      song: firstSong,
+      targetDid: did,
+      miotConfig,
+      saveMiotConfigFn: (cfg) => saveJson(CONFIG_FILE, cfg),
+      serverPort: PORT,
+      jwtSecret: JWT_SECRET,
+      activeStreamIps
+    });
+    return res.success;
+  },
+  setVolumeOnDevice: async (did: string, volume: number) => {
+    const dev = deviceRepository.getDeviceByDid(did);
+    if (!dev) return false;
+    const res = await xiaomiAdapter.setVolume(
+      dev,
+      volume,
+      (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry, miotConfig, (cfg) => saveJson(CONFIG_FILE, cfg)),
+      sendMiioCommand,
+      miotConfig
+    );
+    return res.success;
+  },
+  speakTtsOnDevice: async (did: string, text: string) => {
+    const dev = deviceRepository.getDeviceByDid(did);
+    if (!dev) return false;
+    const res = await ttsEngine.dispatchToSpeaker({
+      targetDevice: dev,
+      text,
+      miotConfig,
+      sendMiioCommandFn: sendMiioCommand,
+      callMinaCloudApiFn: (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry, miotConfig, (cfg) => saveJson(CONFIG_FILE, cfg))
+    });
+    return res.success;
   }
-}
+});
+taskSchedulerEngine.start();
 
-// Persistence paths
-const SONGS_FILE = path.join(DATA_DIR, 'songs.json');
-const PLAYLISTS_FILE = path.join(DATA_DIR, 'playlists.json');
-const DEVICES_FILE = path.join(DATA_DIR, 'devices.json');
-const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
-const QUEUE_FILE = path.join(DATA_DIR, 'queue.json');
+// Security Settings
+const defaultSecuritySettings: SecuritySettings = {
+  requireAuth: process.env.REQUIRE_AUTH !== 'false',
+  authScope: 'all',
+  allowRegistration: true,
+  allowUserMiotControl: true,
+  allowUserMiotTts: false,
+  updatedAt: new Date().toISOString()
+};
+let securitySettings: SecuritySettings = loadJson(SECURITY_FILE, defaultSecuritySettings);
+if (typeof securitySettings.requireAuth !== 'boolean') securitySettings.requireAuth = process.env.REQUIRE_AUTH !== 'false';
+if (!securitySettings.authScope) securitySettings.authScope = 'all';
+if (typeof securitySettings.allowRegistration !== 'boolean') securitySettings.allowRegistration = true;
+if (typeof securitySettings.allowUserMiotControl !== 'boolean') securitySettings.allowUserMiotControl = true;
+if (typeof securitySettings.allowUserMiotTts !== 'boolean') securitySettings.allowUserMiotTts = false;
+saveJson(SECURITY_FILE, securitySettings, true);
 
-function loadJson<T>(filePath: string, defaultValue: T): T {
-  try {
-    if (fs.existsSync(filePath)) {
-      const content = fs.readFileSync(filePath, 'utf-8');
-      if (content && content.trim()) {
-        const parsed = JSON.parse(content);
-        return unwrapEncryptedDiskData(filePath, parsed) as T;
-      }
-    }
-  } catch (err) {
-    console.warn(`[Persistence] ⚠️ Failed to load ${filePath}, attempting recovery from backup...`, err);
-    // Auto self-healing from .bak
-    try {
-      const bakFile = `${filePath}.bak`;
-      if (fs.existsSync(bakFile)) {
-        const bakContent = fs.readFileSync(bakFile, 'utf-8');
-        if (bakContent && bakContent.trim()) {
-          const parsed = JSON.parse(bakContent);
-          console.log(`[Persistence Recovery] ✅ Successfully recovered ${filePath} from ${bakFile}`);
-          // Restore main file
-          fs.writeFileSync(filePath, bakContent, 'utf-8');
-          return unwrapEncryptedDiskData(filePath, parsed) as T;
-        }
-      }
-    } catch (bakErr) {
-      console.error(`[Persistence] ❌ Recovery from backup also failed for ${filePath}:`, bakErr);
-    }
-  }
-  return defaultValue;
-}
+// Auth middleware for API routes
+app.use('/api', createAuthMiddleware({
+  getSecuritySettings: () => securitySettings,
+  jwtSecret: JWT_SECRET,
+  apiKey: API_KEY
+}));
 
-/**
- * Transparently decrypt sensitive secrets after reading from disk
- */
-function unwrapEncryptedDiskData(filePath: string, data: any): any {
-  if (!data) return data;
-  if (filePath === CONFIG_FILE) {
-    return restoreConfigFromDisk(data);
-  }
-  if (filePath === DEVICES_FILE) {
-    return restoreDevicesFromDisk(data);
-  }
-  if (filePath === NAVIDROME_FILE && data.password && typeof data.password === 'string') {
-    return { ...data, password: decryptSecret(data.password) };
-  }
-  if (filePath === DB_CONFIG_FILE) {
-    const clone = { ...data };
-    if (clone.postgresConfig?.password) {
-      clone.postgresConfig = { ...clone.postgresConfig, password: decryptSecret(clone.postgresConfig.password) };
-    }
-    if (clone.mysqlConfig?.password) {
-      clone.mysqlConfig = { ...clone.mysqlConfig, password: decryptSecret(clone.mysqlConfig.password) };
-    }
-    return clone;
-  }
-  return data;
-}
-
-/**
- * Transparently encrypt sensitive secrets before serializing to disk
- */
-function wrapEncryptedDiskData(filePath: string, data: any): any {
-  if (!data) return data;
-  if (filePath === CONFIG_FILE) {
-    return prepareConfigForDisk(data);
-  }
-  if (filePath === DEVICES_FILE) {
-    return prepareDevicesForDisk(data);
-  }
-  if (filePath === NAVIDROME_FILE && data.password && typeof data.password === 'string') {
-    return { ...data, password: encryptSecret(data.password) };
-  }
-  if (filePath === DB_CONFIG_FILE) {
-    const clone = { ...data };
-    if (clone.postgresConfig?.password) {
-      clone.postgresConfig = { ...clone.postgresConfig, password: encryptSecret(clone.postgresConfig.password) };
-    }
-    if (clone.mysqlConfig?.password) {
-      clone.mysqlConfig = { ...clone.mysqlConfig, password: encryptSecret(clone.mysqlConfig.password) };
-    }
-    return clone;
-  }
-  return data;
-}
-
-// File Mutex Lock & Sequential Write Queue to eliminate race conditions
-const saveJsonDebounceTimers = new Map<string, NodeJS.Timeout>();
-const pendingSaveJsonData = new Map<string, any>();
-const fileWriteLocks = new Map<string, boolean>();
-
-function executeAtomicFileWrite(filePath: string, dataToWrite: any): void {
-  try {
-    // 1. Deep clone & prepare encryption for disk
-    const diskPayload = wrapEncryptedDiskData(filePath, JSON.parse(JSON.stringify(dataToWrite)));
-    const jsonStr = JSON.stringify(diskPayload, null, 2);
-
-    // 2. Ensure parent directory exists
-    const dir = path.dirname(filePath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-
-    // 3. Write to temporary file with unique PID/timestamp
-    const tmpFile = `${filePath}.tmp.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}`;
-    fs.writeFileSync(tmpFile, jsonStr, 'utf-8');
-
-    // 4. Validate written temporary file
-    const stats = fs.statSync(tmpFile);
-    if (stats.size === 0) {
-      throw new Error(`Temp file ${tmpFile} is empty! Aborting atomic write.`);
-    }
-
-    // 5. Rotate .bak backup if target file exists and is valid
-    if (fs.existsSync(filePath)) {
-      try {
-        const currentStats = fs.statSync(filePath);
-        if (currentStats.size > 0) {
-          const bakFile = `${filePath}.bak`;
-          fs.copyFileSync(filePath, bakFile);
-        }
-      } catch {}
-    }
-
-    // 6. Atomic swap
-    fs.renameSync(tmpFile, filePath);
-  } catch (err) {
-    console.error(`[Persistence Lock] ❌ Failed to atomically write to ${filePath}:`, err);
-  }
-}
-
-function saveJson(filePath: string, data: any, immediate = false): void {
-  pendingSaveJsonData.set(filePath, data);
-
-  // Synchronously keep core module instances in lockstep with in-memory state
-  try {
-    if (filePath === SONGS_FILE && Array.isArray(data)) {
-      musicEngine.setSongs(data);
-    } else if (filePath === PLAYLISTS_FILE && Array.isArray(data)) {
-      playlistEngine.setPlaylists(data);
-    } else if (filePath === DEVICES_FILE && Array.isArray(data)) {
-      deviceManager.setDevices(data);
-    }
-  } catch {}
-
-  const doWrite = () => {
-    const toWrite = pendingSaveJsonData.get(filePath);
-    if (toWrite === undefined) return;
-    pendingSaveJsonData.delete(filePath);
-    saveJsonDebounceTimers.delete(filePath);
-
-    // Acquire file lock
-    if (fileWriteLocks.get(filePath)) {
-      // Re-schedule if another write on same file is actively executing
-      setTimeout(doWrite, 50);
-      return;
-    }
-
-    fileWriteLocks.set(filePath, true);
-    try {
-      executeAtomicFileWrite(filePath, toWrite);
-    } finally {
-      fileWriteLocks.set(filePath, false);
-    }
-  };
-
-  if (immediate) {
-    const existing = saveJsonDebounceTimers.get(filePath);
-    if (existing) {
-      clearTimeout(existing);
-      saveJsonDebounceTimers.delete(filePath);
-    }
-    doWrite();
-    return;
-  }
-
-  if (!saveJsonDebounceTimers.has(filePath)) {
-    const timer = setTimeout(doWrite, 200);
-    saveJsonDebounceTimers.set(filePath, timer);
-  }
-}
-
-// Flush all pending writes synchronously on process termination signals
-function flushAllPendingWritesSync(): void {
-  for (const [filePath, data] of pendingSaveJsonData.entries()) {
-    try {
-      if (data !== undefined) {
-        executeAtomicFileWrite(filePath, data);
-      }
-    } catch (err) {
-      console.error(`[Persistence] Error flushing ${filePath} on exit:`, err);
-    }
-  }
-  pendingSaveJsonData.clear();
-}
-
+// Flush writes on shutdown
 process.on('beforeExit', flushAllPendingWritesSync);
 process.on('SIGINT', () => {
   flushAllPendingWritesSync();
@@ -482,8 +318,7 @@ process.on('SIGTERM', () => {
   process.exit(0);
 });
 
-// Navidrome remote server configuration & helper
-const NAVIDROME_FILE = path.join(DATA_DIR, 'navidrome.json');
+// Navidrome remote integration state & helpers
 let navidromeConfig = loadJson(NAVIDROME_FILE, {
   serverUrl: '',
   username: '',
@@ -492,8 +327,6 @@ let navidromeConfig = loadJson(NAVIDROME_FILE, {
   apiVersion: '1.16.1',
   serverVersion: ''
 });
-
-// Reset if config file previously stored masked placeholder string
 if (navidromeConfig.password === '••••••••' || navidromeConfig.password === '********') {
   navidromeConfig.password = '';
   navidromeConfig.isConnected = false;
@@ -511,664 +344,6 @@ function getSubsonicPassAuthQuery(user: string, pass: string, apiVer?: string): 
   return `u=${encodeURIComponent(user)}&p=${encodeURIComponent(pass)}&v=${encodeURIComponent(ver)}&c=TingLanMusic&f=json`;
 }
 
-// User & Database persistence paths
-const USERS_FILE = path.join(DATA_DIR, 'users.json');
-const DB_CONFIG_FILE = path.join(DATA_DIR, 'db_config.json');
-const SQLITE_FILE = path.join(DATA_DIR, 'tinglan.sqlite');
-
-// Curated music listener & user avatar presets
-const DEFAULT_REGULAR_USER_AVATAR = 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=300&q=80';
-const DEFAULT_ADMIN_USER_AVATAR = 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=300&q=80';
-
-const USER_AVATAR_PRESETS = [
-  'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=300&q=80',
-  'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=300&q=80',
-  'https://images.unsplash.com/photo-1570295999919-56ceb5ecca61?auto=format&fit=crop&w=300&q=80',
-  'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=300&q=80',
-  'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&w=300&q=80',
-  'https://images.unsplash.com/photo-1522075469751-3a6694fb2f61?auto=format&fit=crop&w=300&q=80'
-];
-
-function getDefaultUserAvatar(role: string = 'user', username: string = 'user'): string {
-  if (role === 'admin' || username === 'admin') {
-    return DEFAULT_ADMIN_USER_AVATAR;
-  }
-  let hash = 0;
-  for (let i = 0; i < username.length; i++) {
-    hash = username.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  const index = Math.abs(hash) % USER_AVATAR_PRESETS.length;
-  return USER_AVATAR_PRESETS[index];
-}
-
-// Default initial admin account
-const defaultAdminUser = {
-  id: 'usr-admin-001',
-  username: 'admin',
-  email: 'admin@tinglan.audio',
-  passwordHash: bcrypt.hashSync('admin123', 10),
-  role: 'admin',
-  avatarUrl: DEFAULT_ADMIN_USER_AVATAR,
-  createdAt: new Date().toISOString()
-};
-
-let storedUsers: any[] = loadJson(USERS_FILE, [defaultAdminUser]);
-if (!storedUsers.some(u => u.username === 'admin')) {
-  storedUsers.unshift(defaultAdminUser);
-}
-// Ensure all users have a valid default avatar
-storedUsers.forEach(u => {
-  if (!u.avatarUrl) {
-    u.avatarUrl = getDefaultUserAvatar(u.role, u.username);
-  }
-});
-saveJson(USERS_FILE, storedUsers);
-
-// Active database configuration (sqlite | postgres | mysql)
-let activeDbConfig = loadJson(DB_CONFIG_FILE, {
-  engine: 'sqlite',
-  postgresConfig: { host: 'localhost', port: 5432, user: 'postgres', password: '', database: 'tinglan_db' },
-  mysqlConfig: { host: 'localhost', port: 3306, user: 'root', password: '', database: 'tinglan_db' }
-});
-
-// System Security & Remote Access Settings persistence
-const SECURITY_FILE = path.join(DATA_DIR, 'security.json');
-
-interface SecuritySettings {
-  requireAuth: boolean;
-  authScope: 'all' | 'wan_only';
-  allowRegistration?: boolean;
-  allowUserMiotControl?: boolean;
-  allowUserMiotTts?: boolean;
-  updatedAt: string;
-}
-
-const defaultSecuritySettings: SecuritySettings = {
-  requireAuth: process.env.REQUIRE_AUTH !== 'false', // Enabled (true) by default
-  authScope: 'all',
-  allowRegistration: true, // Registration enabled by default
-  allowUserMiotControl: true, // Allowed for regular users by default
-  allowUserMiotTts: false, // Disallowed for regular users by default (admin only)
-  updatedAt: new Date().toISOString()
-};
-
-let securitySettings: SecuritySettings = loadJson(SECURITY_FILE, defaultSecuritySettings);
-if (typeof securitySettings.requireAuth !== 'boolean') {
-  securitySettings.requireAuth = process.env.REQUIRE_AUTH !== 'false';
-}
-if (!securitySettings.authScope) {
-  securitySettings.authScope = 'all';
-}
-if (typeof securitySettings.allowRegistration !== 'boolean') {
-  securitySettings.allowRegistration = true;
-}
-if (typeof securitySettings.allowUserMiotControl !== 'boolean') {
-  securitySettings.allowUserMiotControl = true;
-}
-if (typeof securitySettings.allowUserMiotTts !== 'boolean') {
-  securitySettings.allowUserMiotTts = false;
-}
-// Ensure security.json exists on disk with active security settings
-saveJson(SECURITY_FILE, securitySettings, true);
-
-// Initialize SQLite Database Instance
-let sqliteDb: any = null;
-
-function initSqliteDatabase() {
-  if (!sqlite3) {
-    console.log('[Database] SQLite3 module not available, using JSON persistent store.');
-    return;
-  }
-  try {
-    const sqlite3Client = sqlite3.verbose ? sqlite3.verbose() : sqlite3;
-    sqliteDb = new sqlite3Client.Database(SQLITE_FILE, (err: any) => {
-      if (err) {
-        console.error('Failed to connect to SQLite DB', err);
-      } else {
-
-        console.log(`[Database] SQLite 3 database active at ${SQLITE_FILE}`);
-        sqliteDb?.serialize(() => {
-          sqliteDb?.run(`
-            CREATE TABLE IF NOT EXISTS users (
-              id TEXT PRIMARY KEY,
-              username TEXT UNIQUE NOT NULL,
-              email TEXT NOT NULL,
-              password_hash TEXT NOT NULL,
-              role TEXT NOT NULL DEFAULT 'user',
-              avatar_url TEXT,
-              created_at TEXT NOT NULL
-            )
-          `);
-          sqliteDb?.run(`
-            CREATE TABLE IF NOT EXISTS songs (
-              id TEXT PRIMARY KEY,
-              title TEXT NOT NULL,
-              artist TEXT,
-              album TEXT,
-              duration INTEGER,
-              url TEXT,
-              cover_url TEXT,
-              lyrics TEXT,
-              genre TEXT,
-              year INTEGER,
-              bitrate TEXT,
-              file_size TEXT,
-              source TEXT,
-              created_at TEXT
-            )
-          `);
-          sqliteDb?.run(`
-            CREATE TABLE IF NOT EXISTS playlists (
-              id TEXT PRIMARY KEY,
-              user_id TEXT,
-              name TEXT NOT NULL,
-              description TEXT,
-              cover_url TEXT,
-              song_ids TEXT,
-              created_at TEXT
-            )
-          `);
-
-          // Insert admin user if missing in SQLite
-          sqliteDb?.run(`
-            INSERT OR IGNORE INTO users (id, username, email, password_hash, role, avatar_url, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-          `, [defaultAdminUser.id, defaultAdminUser.username, defaultAdminUser.email, defaultAdminUser.passwordHash, defaultAdminUser.role, defaultAdminUser.avatarUrl, defaultAdminUser.createdAt]);
-        });
-      }
-    });
-  } catch (e) {
-    console.error('SQLite initialization failed', e);
-  }
-}
-
-initSqliteDatabase();
-
-// ---------------- NETWORK & IP CLASSIFICATION HELPERS ----------------
-function getClientIp(req: Request): string {
-  // Only trust X-Forwarded-For if TRUST_PROXY environment variable is explicitly enabled
-  if (process.env.TRUST_PROXY === 'true') {
-    const forwarded = req.headers['x-forwarded-for'];
-    if (typeof forwarded === 'string' && forwarded.length > 0) {
-      return forwarded.split(',')[0].trim().replace(/^::ffff:/, '');
-    }
-    const realIp = req.headers['x-real-ip'];
-    if (typeof realIp === 'string' && realIp.length > 0) {
-      return realIp.trim().replace(/^::ffff:/, '');
-    }
-  }
-  // Otherwise use physical socket remote address to prevent header spoofing attacks
-  const rawIp = req.socket.remoteAddress || (req as any).ip || '127.0.0.1';
-  return String(rawIp).replace(/^::ffff:/, '');
-}
-
-// In-memory rate limiting and brute-force protection for login
-const loginAttemptTracker = new Map<string, { count: number; lockedUntil: number }>();
-
-function checkLoginRateLimit(ip: string): { allowed: boolean; remainingLockSeconds?: number } {
-  const record = loginAttemptTracker.get(ip);
-  if (!record) return { allowed: true };
-  const now = Date.now();
-  if (record.lockedUntil > now) {
-    return {
-      allowed: false,
-      remainingLockSeconds: Math.ceil((record.lockedUntil - now) / 1000)
-    };
-  }
-  if (record.lockedUntil <= now && record.lockedUntil > 0) {
-    loginAttemptTracker.delete(ip);
-    return { allowed: true };
-  }
-  return { allowed: true };
-}
-
-function recordLoginAttempt(ip: string, isSuccess: boolean) {
-  if (isSuccess) {
-    loginAttemptTracker.delete(ip);
-    return;
-  }
-  const now = Date.now();
-  const record = loginAttemptTracker.get(ip) || { count: 0, lockedUntil: 0 };
-  record.count += 1;
-  if (record.count >= 5) {
-    // Lock for 5 minutes after 5 consecutive failures
-    record.lockedUntil = now + 5 * 60 * 1000;
-  }
-  loginAttemptTracker.set(ip, record);
-
-  // Periodic pruning of stale attempt records to prevent unbounded memory growth
-  if (loginAttemptTracker.size > 200) {
-    for (const [trackedIp, data] of loginAttemptTracker.entries()) {
-      if (data.lockedUntil > 0 && data.lockedUntil < now) {
-        loginAttemptTracker.delete(trackedIp);
-      }
-    }
-  }
-}
-
-function isPrivateOrLocalIp(ip: string): boolean {
-  if (!ip) return false;
-  const cleanIp = ip.replace(/^::ffff:/, '').trim();
-  if (
-    cleanIp === '127.0.0.1' ||
-    cleanIp === '::1' ||
-    cleanIp === 'localhost' ||
-    cleanIp.startsWith('fe80:')
-  ) {
-    return true;
-  }
-  // 10.0.0.0/8
-  if (cleanIp.startsWith('10.')) return true;
-  // 172.16.0.0/12
-  if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(cleanIp)) return true;
-  // 192.168.0.0/16
-  if (cleanIp.startsWith('192.168.')) return true;
-  // Carrier grade NAT 100.64.0.0/10 (tailscale/CGNAT)
-  if (/^100\.(6[4-9]|[7-9][0-9]|1[0-1][0-9]|12[0-7])\./.test(cleanIp)) return true;
-  return false;
-}
-
-function isAuthRequiredForRequest(req: Request): boolean {
-  if (!securitySettings.requireAuth) {
-    return false;
-  }
-  if (securitySettings.authScope === 'wan_only') {
-    const clientIp = getClientIp(req);
-    const isLan = isPrivateOrLocalIp(clientIp);
-    if (isLan) {
-      return false; // LAN local access exempt
-    }
-  }
-  return true;
-}
-
-// ---------------- AUTHENTICATION MIDDLEWARE ----------------
-// Intercept and protect all /api/* routes from unauthorized access
-function authMiddleware(req: Request, res: Response, next: any) {
-  // Normalize path with or without /api prefix
-  const original = (req.originalUrl || req.url).split('?')[0];
-  const relative = (req.path || req.url).split('?')[0];
-  const fullPath = original.startsWith('/api') ? original : `/api${original}`;
-
-  // 1. Whitelisted public paths
-  if (
-    fullPath === '/api/auth/login' ||
-    fullPath === '/api/auth/register' ||
-    fullPath === '/api/auth/status' ||
-    ((fullPath === '/api/system/security' || relative === '/system/security') && req.method === 'GET') ||
-    fullPath === '/api/health' ||
-    fullPath === '/api/ping' ||
-    relative === '/auth/login' ||
-    relative === '/auth/register' ||
-    relative === '/auth/status' ||
-    relative === '/health' ||
-    relative === '/ping'
-  ) {
-    return next();
-  }
-
-  // 2. Audio streaming, TTS synthesis and cover art
-  // Xiaomi smart speakers and standard HTML5 <audio> / <img> pull media directly via HTTP GET without custom headers
-  if (
-    fullPath.startsWith('/api/stream') ||
-    fullPath.startsWith('/api/tts') ||
-    (fullPath.startsWith('/api/songs/') && (fullPath.endsWith('/stream') || fullPath.endsWith('/cover')))
-  ) {
-    return next();
-  }
-
-  // 3. Subsonic /rest protocol endpoints have their own query parameter auth
-  if (fullPath.startsWith('/rest/')) {
-    return next();
-  }
-
-  // 4. API Key check (via header or query param)
-  const apiKey = req.headers['x-api-key'] || req.query.apiKey;
-  if (API_KEY && apiKey === API_KEY) {
-    (req as any).user = { id: 'api-key-user', username: 'api-key-client', role: 'admin' };
-    return next();
-  }
-
-  // 5. JWT Bearer Token in Authorization header or token query param
-  const authHeader = req.headers['authorization'];
-  let token: string | null = null;
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    token = authHeader.slice(7).trim();
-  } else if (req.query.token) {
-    token = String(req.query.token).trim();
-  }
-
-  // 5. Check if authentication is strictly required for this request / client
-  const authRequired = isAuthRequiredForRequest(req);
-
-  if (token) {
-    try {
-      const decoded: any = jwt.verify(token, JWT_SECRET);
-      (req as any).user = decoded;
-      return next();
-    } catch (err: any) {
-      if (authRequired) {
-        return res.status(401).json({
-          success: false,
-          error: '身份验证令牌无效或已过期，请重新登录账号',
-          requireLogin: true
-        });
-      }
-    }
-  }
-
-  // 6. If auth is strictly required and user has not authenticated, block all protected endpoints
-  if (authRequired) {
-    return res.status(401).json({
-      success: false,
-      error: '系统已开启访问安全保护（全网或公网访问限制），请先登录账号方可操作',
-      requireLogin: true
-    });
-  }
-
-  // 7. Default mode (protection disabled or exempt LAN client)
-  return next();
-}
-
-app.use('/api', authMiddleware);
-
-// ---------------- AUTHENTICATION & SECURITY DOMAIN ROUTERS (Phase 1 Decoupling) ----------------
-app.use("/api/auth", createAuthRouter({
-  getSecuritySettings: () => {
-    securitySettings = loadJson(SECURITY_FILE, securitySettings);
-    return securitySettings;
-  },
-  setSecuritySettings: (settings) => {
-    securitySettings = settings;
-    saveJson(SECURITY_FILE, securitySettings, true);
-  },
-  getStoredUsers: () => {
-    storedUsers = loadJson(USERS_FILE, storedUsers);
-    return storedUsers;
-  },
-  setStoredUsers: (users) => {
-    storedUsers = users;
-    saveJson(USERS_FILE, storedUsers);
-  },
-  getClientIp,
-  isPrivateOrLocalIp,
-  isAuthRequiredForRequest,
-  checkLoginRateLimit,
-  recordLoginAttempt,
-  getDefaultUserAvatar,
-  jwtSecret: JWT_SECRET,
-  sqliteDb
-}));
-
-app.use("/api/system", createSecurityRouter({
-  getSecuritySettings: () => {
-    securitySettings = loadJson(SECURITY_FILE, securitySettings);
-    return securitySettings;
-  },
-  setSecuritySettings: (settings) => {
-    securitySettings = settings;
-    saveJson(SECURITY_FILE, securitySettings, true);
-  },
-  getStoredUsers: () => {
-    storedUsers = loadJson(USERS_FILE, storedUsers);
-    return storedUsers;
-  },
-  getClientIp,
-  isPrivateOrLocalIp,
-  isAuthRequiredForRequest
-}));
-
-// ---------------- DATABASE DOMAIN ROUTER (Phase 1 Decoupling) ----------------
-app.use("/api/db", createDbRouter({
-  getActiveDbConfig: () => activeDbConfig,
-  setActiveDbConfig: (config) => {
-    activeDbConfig = config;
-    saveJson(DB_CONFIG_FILE, activeDbConfig);
-  },
-  getStoredUsers: () => {
-    storedUsers = loadJson(USERS_FILE, storedUsers);
-    return storedUsers;
-  },
-  getStoredSongs: () => (typeof storedSongs !== "undefined" ? storedSongs : []),
-  getStoredPlaylists: () => (typeof storedPlaylists !== "undefined" ? storedPlaylists : []),
-  sqliteDb
-}));
-
-
-// Initial default songs
-const DEFAULT_SONGS = [
-  {
-    id: 'song-1',
-    title: '月半小夜曲 (Acoustic Night)',
-    artist: '李克勤 / 弦乐室内乐团',
-    album: '港乐经典·发烧重现',
-    duration: 234,
-    url: '/api/stream/song-1.mp3',
-    coverUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=600&q=80',
-    genre: 'Classic Pop / Acoustic',
-    year: 2021,
-    bitrate: '320kbps MP3',
-    fileSize: '9.2 MB',
-    isFavorite: true,
-    source: 'local',
-    lyrics: `[00:00.00]月半小夜曲 - 弦乐原声版\n[00:04.00]词：向雪怀 曲：河合奈保子\n[00:08.50]演奏：Tinglan 听澜 Hi-Fi 发烧工作室\n[00:15.00]哪怕面对冷冰冰的墙壁\n[00:22.00]深深的一声叹息\n[00:29.00]仍难忘你的笑语盈盈\n[00:36.00]仍难舍你的柔情似蜜\n[00:44.00]月亮为何还在夜空高挂\n[00:51.50]似这半月儿静听幽咽的吉他\n[00:58.50]幽幽提琴在低诉我心声\n[01:05.50]如泣如诉如醉如痴\n[01:13.00]我的心仍在期待你的归期\n[01:20.50]小爱音箱正在高保真投放此曲\n[01:28.00]提琴轻诉，如风拂面\n[01:36.00]夜深沉，乐声犹在耳畔\n[01:50.00]（间奏·纯净吉他独奏）\n[02:10.00]月半小夜曲 - Tinglan 听澜音乐流媒体`
-  },
-  {
-    id: 'song-2',
-    title: '春江花月夜 (Moonlit Spring River)',
-    artist: '中央民族乐团 / 古筝与箫',
-    album: '国乐大典·东方神韵',
-    duration: 278,
-    url: '/api/stream/song-2.mp3',
-    coverUrl: 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=600&q=80',
-    genre: 'Traditional / Ambient',
-    year: 2023,
-    bitrate: 'FLAC 24bit/96kHz',
-    fileSize: '28.4 MB',
-    isFavorite: true,
-    source: 'local',
-    lyrics: `[00:00.00]春江花月夜 - 古筝箫韵\n[00:06.00]古曲改编 / 高保真无损母带\n[00:14.00]春江潮水连海平，海上明月共潮生\n[00:28.00]滟滟随波千万里，何处春江无月明\n[00:42.00]江流宛转绕芳甸，月照花林皆似霰\n[00:56.00]空里流霜不觉飞，汀上白沙看不见\n[01:12.00]江天一色无纤尘，皎皎空中孤月轮\n[01:26.00]江畔何人初见月？江月何年初照人？\n[01:42.00]人生代代无穷已，江月年年望相似\n[02:00.00]（古筝泛音如流水潺潺）\n[02:25.00]此时相望不相闻，愿逐月华流照君\n[02:45.00]鸿雁长飞光不度，鱼龙潜跃水成文`
-  },
-  {
-    id: 'song-3',
-    title: '夜的第七章 (Nocturne in Dim Light)',
-    artist: '周杰伦 / 潘儿',
-    album: '依然范特西 (Classic Hi-Res)',
-    duration: 220,
-    url: '/api/stream/song-3.mp3',
-    coverUrl: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?auto=format&fit=crop&w=600&q=80',
-    genre: 'Cinematic Hip-hop',
-    year: 2006,
-    bitrate: '320kbps MP3',
-    fileSize: '8.8 MB',
-    isFavorite: false,
-    source: 'local',
-    lyrics: `[00:00.00]夜的第七章 - 华丽交响编曲\n[00:05.00]1983年小巷 12月晴朗\n[00:10.00]夜的第七章 打字机继续推向\n[00:15.00]接近事实的那下一行\n[00:20.00]石楠烟斗的雾 飘向枯萎的树\n[00:25.00]沉默的证人绕过贝克街旁\n[00:30.00]如果邪恶 是华丽残酷的乐章\n[00:35.00]它的终场 我会亲手写上\n[00:41.00]晨曦的光 风干最后一行忧伤\n[00:47.00]黑色的墨 染上安详`
-  },
-  {
-    id: 'song-4',
-    title: '海阔天空 (Boundless Oceans, Vast Skies)',
-    artist: 'Beyond',
-    album: '海阔天空 30周年纪念重置',
-    duration: 326,
-    url: '/api/stream/song-4.mp3',
-    coverUrl: 'https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?auto=format&fit=crop&w=600&q=80',
-    genre: 'Rock / Classical Rock',
-    year: 1993,
-    bitrate: 'FLAC 无损音频',
-    fileSize: '34.1 MB',
-    isFavorite: true,
-    source: 'local',
-    lyrics: `[00:00.00]海阔天空 - Beyond\n[00:06.00]词：黄家驹 曲：黄家驹\n[00:18.00]今天我 寒夜里看雪飘过\n[00:25.00]怀着冷却了的心窝飘远方\n[00:31.00]风雨里追赶 雾里分不清影踪\n[00:38.00]天空海阔你与我 可会变（谁没在变）\n[00:46.00]多少次 迎着冷眼与嘲笑\n[00:53.00]从没有放弃过心中的理想\n[01:00.00]一刹那恍惚 若有所失的感觉\n[01:07.00]不知不觉已变淡 心里爱（谁明白我）\n[01:15.00]原谅我这一生不羁放纵爱自由\n[01:22.50]也会怕有一天会跌倒\n[01:29.50]背弃了理想 谁人都可以\n[01:36.50]哪会怕有一天只你共我`
-  },
-  {
-    id: 'song-5',
-    title: 'Rainy Cafe (午后咖啡馆雨声)',
-    artist: 'Lofi Coffee Roaster',
-    album: 'ChillHop & Ambient Soundscapes',
-    duration: 185,
-    url: '/api/stream/song-5.mp3',
-    coverUrl: 'https://images.unsplash.com/photo-1501386761578-eac5c94b800a?auto=format&fit=crop&w=600&q=80',
-    genre: 'Lo-Fi / Relaxing',
-    year: 2024,
-    bitrate: '320kbps MP3',
-    fileSize: '7.1 MB',
-    isFavorite: false,
-    source: 'local',
-    lyrics: `[00:00.00]Rainy Cafe - 午后微雨与醇香\n[00:10.00]纯音乐放空曲目\n[00:25.00]雨丝敲击着木质窗棂\n[00:45.00]小爱音箱伴您静享惬意午后\n[01:10.00]研磨咖啡豆的沙沙声与低音贝斯共鸣\n[01:35.00]放松心情，沉浸在这片安宁之中`
-  },
-  {
-    id: 'song-6',
-    title: '加州旅馆 (Hotel California Acoustic Live)',
-    artist: 'Eagles (发烧试音碟)',
-    album: 'Hell Freezes Over (Remastered)',
-    duration: 312,
-    url: '/api/stream/song-6.mp3',
-    coverUrl: 'https://images.unsplash.com/photo-1465847899084-d164df4dedc6?auto=format&fit=crop&w=600&q=80',
-    genre: 'Classic Rock / Audiophile',
-    year: 1994,
-    bitrate: 'DSD / DSD64 (DSF)',
-    fileSize: '46.8 MB',
-    isFavorite: true,
-    source: 'local',
-    lyrics: `[00:00.00]Hotel California (Live Acoustic)\n[00:15.00]吉他独奏前奏与现场掌声\n[00:35.00]手鼓低频试音核心段落\n[00:55.00]On a dark desert highway, cool wind in my hair\n[01:03.00]Warm smell of colitas, rising up through the air\n[01:11.00]Up ahead in the distance, I saw a shimmering light\n[01:19.00]My head grew heavy and my sight grew dim\n[01:23.00]I had to stop for the night`
-  }
-];
-
-const DEFAULT_PLAYLISTS = [
-  {
-    id: 'pl-xiaomi',
-    name: '小米音箱日常伴听',
-    description: '早晨唤醒、睡前放松与背景伴奏优选歌曲',
-    coverUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=600&q=80',
-    songIds: ['song-1', 'song-2', 'song-5'],
-    createdAt: '2026-03-01'
-  },
-  {
-    id: 'pl-favorites',
-    name: '我喜欢的高保真音乐',
-    description: '无损与发烧重制收藏单曲',
-    coverUrl: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?auto=format&fit=crop&w=600&q=80',
-    songIds: ['song-1', 'song-2', 'song-4', 'song-6'],
-    createdAt: '2026-03-02'
-  },
-  {
-    id: 'pl-hifi',
-    name: 'Hi-Fi 试音专用 (Sound Pro)',
-    description: '测试小爱音箱高低频延展与人声结像',
-    coverUrl: 'https://images.unsplash.com/photo-1465847899084-d164df4dedc6?auto=format&fit=crop&w=600&q=80',
-    songIds: ['song-2', 'song-4', 'song-6'],
-    createdAt: '2026-03-03'
-  }
-];
-
-const DEFAULT_DEVICES: any[] = [];
-
-const DEFAULT_CONFIG: MiotConfig = {
-  miUser: process.env.MI_USER || '',
-  isLoggedIn: !!process.env.MI_USER,
-  serverHost: process.env.SERVER_HOST || '',
-  activeDeviceId: '',
-  autoCast: true,
-  ttsAnnouncement: false,
-  ttsPrefix: '正在为您播放',
-  volumeSync: true,
-  userId: '',
-  serviceToken: '',
-  micoServiceToken: '',
-  miotServiceToken: '',
-  isMicoValid: false,
-  bindMode: 'account',
-  castMode: 'auto' // auto | cdn_direct | xiaoai_directive | lan_stream
-};
-
-// In-memory state synchronized with JSON files
-let storedSongs: any[] = loadJson(SONGS_FILE, DEFAULT_SONGS);
-let storedPlaylists: any[] = loadJson(PLAYLISTS_FILE, DEFAULT_PLAYLISTS);
-
-// Phase 2: Strict 0 = 0. Default devices list is empty.
-let rawXiaomiDevices: any[] = loadJson(DEVICES_FILE, []);
-if (!Array.isArray(rawXiaomiDevices)) {
-  rawXiaomiDevices = [];
-}
-
-let xiaomiDevices: any[] = rawXiaomiDevices.map((d: any) => {
-  const hasToken = Boolean(d.token && String(d.token).trim().length > 0);
-  return {
-    ...d,
-    did: String(d.did),
-    model: d.model || 'xiaomi.wifispeaker.sound',
-    name: (d.name || '小米智能音箱').replace(/\s*[\(（]点击(右侧)?编辑[\)）]/g, '').trim(),
-    platform: d.platform || (hasToken && d.ip ? 'miio' : 'mina'),
-    source: d.source || (d.ip && hasToken ? 'hybrid' : (d.ip ? 'lan' : 'cloud')),
-    capabilities: d.capabilities || {
-      hasPlayControl: true,
-      hasTts: true,
-      hasVolumeControl: true,
-      hasClock: /clock|c01|x08|lx04|l05c/i.test(d.model || ''),
-      supportsDlna: /lx06|pro|sound|l16a/i.test(d.model || ''),
-      supportsLocalMiio: Boolean(hasToken && d.ip)
-    },
-    online: d.online ?? d.isOnline ?? false,
-    isOnline: d.online ?? d.isOnline ?? false,
-  };
-});
-let miotConfig = loadJson(CONFIG_FILE, DEFAULT_CONFIG);
-if ((miotConfig as any).enableReplayGain) {
-  streamServer.setLoudnessConfig(true, (miotConfig as any).targetLufs || -16);
-}
-
-// ---------------- SINGLE SOURCE OF TRUTH LOCKSTEP SYNC (P1 ARCHITECTURE) ----------------
-// Eliminate dual-state divergence: ensure musicEngine, playlistEngine, and deviceManager
-// stay perfectly synchronized with stored in-memory JSON state at all times.
-export function syncSongs(newSongs?: any[]) {
-  if (newSongs) storedSongs = newSongs;
-  saveJson(SONGS_FILE, storedSongs);
-  try { musicEngine.setSongs(storedSongs); } catch {}
-}
-
-export function syncPlaylists(newPlaylists?: any[]) {
-  if (newPlaylists) storedPlaylists = newPlaylists;
-  saveJson(PLAYLISTS_FILE, storedPlaylists);
-  try { playlistEngine.setPlaylists(storedPlaylists); } catch {}
-}
-
-export function syncDevices(newDevices?: any[]) {
-  if (newDevices) xiaomiDevices = newDevices;
-  saveJson(DEVICES_FILE, xiaomiDevices);
-  try { deviceManager.setDevices(xiaomiDevices); } catch {}
-}
-
-// Initial boot synchronization
-syncSongs();
-syncPlaylists();
-syncDevices();
-
-// ---------------- SECURE SIGNED STREAM TOKENS (P2 SECURITY) ----------------
-// Generates an HMAC-signed media stream token with expiry for secure audio casting
-function generateStreamToken(songId: string, ttlSeconds: number = 86400): string {
-  const exp = Math.floor(Date.now() / 1000) + ttlSeconds;
-  const dataToSign = `${songId}:${exp}`;
-  const hmac = crypto.createHmac('sha256', JWT_SECRET).update(dataToSign).digest('hex').slice(0, 16);
-  return `${exp}.${hmac}`;
-}
-
-function verifyStreamToken(songId: string, token: string): boolean {
-  if (!token) return false;
-  const parts = token.split('.');
-  if (parts.length !== 2) return false;
-  const exp = parseInt(parts[0], 10);
-  if (isNaN(exp) || Math.floor(Date.now() / 1000) > exp) return false;
-  const dataToSign = `${songId}:${exp}`;
-  const expectedHmac = crypto.createHmac('sha256', JWT_SECRET).update(dataToSign).digest('hex').slice(0, 16);
-  try {
-    return crypto.timingSafeEqual(Buffer.from(parts[1]), Buffer.from(expectedHmac));
-  } catch {
-    return false;
-  }
-}
-
-// Dynamically refresh Navidrome song and playlist credentials across stored records
 function refreshNavidromeSongCredentials(): { songsUpdated: number; playlistsUpdated: number } {
   if (!navidromeConfig.serverUrl || !navidromeConfig.username) {
     return { songsUpdated: 0, playlistsUpdated: 0 };
@@ -1177,7 +352,7 @@ function refreshNavidromeSongCredentials(): { songsUpdated: number; playlistsUpd
   const passQuery = getSubsonicPassAuthQuery(navidromeConfig.username, navidromeConfig.password);
   let songsUpdated = 0;
 
-  for (const song of storedSongs) {
+  for (const song of musicRepository.getAllSongs()) {
     const isNavi = (song.id && String(song.id).startsWith('navidrome-')) ||
                    (song.url && (/rest\/stream/i.test(song.url) || /rest\/stream\.view/i.test(song.url)));
     if (isNavi) {
@@ -1190,7 +365,6 @@ function refreshNavidromeSongCredentials(): { songsUpdated: number; playlistsUpd
       }
       if (rawId) {
         song.url = `${srvUrl}/rest/stream?id=${encodeURIComponent(rawId)}&${passQuery}`;
-        // Also update coverArt if it was from Navidrome
         if (song.coverUrl && (/rest\/getCoverArt/i.test(song.coverUrl) || song.coverUrl.includes(':4533') || song.coverUrl.includes(srvUrl))) {
           let coverId = rawId;
           const cm = song.coverUrl.match(/[?&]id=([^&]+)/);
@@ -1203,12 +377,12 @@ function refreshNavidromeSongCredentials(): { songsUpdated: number; playlistsUpd
   }
 
   if (songsUpdated > 0) {
-    saveJson(SONGS_FILE, storedSongs);
+    musicRepository.schedulePersistSongs(100);
     console.log(`[Navidrome] 🔄 已自动使用最新凭据更新 ${songsUpdated} 首历史导入歌曲的拉流与封面鉴权`);
   }
 
   let playlistsUpdated = 0;
-  for (const pl of storedPlaylists) {
+  for (const pl of musicRepository.getAllPlaylists()) {
     const isNaviPl = (pl.id && String(pl.id).startsWith('navidrome-pl-')) ||
                      (pl.coverUrl && (/rest\/getCoverArt/i.test(pl.coverUrl) || pl.coverUrl.includes(':4533') || pl.coverUrl.includes(srvUrl)));
     if (isNaviPl) {
@@ -1228,7 +402,7 @@ function refreshNavidromeSongCredentials(): { songsUpdated: number; playlistsUpd
   }
 
   if (playlistsUpdated > 0) {
-    saveJson(PLAYLISTS_FILE, storedPlaylists);
+    musicRepository.schedulePersistPlaylists(100);
     console.log(`[Navidrome] 🔄 已自动使用最新凭据更新 ${playlistsUpdated} 个歌单封面鉴权`);
   }
 
@@ -1243,37 +417,106 @@ if (navidromeConfig.serverUrl && navidromeConfig.username && navidromeConfig.pas
   }
 }
 
-// SSRF protection helper
-function isSafeRemoteStreamUrl(urlString: string): boolean {
-  try {
-    const parsed = new URL(urlString);
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
-    const hostname = parsed.hostname.toLowerCase();
-    // Block loopback, link-local, cloud metadata, and internal infrastructure
-    if (
-      hostname === 'localhost' ||
-      hostname === '127.0.0.1' ||
-      hostname === '0.0.0.0' ||
-      hostname === '::1' ||
-      hostname === '169.254.169.254' ||
-      hostname.endsWith('.internal') ||
-      hostname.endsWith('.local')
-    ) {
-      if (navidromeConfig.serverUrl) {
-        try {
-          const naviHost = new URL(navidromeConfig.serverUrl).hostname.toLowerCase();
-          if (hostname === naviHost) return true;
-        } catch {}
-      }
-      return false;
-    }
-    return true;
-  } catch {
-    return false;
-  }
+// MIoT Device & Config State
+const DEFAULT_CONFIG: MiotConfig = {
+  miUser: process.env.MI_USER || '',
+  isLoggedIn: !!process.env.MI_USER,
+  serverHost: process.env.SERVER_HOST || '',
+  activeDeviceId: '',
+  autoCast: true,
+  ttsAnnouncement: false,
+  ttsPrefix: '正在为您播放',
+  volumeSync: true,
+  userId: '',
+  serviceToken: '',
+  micoServiceToken: '',
+  miotServiceToken: '',
+  isMicoValid: false,
+  bindMode: 'account',
+  castMode: 'auto'
+};
+
+let miotConfig = loadJson(CONFIG_FILE, DEFAULT_CONFIG);
+if ((miotConfig as any).enableReplayGain) {
+  streamServer.setLoudnessConfig(true, (miotConfig as any).targetLufs || -16);
 }
 
-// ---------------- STREAM & TRANSCODE ROUTER DOMAIN (Phase 1 Decoupling) ----------------
+// Canonical Single Source of Truth delegating to repositories
+export const getStoredSongs = () => musicRepository.getAllSongs();
+export const setStoredSongs = (newSongs: any[]) => musicRepository.setSongs(newSongs);
+export const getStoredPlaylists = () => musicRepository.getAllPlaylists();
+export const setStoredPlaylists = (newPlaylists: any[]) => musicRepository.setPlaylists(newPlaylists);
+export const getStoredDevices = () => deviceRepository.getAllDevices();
+export const setStoredDevices = (newDevices: any[]) => deviceRepository.setDevices(newDevices);
+export function syncSongs(newSongs?: any[]) { if (newSongs) musicRepository.setSongs(newSongs); }
+export function syncPlaylists(newPlaylists?: any[]) { if (newPlaylists) musicRepository.setPlaylists(newPlaylists); }
+export function syncDevices(newDevices?: any[]) { if (newDevices) deviceRepository.setDevices(newDevices); }
+
+// ---------------- MOUNT DOMAIN ROUTERS ----------------
+
+// 1. Auth & Security
+app.use('/api/auth', createAuthRouter({
+  getSecuritySettings: () => {
+    securitySettings = loadJson(SECURITY_FILE, securitySettings);
+    return securitySettings;
+  },
+  setSecuritySettings: (settings) => {
+    securitySettings = settings;
+    saveJson(SECURITY_FILE, securitySettings, true);
+  },
+  getStoredUsers: () => {
+    storedUsers = loadJson(USERS_FILE, storedUsers);
+    return storedUsers;
+  },
+  setStoredUsers: (users) => {
+    storedUsers = users;
+    saveJson(USERS_FILE, storedUsers);
+  },
+  getClientIp,
+  isPrivateOrLocalIp,
+  isAuthRequiredForRequest: (req) => isAuthRequiredForRequest(req, () => securitySettings),
+  checkLoginRateLimit,
+  recordLoginAttempt,
+  getDefaultUserAvatar,
+  jwtSecret: JWT_SECRET,
+  sqliteDb
+}));
+
+app.use('/api/system', createSecurityRouter({
+  getSecuritySettings: () => {
+    securitySettings = loadJson(SECURITY_FILE, securitySettings);
+    return securitySettings;
+  },
+  setSecuritySettings: (settings) => {
+    securitySettings = settings;
+    saveJson(SECURITY_FILE, securitySettings, true);
+  },
+  getStoredUsers: () => {
+    storedUsers = loadJson(USERS_FILE, storedUsers);
+    return storedUsers;
+  },
+  getClientIp,
+  isPrivateOrLocalIp,
+  isAuthRequiredForRequest: (req) => isAuthRequiredForRequest(req, () => securitySettings)
+}));
+
+// 2. Database
+app.use('/api/db', createDbRouter({
+  getActiveDbConfig: () => activeDbConfig,
+  setActiveDbConfig: (config) => {
+    activeDbConfig = config;
+    saveJson(DB_CONFIG_FILE, activeDbConfig);
+  },
+  getStoredUsers: () => {
+    storedUsers = loadJson(USERS_FILE, storedUsers);
+    return storedUsers;
+  },
+  getStoredSongs: () => musicRepository.getAllSongs(),
+  getStoredPlaylists: () => musicRepository.getAllPlaylists(),
+  sqliteDb
+}));
+
+// 3. Audio Streaming & Media
 const {
   router: streamRouter,
   streamAudioHandler,
@@ -1287,896 +530,42 @@ const {
   port: PORT,
   audioTranscoder,
   streamServer,
-  getStoredSongs: () => storedSongs,
+  getStoredSongs: () => musicRepository.getAllSongs(),
   getNavidromeConfig: () => navidromeConfig,
-  getXiaomiDevices: () => xiaomiDevices,
+  getXiaomiDevices: () => deviceRepository.getAllDevices(),
   getMiotConfig: () => miotConfig,
   saveMiotConfig: (cfg) => {
     miotConfig = cfg;
     saveJson(CONFIG_FILE, miotConfig);
   },
-  verifyStreamToken,
-  isSafeRemoteStreamUrl,
+  verifyStreamToken: (songId, token) => verifyStreamToken(songId, token, JWT_SECRET),
+  isSafeRemoteStreamUrl: (url) => isSafeRemoteStreamUrl(url, navidromeConfig.serverUrl),
   getSubsonicAuthQuery,
   getSubsonicPassAuthQuery,
   logCastAction: (log) => {
     castLogs.unshift(log);
     if (castLogs.length > 50) castLogs.pop();
+    interactionRepository.logCastAudit({
+      id: log.id,
+      timestamp: log.timestamp || new Date().toLocaleTimeString(),
+      logType: log.type || 'cast',
+      songTitle: log.message,
+      status: log.success ? 'success' : 'failed',
+      detail: log.detail
+    });
   }
 });
-
 app.use(streamRouter);
 
-// Auto-recover session and speaker devices from passToken on startup if available
-if ((miotConfig as any).passToken) {
-  const candidateUid = miotConfig.userId || (miotConfig as any).cUserId || '0';
-  Promise.allSettled([
-    xiaomiPassport.fetchAdditionalStsToken(candidateUid, (miotConfig as any).passToken, 'micoapi'),
-    xiaomiPassport.fetchAdditionalStsToken(candidateUid, (miotConfig as any).passToken, 'xiaomiio')
-  ]).then(async ([micoRes, ioRes]) => {
-    let micoToken = micoRes.status === 'fulfilled' ? micoRes.value.serviceToken : '';
-    let ioToken = ioRes.status === 'fulfilled' ? ioRes.value.serviceToken : '';
-    let recoveredUid = (micoRes.status === 'fulfilled' && micoRes.value.userId) || (ioRes.status === 'fulfilled' && ioRes.value.userId) || candidateUid;
-    let ssec = (micoRes.status === 'fulfilled' && micoRes.value.ssecurity) || (ioRes.status === 'fulfilled' && ioRes.value.ssecurity) || (miotConfig as any).ssecurity;
+// 4. TTS Engine
+app.use('/api/tts', createTtsRouter());
 
-    if (micoToken || ioToken) {
-      if (micoToken) (miotConfig as any).micoServiceToken = micoToken;
-      if (ioToken) (miotConfig as any).miotServiceToken = ioToken;
-      (miotConfig as any).isMicoValid = Boolean(micoToken);
-      if (ssec) (miotConfig as any).ssecurity = ssec;
-      if (recoveredUid && recoveredUid !== '0') {
-        miotConfig.userId = recoveredUid;
-        miotConfig.miUser = `uid_${recoveredUid}`;
-      }
-      miotConfig.isLoggedIn = true;
-      saveJson(CONFIG_FILE, miotConfig);
-      console.log('[Auth] Restored active dual-channel session via stored passToken for user:', miotConfig.userId);
-
-      // Auto resolve XiaoAi devices
-      try {
-        const resolveResult = await xiaoaiResolverEngine.resolveDevices({
-          userId: miotConfig.userId,
-          micoServiceToken: micoToken || undefined,
-          miotServiceToken: ioToken || undefined,
-          ssecurity: ssec,
-          existingDevices: xiaomiDevices,
-          activeStreamIps: Array.from(activeStreamIps)
-        });
-        if (resolveResult.xiaoAiDevices && resolveResult.xiaoAiDevices.length > 0) {
-          xiaomiDevices = resolveResult.xiaoAiDevices;
-          ensureValidActiveDeviceId();
-          saveJson(DEVICES_FILE, xiaomiDevices);
-          saveJson(CONFIG_FILE, miotConfig);
-          console.log(`[Discovery] Auto-restored ${xiaomiDevices.length} XiaoAi speakers from cloud`);
-        }
-      } catch (err: any) {
-        console.warn('[Discovery] Device auto-resolution warning:', err.message);
-      }
-
-      // Connect Mina WS
-      if (micoToken) {
-        try {
-          minaWsClient.connect(miotConfig.userId, micoToken, miotConfig.activeDeviceId || '');
-        } catch {}
-      }
-    }
-  }).catch((err) => console.warn('[Auth] passToken startup recovery skipped:', err.message));
-}
-
-// Centralized, deduplicated Xiaomi token refresh service (P0 reliability)
-let isRefreshingXiaomiTokens = false;
-let lastTokenRefreshTime = 0;
-let refreshTokensPromise: Promise<{ success: boolean; serviceToken?: string; error?: string }> | null = null;
-
-async function refreshXiaomiTokens(reason: string = 'token_expired', force: boolean = false): Promise<{ success: boolean; serviceToken?: string; error?: string }> {
-  const now = Date.now();
-  // Enforce a minimum 10-minute cooldown unless explicitly forced by user action
-  if (!force && now - lastTokenRefreshTime < 10 * 60 * 1000) {
-    return {
-      success: true,
-      serviceToken: (miotConfig as any).micoServiceToken || miotConfig.serviceToken,
-      error: 'Token refresh skipped (within 10-minute cooldown window)'
-    };
-  }
-
-  if (isRefreshingXiaomiTokens && refreshTokensPromise) {
-    return refreshTokensPromise;
-  }
-
-  const cleanUid = String(miotConfig.userId || '').trim();
-  const passToken = String((miotConfig as any).passToken || '').trim();
-  if (!cleanUid || !passToken) {
-    return { success: false, error: 'No passToken available for silent refresh' };
-  }
-
-  isRefreshingXiaomiTokens = true;
-  refreshTokensPromise = (async () => {
-    try {
-      console.log(`🔑 [Token Refresh] 正在执行小米凭证无感静默续期 (原因: ${reason}, 用户: ${cleanUid})...`);
-      const [micoRes, ioRes] = await Promise.allSettled([
-        xiaomiPassport.fetchAdditionalStsToken(cleanUid, passToken, 'micoapi'),
-        xiaomiPassport.fetchAdditionalStsToken(cleanUid, passToken, 'xiaomiio')
-      ]);
-
-      let updated = false;
-      let newMicoToken = '';
-
-      if (micoRes.status === 'fulfilled' && micoRes.value.serviceToken) {
-        newMicoToken = micoRes.value.serviceToken;
-        miotConfig.serviceToken = newMicoToken;
-        (miotConfig as any).micoServiceToken = newMicoToken;
-        if (micoRes.value.ssecurity) (miotConfig as any).ssecurity = micoRes.value.ssecurity;
-        updated = true;
-        console.log(`🔑 [Token Refresh] ✅ micoapi 域 serviceToken 续期成功: ${newMicoToken.slice(0, 6)}••••`);
-      }
-
-      if (ioRes.status === 'fulfilled' && ioRes.value.serviceToken) {
-        const newIoToken = ioRes.value.serviceToken;
-        (miotConfig as any).xiaomiioToken = newIoToken;
-        (miotConfig as any).xiaomiioServiceToken = newIoToken;
-        (miotConfig as any).miotServiceToken = newIoToken;
-        if (ioRes.value.ssecurity) (miotConfig as any).xiaomiioSsecurity = ioRes.value.ssecurity;
-        updated = true;
-        console.log(`🔑 [Token Refresh] ✅ xiaomiio 域 serviceToken 续期成功: ${newIoToken.slice(0, 6)}••••`);
-      }
-
-      if (updated) {
-        lastTokenRefreshTime = Date.now();
-        saveJson(CONFIG_FILE, miotConfig);
-        return { success: true, serviceToken: newMicoToken || miotConfig.serviceToken };
-      }
-
-      return { success: false, error: 'Both token refresh requests failed' };
-    } catch (err: any) {
-      console.warn('🔑 [Token Refresh] 异常:', err?.message || err);
-      return { success: false, error: err?.message || 'Token refresh failed' };
-    } finally {
-      isRefreshingXiaomiTokens = false;
-      refreshTokensPromise = null;
-    }
-  })();
-
-  return refreshTokensPromise;
-}
-
-// Auto-connect Mina WebSocket in background if logged in (non-blocking best effort)
-minaWsClient.on('error', (err: any) => {
-  const errMsg = err?.message || String(err);
-  if (!errMsg.includes('403') && !errMsg.includes('401') && !errMsg.includes('1006')) {
-    console.warn('[Mina WebSocket] Handled socket error:', errMsg);
-  }
-});
-
-// Bridge real-time XiaoAi voice conversations from WebSocket to voiceCommandService
-minaWsClient.on('event', (evt: any) => {
-  if (evt && evt.type === 'voice_dialogue') {
-    const query = evt.data?.query || evt.data?.text;
-    if (query) {
-      const targetDev = xiaomiDevices.find(d => d.did === evt.deviceId) || xiaomiDevices[0];
-      voiceCommandService.onDialogueEvent(query, targetDev?.did, targetDev?.name);
-    }
-  }
-});
-
-if (miotConfig.isLoggedIn && miotConfig.userId && miotConfig.serviceToken) {
-  try {
-    minaWsClient.connect(miotConfig.userId, miotConfig.serviceToken, miotConfig.activeDeviceId || '');
-  } catch (err: any) {
-    console.warn('[Mina WS] Initial connection failed:', err.message);
-  }
-}
-
-// Security sanitizers to prevent token leakage while strictly fulfilling the standard schema:
-// { did, model, name, ip, mac, token, platform, source, capabilities, online }
-function sanitizeDevice(dev: any) {
-  if (!dev) return dev;
-  const token = dev.token;
-  const hasToken = Boolean(token && String(token).trim().length > 0);
-  const isOnline = Boolean(dev.online ?? dev.isOnline ?? false);
-  const tokenMasked = token ? (String(token).length > 8 ? `${String(token).slice(0, 4)}••••••••${String(token).slice(-4)}` : '••••••••') : '';
-
-  // Phase 3: Fine-grained device connection & playback state
-  let deviceState: 'online' | 'offline' | 'unknown' | 'connecting' | 'playing' | 'paused' | 'buffering' | 'transcoding' | 'error' = 'offline';
-  const isTranscoding = transcodeSemaphorePool.getStats().activeCount > 0 && queueEngine.getStatus().targetDid === dev.did;
-  if (!isOnline) {
-    deviceState = 'offline';
-  } else if (dev.status?.error) {
-    deviceState = 'error';
-  } else if (isTranscoding) {
-    deviceState = 'transcoding';
-  } else if (dev.status?.buffering || dev.status?.connecting) {
-    deviceState = dev.status?.buffering ? 'buffering' : 'connecting';
-  } else if (dev.status?.playing) {
-    deviceState = 'playing';
-  } else if (dev.status?.paused) {
-    deviceState = 'paused';
-  } else {
-    deviceState = 'online';
-  }
-
-  const isGenuineUuid = (id?: string) => {
-    if (!id) return false;
-    const s = String(id).trim();
-    if (s.startsWith('did-') || s.startsWith('manual_')) return false;
-    if (/^\d{6,16}$/.test(s)) return false; // Pure digits is a DID, not a genuine Mina UUID
-    return true;
-  };
-
-  const rawDevId = dev.deviceID || dev.uuid || dev.hardwareDeviceId;
-  const genuineDeviceID = isGenuineUuid(rawDevId) ? String(rawDevId) : undefined;
-  const genuineHwId = isGenuineUuid(dev.hardwareDeviceId) ? String(dev.hardwareDeviceId) : genuineDeviceID;
-
-  return {
-    did: String(dev.did),
-    deviceID: genuineDeviceID,
-    uuid: genuineDeviceID,
-    hardwareDeviceId: genuineHwId,
-    cloudDid: (dev.cloudDid && String(dev.cloudDid) !== genuineDeviceID) ? String(dev.cloudDid) : undefined,
-    homeId: dev.homeId || dev.home_id || undefined,
-    roomId: dev.roomId || dev.room_id || undefined,
-    model: dev.model || 'xiaomi.wifispeaker.sound',
-    name: (dev.name || '小米智能音箱').replace(/\s*[\(（]点击(右侧)?编辑[\)）]/g, '').trim(),
-    ip: dev.ip || undefined,
-    mac: dev.mac || undefined,
-    token: tokenMasked || undefined,
-    tokenMasked,
-    hasToken,
-    platform: dev.platform || (hasToken && dev.ip ? 'miio' : 'mina'),
-    source: dev.source || (dev.ip && hasToken ? 'hybrid' : (dev.ip ? 'lan' : 'cloud')),
-    capabilities: dev.capabilities || {
-      hasPlayControl: true,
-      hasTts: true,
-      hasVolumeControl: true,
-      hasClock: /clock|c01|x08|lx04|l05c/i.test(dev.model || ''),
-      supportsDlna: /lx06|pro|sound|l16a/i.test(dev.model || ''),
-      supportsLocalMiio: Boolean(hasToken && dev.ip)
-    },
-    online: isOnline,
-    isOnline,
-    deviceState,
-    hardware: dev.hardware,
-    status: dev.status || {
-      playing: false,
-      volume: 45,
-      muted: false,
-      updatedAt: new Date().toISOString()
-    },
-    raw: dev.raw || undefined
-  };
-}
-
-function sanitizeMiotConfig(config: any) {
-  if (!config) return config;
-  const {
-    serviceToken,
-    ssecurity,
-    password,
-    micoServiceToken,
-    miotServiceToken,
-    xiaomiioServiceToken,
-    passToken,
-    psecurity_ph,
-    securityToken,
-    ...safeConfig
-  } = config;
-  const hasToken = Boolean(serviceToken && String(serviceToken).trim().length > 0);
-  return {
-    ...safeConfig,
-    hasServiceToken: hasToken,
-    hasMicoServiceToken: Boolean(micoServiceToken),
-    hasMiotServiceToken: Boolean(miotServiceToken),
-    hasXiaomiioServiceToken: Boolean(xiaomiioServiceToken),
-    hasPassToken: Boolean(passToken),
-    serviceToken: hasToken ? `${String(serviceToken).slice(0, 4)}••••••••` : '',
-    miUserMasked: config.miUser ? (config.miUser.length > 4 ? `${config.miUser.slice(0, 2)}***${config.miUser.slice(-2)}` : '***') : ''
-  };
-}
-
-/**
- * Ensures miotConfig.activeDeviceId remains valid and points to a confirmed speaker device
- * Prevents arbitrary resetting back to synthetic or fallback devices when refreshing
- */
-function ensureValidActiveDeviceId() {
-  if (!xiaomiDevices || xiaomiDevices.length === 0) {
-    return;
-  }
-  const current = miotConfig.activeDeviceId ? String(miotConfig.activeDeviceId).trim() : '';
-
-  if (current) {
-    // 1. Exact match by did, deviceID, cloudDid, or hardwareDeviceId
-    const matched = xiaomiDevices.find(d => 
-      String(d.did).trim() === current || 
-      (d.deviceID && String(d.deviceID).trim() === current) || 
-      (d.cloudDid && String(d.cloudDid).trim() === current) ||
-      ((d as any).hardwareDeviceId && String((d as any).hardwareDeviceId).trim() === current)
-    );
-
-    if (matched) {
-      if (matched.did !== current && !matched.did.startsWith('did-') && !matched.did.startsWith('detected_')) {
-        miotConfig.activeDeviceId = matched.did;
-        saveJson(CONFIG_FILE, miotConfig);
-      }
-      return;
-    }
-
-    // 2. If current was a synthetic DID or was an IP, check if any device has that same IP or MAC or substring
-    const matchedByProp = xiaomiDevices.find(d => 
-      (d.did && current.includes(d.did)) ||
-      (d.deviceID && current.includes(d.deviceID)) ||
-      (d.cloudDid && current.includes(d.cloudDid))
-    );
-    if (matchedByProp) {
-      miotConfig.activeDeviceId = matchedByProp.did;
-      saveJson(CONFIG_FILE, miotConfig);
-      return;
-    }
-  }
-
-  // 3. If no activeDeviceId or activeDeviceId was not found, fallback to first available real device (prioritizing non-synthetic)
-  const preferredDev = xiaomiDevices.find(d => !d.did.startsWith('did-') && !d.did.startsWith('detected_')) || xiaomiDevices[0];
-  if (preferredDev && (!miotConfig.activeDeviceId || !xiaomiDevices.some(d => d.did === miotConfig.activeDeviceId))) {
-    miotConfig.activeDeviceId = preferredDev.did;
-    saveJson(CONFIG_FILE, miotConfig);
-  }
-}
-
-let castLogs: Array<{
-  id: string;
-  timestamp: string;
-  type: 'cast' | 'control' | 'tts' | 'sync' | 'error';
-  message: string;
-  detail?: string;
-  success: boolean;
-  did?: string;
-  ip?: string;
-  model?: string;
-  protocol?: string;
-  requestMethod?: string;
-  httpStatus?: number;
-  miioStatus?: string;
-  minaStatus?: string;
-  errorCode?: string | number;
-  responseTimeMs?: number;
-  streamUrl?: string;
-  steps?: any[];
-}> = [
-  {
-    id: 'log-1',
-    timestamp: new Date(Date.now() - 3600000).toLocaleTimeString(),
-    type: 'sync',
-    message: 'TingLan MIoT 协议引擎已初始化',
-    detail: `发现 ${xiaomiDevices.length} 台小米智能音箱设备`,
-    success: true
-  },
-  {
-    id: 'log-2',
-    timestamp: new Date(Date.now() - 1800000).toLocaleTimeString(),
-    type: 'tts',
-    message: '客厅 Xiaomi Sound Pro 播报 TTS 欢迎词',
-    detail: '“小爱同学已就绪，已连接 TingLan 音乐服务器”',
-    success: true
-  }
-];
-
-interface NetworkInterfaceCandidate {
-  name: string;
-  ip: string;
-  isPhysical: boolean;
-  isPrivateSubnet: boolean;
-  priority: number;
-}
-
-// Helper to get local network IP addresses, filtering out virtual/Docker/bridge interfaces and prioritizing physical NICs
-function getLocalNetworkIps(): string[] {
-  const interfaces = os.networkInterfaces();
-  const candidates: NetworkInterfaceCandidate[] = [];
-
-  // Patterns for virtual, container, and VPN bridges that shouldn't be picked for speaker LAN streaming
-  const virtualNicRegex = /^(docker|br-|veth|virbr|cni|tailscale|wg|tun|tap|utun|dummy|vboxnet)/i;
-  // Subnets commonly reserved for internal Docker/bridge networking
-  const dockerSubnetRegex = /^172\.(1[6-9]|2[0-9]|3[0-1])\./;
-
-  for (const name of Object.keys(interfaces)) {
-    const isVirtualName = virtualNicRegex.test(name);
-    for (const net of interfaces[name] || []) {
-      if (
-        net.family === 'IPv4' &&
-        !net.internal &&
-        !net.address.startsWith('127.') &&
-        !net.address.startsWith('169.254.')
-      ) {
-        const isDockerSubnet = dockerSubnetRegex.test(net.address);
-        // Physical interface names: eth*, en*, wlan*, wlp*, eno*, enp*
-        const isPhysical = /^(eth|en|wlan|wlp|eno|enp|lan)/i.test(name) && !isVirtualName;
-        // Standard home private subnets (192.168.x.x, 10.x.x.x)
-        const isPrivateSubnet = /^192\.168\./.test(net.address) || /^10\./.test(net.address);
-
-        let priority = 0;
-        if (isPhysical) priority += 100;
-        if (isPrivateSubnet) priority += 50;
-        if (isVirtualName) priority -= 100;
-        if (isDockerSubnet) priority -= 80;
-
-        candidates.push({
-          name,
-          ip: net.address,
-          isPhysical,
-          isPrivateSubnet,
-          priority
-        });
-      }
-    }
-  }
-
-  // Sort descending by priority
-  candidates.sort((a, b) => b.priority - a.priority);
-  return candidates.map(c => c.ip);
-}
-
-// Smart LAN IP selector based on speaker target IP subnet matching
-function getBestLanIpForTarget(targetSpeakerIp?: string): string {
-  const allIps = getLocalNetworkIps();
-  if (allIps.length === 0) return '127.0.0.1';
-
-  // 1. If explicit environment override is provided, respect it
-  const envHost = process.env.SERVER_HOST || process.env.HOST_LAN_IP;
-  if (envHost) {
-    const match = envHost.match(/https?:\/\/([^:/]+)/);
-    if (match && match[1] && !match[1].startsWith('127.') && match[1] !== 'localhost') {
-      return match[1];
-    }
-    if (/^\d+\.\d+\.\d+\.\d+$/.test(envHost)) {
-      return envHost;
-    }
-  }
-
-  // 2. If target speaker IP is known, match common /24 or /16 subnet prefix
-  if (targetSpeakerIp && targetSpeakerIp.includes('.')) {
-    const targetParts = targetSpeakerIp.split('.');
-    const subnet24 = targetParts.slice(0, 3).join('.');
-    const subnet16 = targetParts.slice(0, 2).join('.');
-
-    // Match exact /24 subnet (e.g. 192.168.31.X)
-    const match24 = allIps.find(ip => ip.startsWith(`${subnet24}.`));
-    if (match24) return match24;
-
-    // Match /16 subnet (e.g. 192.168.X.X)
-    const match16 = allIps.find(ip => ip.startsWith(`${subnet16}.`));
-    if (match16) return match16;
-  }
-
-  // 3. Fallback to top-ranked physical LAN IP
-  return allIps[0];
-}
-
-// ----------------- MI-IO UDP 54321 PROTOCOL ENGINE -----------------
-
-// Send miIO UDP 54321 Hello packet to probe & handshake with Xiaomi/Xiaoai speaker
-// Features stepped multi-burst retransmission (0ms, 250ms, 600ms) to conquer 2.4GHz Wi-Fi packet loss
-function sendMiioHello(ip: string, timeoutMs = 1800): Promise<{ reachable: boolean; did?: string; stamp?: number; latency: number }> {
-  return new Promise((resolve) => {
-    const start = Date.now();
-    const client = dgram.createSocket('udp4');
-    let isResolved = false;
-    let burstTimer1: NodeJS.Timeout | null = null;
-    let burstTimer2: NodeJS.Timeout | null = null;
-
-    const cleanup = () => {
-      if (burstTimer1) clearTimeout(burstTimer1);
-      if (burstTimer2) clearTimeout(burstTimer2);
-      try { client.close(); } catch {}
-    };
-
-    const timer = setTimeout(() => {
-      if (!isResolved) {
-        isResolved = true;
-        cleanup();
-        resolve({ reachable: false, latency: timeoutMs });
-      }
-    }, timeoutMs);
-
-    client.on('message', (msg) => {
-      if (!isResolved) {
-        isResolved = true;
-        clearTimeout(timer);
-        cleanup();
-        const latency = Date.now() - start;
-        try {
-          let didStr = '';
-          let stamp = 0;
-          if (msg.length >= 32 && msg[0] === 0x21 && msg[1] === 0x31) {
-            const didNum = msg.readUInt32BE(8);
-            stamp = msg.readUInt32BE(12);
-            didStr = String(didNum);
-          }
-          resolve({ reachable: true, did: didStr, stamp, latency });
-        } catch {
-          resolve({ reachable: true, latency });
-        }
-      }
-    });
-
-    client.on('error', () => {
-      if (!isResolved) {
-        isResolved = true;
-        clearTimeout(timer);
-        cleanup();
-        resolve({ reachable: false, latency: Date.now() - start });
-      }
-    });
-
-    const helloPacket = Buffer.from('21310020ffffffffffffffffffffffffffffffffffffffffffffffffffffffff', 'hex');
-    const sendBurst = () => {
-      if (isResolved) return;
-      try {
-        client.send(helloPacket, 0, helloPacket.length, 54321, ip, () => {});
-      } catch {}
-    };
-
-    // Burst 1: immediate
-    sendBurst();
-
-    // Burst 2: 250ms (for AP sleep / initial 2.4GHz frame drop)
-    burstTimer1 = setTimeout(sendBurst, 250);
-
-    // Burst 3: 600ms (resilient confirmation)
-    burstTimer2 = setTimeout(sendBurst, 600);
-  });
-}
-
-// Send real encrypted AES-128-CBC miIO command over UDP 54321
-async function sendMiioCommand(
-  ip: string,
-  tokenHex: string,
-  method: string,
-  params: any = [],
-  timeoutMs = 3000
-): Promise<{ success: boolean; result?: any; error?: string }> {
-  if (!ip || !tokenHex) {
-    return { success: false, error: '需要提供音箱 IP 和 32位 Hex Token' };
-  }
-
-  const cleanToken = tokenHex.trim().toLowerCase();
-  if (cleanToken.length !== 32) {
-    return { success: false, error: 'Token 格式不正确，必须为 32 位十六进制字符串' };
-  }
-
-  try {
-    // 1. Handshake hello to get did & stamp
-    const hello = await sendMiioHello(ip, 1200);
-    if (!hello.reachable) {
-      return { success: false, error: `局域网设备 ${ip}:54321 握手超时未响应（设备离线或网络不可达）` };
-    }
-    const didNum = hello.did ? Number(hello.did) || 0 : 0;
-    const stamp = (hello.stamp || 0) + 1;
-
-    // 2. Derive Key and IV from Token: Key = MD5(token), IV = MD5(Key + token)
-    const tokenBuf = Buffer.from(cleanToken, 'hex');
-    const key = crypto.createHash('md5').update(tokenBuf).digest();
-    const iv = crypto.createHash('md5').update(Buffer.concat([key, tokenBuf])).digest();
-
-    // 3. Encrypt JSON payload using AES-128-CBC
-    const msgObj = {
-      id: Math.floor(Math.random() * 100000) + 1,
-      method,
-      params
-    };
-    const msgStr = JSON.stringify(msgObj);
-    const cipher = crypto.createCipheriv('aes-128-cbc', key, iv);
-    const encrypted = Buffer.concat([cipher.update(msgStr, 'utf8'), cipher.final()]);
-
-    // 4. Build 32-byte header
-    const header = Buffer.alloc(32);
-    header.writeUInt16BE(0x2131, 0); // Magic: 0x2131
-    header.writeUInt16BE(32 + encrypted.length, 2); // Length
-    header.writeUInt32BE(0, 4); // Unknown
-    header.writeUInt32BE(didNum, 8); // Device DID
-    header.writeUInt32BE(stamp, 12); // Stamp
-
-    // Checksum = MD5(header[0..16] + token + encrypted)
-    const checksum = crypto.createHash('md5').update(
-      Buffer.concat([header.subarray(0, 16), tokenBuf, encrypted])
-    ).digest();
-    checksum.copy(header, 16);
-
-    const fullPacket = Buffer.concat([header, encrypted]);
-
-    // 5. Send UDP packet & receive decrypted response
-    return await new Promise((resolve) => {
-      const client = dgram.createSocket('udp4');
-      let isResolved = false;
-
-      const timer = setTimeout(() => {
-        if (!isResolved) {
-          isResolved = true;
-          try { client.close(); } catch {}
-          resolve({ success: false, error: 'miIO 指令响应超时 (UDP 54321)' });
-        }
-      }, timeoutMs);
-
-      client.on('message', (respMsg) => {
-        if (!isResolved) {
-          isResolved = true;
-          clearTimeout(timer);
-          try {
-            try { client.close(); } catch {}
-            if (respMsg.length <= 32) {
-              return resolve({ success: true, result: 'ok (ACK received)' });
-            }
-            const respEncrypted = respMsg.subarray(32);
-            const decipher = crypto.createDecipheriv('aes-128-cbc', key, iv);
-            const decrypted = Buffer.concat([decipher.update(respEncrypted), decipher.final()]).toString('utf8');
-            const cleanJson = decrypted.replace(/\0+$/g, '');
-            const parsed = JSON.parse(cleanJson);
-            if (parsed.error) {
-              resolve({ success: false, error: parsed.error.message || JSON.stringify(parsed.error) });
-            } else {
-              resolve({ success: true, result: parsed.result ?? parsed });
-            }
-          } catch (decErr: any) {
-            resolve({ success: true, result: 'packet_acknowledged' });
-          }
-        }
-      });
-
-      client.on('error', (err) => {
-        if (!isResolved) {
-          isResolved = true;
-          clearTimeout(timer);
-          try { client.close(); } catch {}
-          resolve({ success: false, error: `miIO Socket 错误: ${err.message}` });
-        }
-      });
-
-      client.send(fullPacket, 0, fullPacket.length, 54321, ip, (err) => {
-        if (err && !isResolved) {
-          isResolved = true;
-          clearTimeout(timer);
-          try { client.close(); } catch {}
-          resolve({ success: false, error: `UDP 54321 发送失败: ${err.message}` });
-        }
-      });
-    });
-  } catch (cmdErr: any) {
-    return { success: false, error: cmdErr.message || 'miIO 执行异常' };
-  }
-}
-
-// TCP Ping test utility (Fallback for HTTP / UPnP endpoints)
-function testTcpConnection(host: string, port = 80, timeoutMs = 1500): Promise<{ reachable: boolean; latency: number }> {
-  return new Promise((resolve) => {
-    const start = Date.now();
-    const socket = new net.Socket();
-    socket.setTimeout(timeoutMs);
-
-    socket.on('connect', () => {
-      const latency = Date.now() - start;
-      socket.destroy();
-      resolve({ reachable: true, latency });
-    });
-
-    socket.on('timeout', () => {
-      socket.destroy();
-      resolve({ reachable: false, latency: timeoutMs });
-    });
-
-    socket.on('error', () => {
-      socket.destroy();
-      resolve({ reachable: false, latency: Date.now() - start });
-    });
-
-    try {
-      socket.connect(port, host);
-    } catch {
-      resolve({ reachable: false, latency: 0 });
-    }
-  });
-}
-
-// Combined Speaker Probe: First UDP 54321 miIO Hello, then DLNA UPnP, then TCP fallback
-async function testMiioConnection(ip: string, timeoutMs = 1500): Promise<{ reachable: boolean; isMiio: boolean; isDlna?: boolean; did?: string; latency: number; message: string }> {
-  if (!ip) return { reachable: false, isMiio: false, latency: 0, message: '无效 IP 地址' };
-
-  // 1. First probe via UDP 54321 miIO Hello packet
-  const miioRes = await sendMiioHello(ip, timeoutMs);
-  if (miioRes.reachable) {
-    return {
-      reachable: true,
-      isMiio: true,
-      isDlna: false,
-      did: miioRes.did,
-      latency: miioRes.latency,
-      message: `✓ miIO 握手成功 (UDP 54321, 设备DID: ${miioRes.did || '已响应'}, 延迟: ${miioRes.latency}ms)`
-    };
-  }
-
-  // 2. Second probe: DLNA / UPnP MediaRenderer (Default & official local casting protocol for XiaoAi speakers)
-  try {
-    const dlnaRes = await dlnaEngine.testConnection(ip);
-    if (dlnaRes.reachable) {
-      return {
-        reachable: true,
-        isMiio: false,
-        isDlna: true,
-        did: dlnaRes.friendlyName,
-        latency: dlnaRes.latency,
-        message: dlnaRes.message
-      };
-    }
-  } catch {}
-
-  // 3. Fallback to common TCP port test (e.g. 1420 / 80)
-  const tcpRes = await testTcpConnection(ip, 1420, 1000);
-  if (tcpRes.reachable) {
-    return {
-      reachable: true,
-      isMiio: false,
-      isDlna: true,
-      latency: tcpRes.latency,
-      message: `✓ 局域网小爱 DLNA 端口 1420 连通 (延迟: ${tcpRes.latency}ms)`
-    };
-  }
-
-  const tcp80 = await testTcpConnection(ip, 80, 800);
-  if (tcp80.reachable) {
-    return {
-      reachable: true,
-      isMiio: false,
-      latency: tcp80.latency,
-      message: `✓ 局域网 TCP 端口连通 (延迟: ${tcp80.latency}ms)`
-    };
-  }
-
-  return {
-    reachable: false,
-    isMiio: false,
-    latency: miioRes.latency,
-    message: `未能连接到 ${ip} (UDP 54321 / DLNA 端口 1420/49152 无响应，请检查音箱是否开机且与本机处于同网段)`
-  };
-}
-
-// ---------------- API ROUTES ----------------
-
-// Health check for Docker HEALTHCHECK & load balancers
-app.get('/api/health', (req: Request, res: Response) => {
-  res.json({
-    status: 'ok',
-    version: '1.4.2',
-    server: 'TingLan-Xiaomi-Bridge',
-    uptime: process.uptime(),
-    songCount: storedSongs.length,
-    deviceCount: xiaomiDevices.length,
-    timestamp: new Date().toISOString()
-  });
-});
-
-// System & Docker Deployment Info
-app.get('/api/system/docker-info', (req: Request, res: Response) => {
-  const localIps = getLocalNetworkIps();
-  const primaryIp = localIps.length > 0 ? localIps[0] : '127.0.0.1';
-  const resolvedServerHost = miotConfig.serverHost || (localIps.length > 0 ? `http://${primaryIp}:${PORT}` : '');
-
-  res.json({
-    serverHost: resolvedServerHost,
-    detectedIps: [primaryIp],
-    musicDir: '/app/music',
-    dataDir: '/app/data',
-    port: PORT,
-    containerName: 'tinglan-xiaomi',
-    imageName: 'tinglan-xiaomi:latest',
-    isHostNetworkRecommended: true,
-    sampleDockerRun: `docker run -d --name tinglan-xiaomi \\
-  --restart unless-stopped \\
-  -p ${PORT}:${PORT} \\
-  -e SERVER_HOST="http://${primaryIp}:${PORT}" \\
-  -e PORT=${PORT} \\
-  -v /volume1/music:/app/music:ro \\
-  -v /volume1/docker/tinglan/data:/app/data \\
-  tinglan-xiaomi:latest`,
-    sampleDockerCompose: `version: '3.8'
-services:
-  tinglan:
-    image: tinglan-xiaomi:latest
-    container_name: tinglan-xiaomi
-    restart: unless-stopped
-    ports:
-      - "${PORT}:${PORT}"
-    environment:
-      - SERVER_HOST=http://${primaryIp}:${PORT}
-      - PORT=${PORT}
-      - MI_USER=your_xiaomi_account
-      - JWT_SECRET=your_custom_jwt_secret
-    volumes:
-      - ./music:/app/music:ro
-      - ./data:/app/data`
-  });
-});
-
-// ---------------- TTS & SPEECH STREAMING API ----------------
-
-// Get available TTS voices
-app.get('/api/tts/voices', (req: Request, res: Response) => {
-  res.json({
-    success: true,
-    voices: POPULAR_TTS_VOICES,
-    defaultVoice: 'zh-CN-XiaoxiaoNeural'
-  });
-});
-
-// Stream high-definition TTS speech MP3 (supports HTTP 206 partial content for speakers)
-const handleTtsAudioStream = async (req: Request, res: Response) => {
-  const text = String(req.query.text || req.body?.text || '').trim();
-  const voice = String(req.query.voice || req.body?.voice || 'zh-CN-XiaoxiaoNeural').trim();
-  const rate = String(req.query.rate || '+0%').trim();
-  const pitch = String(req.query.pitch || '+0Hz').trim();
-
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type, Accept-Ranges');
-
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-
-  if (!text) {
-    return res.status(400).send('Missing "text" query param for TTS synthesis');
-  }
-
-  try {
-    const audioBuffer = await ttsEngine.synthesizeSpeechMp3(text, voice, rate, pitch);
-    const totalLength = audioBuffer.length;
-    const rangeHeader = req.headers.range;
-
-    res.setHeader('Content-Type', 'audio/mpeg');
-    res.setHeader('Accept-Ranges', 'bytes');
-    res.setHeader('Cache-Control', 'public, max-age=86400');
-
-    if (req.method === 'HEAD') {
-      res.setHeader('Content-Length', totalLength);
-      return res.status(200).end();
-    }
-
-    if (rangeHeader) {
-      const parts = rangeHeader.replace(/bytes=/, '').split('-');
-      const start = parseInt(parts[0], 10);
-      const end = parts[1] ? parseInt(parts[1], 10) : totalLength - 1;
-
-      if (start >= totalLength || end >= totalLength) {
-        res.status(416).setHeader('Content-Range', `bytes */${totalLength}`).end();
-        return;
-      }
-
-      const chunk = audioBuffer.subarray(start, end + 1);
-      res.status(206);
-      res.setHeader('Content-Range', `bytes ${start}-${end}/${totalLength}`);
-      res.setHeader('Content-Length', chunk.length);
-      res.send(chunk);
-    } else {
-      res.setHeader('Content-Length', totalLength);
-      res.send(audioBuffer);
-    }
-  } catch (err: any) {
-    console.error('[TTS API] Audio stream error:', err.message);
-    res.status(500).send(`TTS Error: ${err.message}`);
-  }
-};
-
-app.get('/api/tts/stream', handleTtsAudioStream);
-app.get('/api/tts/audio.mp3', handleTtsAudioStream);
-app.post('/api/tts/stream', handleTtsAudioStream);
-
-// ---------------- SONGS DOMAIN ROUTER (Phase 1 Decoupling) ----------------
+// 5. Songs & Playlists
 app.use('/api/songs', createSongsRouter({
-  getSongs: () => storedSongs,
-  setSongs: (newSongs) => {
-    storedSongs = newSongs;
-    saveJson(SONGS_FILE, storedSongs);
-  },
-  getPlaylists: () => storedPlaylists,
-  setPlaylists: (newPlaylists) => {
-    storedPlaylists = newPlaylists;
-    saveJson(PLAYLISTS_FILE, storedPlaylists);
-  },
+  getSongs: () => musicRepository.getAllSongs(),
+  setSongs: (newSongs) => musicRepository.setSongs(newSongs),
+  getPlaylists: () => musicRepository.getAllPlaylists(),
+  setPlaylists: (newPlaylists) => musicRepository.setPlaylists(newPlaylists),
   musicDir: MUSIC_DIR,
   dynamicPlaylistEngine,
   hasAdminAccount: () => storedUsers.some(u => u.role === 'admin'),
@@ -2184,2227 +573,85 @@ app.use('/api/songs', createSongsRouter({
   logCastAction: (log) => {
     castLogs.unshift(log);
     if (castLogs.length > 50) castLogs.pop();
+    interactionRepository.logCastAudit({
+      id: log.id,
+      timestamp: log.timestamp || new Date().toLocaleTimeString(),
+      logType: log.type || 'cast',
+      songTitle: log.message,
+      status: log.success ? 'success' : 'failed',
+      detail: log.detail
+    });
   }
 }));
 
-// ---------------- PLAYLISTS DOMAIN ROUTER (Phase 1 Decoupling) ----------------
 app.use('/api/playlists', createPlaylistsRouter({
-  getPlaylists: () => storedPlaylists,
-  setPlaylists: (newPlaylists) => {
-    storedPlaylists = newPlaylists;
-    saveJson(PLAYLISTS_FILE, storedPlaylists);
-  },
-  getSongs: () => storedSongs,
+  getPlaylists: () => musicRepository.getAllPlaylists(),
+  setPlaylists: (newPlaylists) => musicRepository.setPlaylists(newPlaylists),
+  getSongs: () => musicRepository.getAllSongs(),
   dynamicPlaylistEngine
 }));
 
-// ---------------- MIOT & XIAOMI SPEAKER API ----------------
-
-/**
- * Helper to check if the current request is authorized for smart speaker admin actions.
- * If authentication is not globally or local network required, guests are allowed as admins.
- * If explicitly logged in as a normal user, they are always blocked.
- */
-function checkMiotAdminPermission(req: Request, res: Response): boolean {
-  const clientUser = (req as any).user;
-  const authRequired = isAuthRequiredForRequest(req);
-
-  if (authRequired) {
-    if (!clientUser || clientUser.role !== 'admin') {
-      res.status(200).json({ success: false, error: '权限不足：该操作仅系统管理员允许执行' });
-      return false;
-    }
-  } else {
-    if (clientUser && clientUser.role !== 'admin') {
-      res.status(200).json({ success: false, error: '权限不足：普通用户无权执行此操作' });
-      return false;
-    }
-  }
-  return true;
-}
-
-/**
- * Helper to check if the current request has permission to control speaker playback/casting.
- */
-function checkMiotControlPermission(req: Request, res: Response): boolean {
-  const clientUser = (req as any).user;
-  const authRequired = isAuthRequiredForRequest(req);
-
-  if (authRequired) {
-    if (!clientUser) {
-      res.status(200).json({ success: false, error: '权限不足：请先登录账号后再控制音箱播放' });
-      return false;
-    }
-    if (clientUser.role !== 'admin' && securitySettings.allowUserMiotControl === false) {
-      res.status(200).json({ success: false, error: '权限不足：系统管理员已限制普通用户控制音箱播放' });
-      return false;
-    }
-  } else {
-    if (clientUser && clientUser.role !== 'admin' && securitySettings.allowUserMiotControl === false) {
-      res.status(200).json({ success: false, error: '权限不足：系统管理员已限制普通用户控制音箱播放' });
-      return false;
-    }
-  }
-  return true;
-}
-
-/**
- * Helper to check if the current request has permission to broadcast TTS.
- */
-function checkMiotTtsPermission(req: Request, res: Response): boolean {
-  const clientUser = (req as any).user;
-  const authRequired = isAuthRequiredForRequest(req);
-
-  if (authRequired) {
-    if (!clientUser) {
-      res.status(200).json({ success: false, error: '权限不足：请先登录账号后再发送语音 TTS' });
-      return false;
-    }
-    if (clientUser.role !== 'admin' && securitySettings.allowUserMiotTts === false) {
-      res.status(200).json({ success: false, error: '权限不足：系统管理员已禁止普通用户发送语音 TTS 播报' });
-      return false;
-    }
-  } else {
-    if (clientUser && clientUser.role !== 'admin' && securitySettings.allowUserMiotTts === false) {
-      res.status(200).json({ success: false, error: '权限不足：系统管理员已禁止普通用户发送语音 TTS 播报' });
-      return false;
-    }
-  }
-  return true;
-}
-
-// MIoT Configuration
-app.get('/api/miot/config', (req: Request, res: Response) => {
-  res.json(sanitizeMiotConfig(miotConfig));
-});
-
-app.post('/api/miot/config', (req: Request, res: Response) => {
-  if (!checkMiotAdminPermission(req, res)) return;
-
-  const incoming = { ...req.body };
-  // Never overwrite real tokens if incoming contains masked bullets or asterisks or empty string
-  if (!incoming.serviceToken || incoming.serviceToken.includes('****') || incoming.serviceToken.includes('••••')) {
-    delete incoming.serviceToken;
-  }
-  if (incoming.micoServiceToken && (incoming.micoServiceToken.includes('****') || incoming.micoServiceToken.includes('••••'))) {
-    delete incoming.micoServiceToken;
-  }
-  if (incoming.miotServiceToken && (incoming.miotServiceToken.includes('****') || incoming.miotServiceToken.includes('••••'))) {
-    delete incoming.miotServiceToken;
-  }
-  if (incoming.xiaomiioServiceToken && (incoming.xiaomiioServiceToken.includes('****') || incoming.xiaomiioServiceToken.includes('••••'))) {
-    delete incoming.xiaomiioServiceToken;
-  }
-  // Never wipe internal tokens unless explicitly provided
-  if (!incoming.passToken && (miotConfig as any).passToken) delete incoming.passToken;
-  if (!incoming.ssecurity && (miotConfig as any).ssecurity) delete incoming.ssecurity;
-  if (!incoming.xiaomiioServiceToken && (miotConfig as any).xiaomiioServiceToken) delete incoming.xiaomiioServiceToken;
-  if (!incoming.micoServiceToken && (miotConfig as any).micoServiceToken) delete incoming.micoServiceToken;
-  if (!incoming.userId && miotConfig.userId) delete incoming.userId;
-
-  miotConfig = { ...miotConfig, ...incoming };
-  if ((miotConfig as any).passToken || (miotConfig.serviceToken && miotConfig.userId)) {
-    miotConfig.isLoggedIn = true;
-  }
-  saveJson(CONFIG_FILE, miotConfig);
-  castLogs.unshift({
-    id: `log-${Date.now()}`,
-    timestamp: new Date().toLocaleTimeString(),
-    type: 'sync',
-    message: '已更新小米音箱连接配置',
-    detail: `服务器串流地址: ${miotConfig.serverHost}, 默认设备: ${miotConfig.activeDeviceId}`,
-    success: true
-  });
-  res.json({ success: true, config: sanitizeMiotConfig(miotConfig) });
-});
-
-// Set Active / Default Target Device
-app.post('/api/miot/active-device', (req: Request, res: Response) => {
-  if (!checkMiotAdminPermission(req, res)) return;
-
-  const { did } = req.body || {};
-  if (!did) {
-    return res.status(400).json({ success: false, error: '缺少音箱 DID 参数' });
-  }
-
-  const cleanDid = String(did).trim();
-  miotConfig.activeDeviceId = cleanDid;
-  saveJson(CONFIG_FILE, miotConfig);
-
-  try {
-    voiceCommandService.updateConfig({ targetDeviceId: cleanDid });
-  } catch {}
-
-  if (miotConfig.userId && (miotConfig.serviceToken || (miotConfig as any).micoServiceToken)) {
-    const activeToken = (miotConfig as any).micoServiceToken || miotConfig.serviceToken;
-    try {
-      minaWsClient.connect(miotConfig.userId, activeToken, cleanDid);
-    } catch {}
-  }
-
-  const targetDev = xiaomiDevices.find(d => 
-    String(d.did).trim() === cleanDid || 
-    (d.deviceID && String(d.deviceID).trim() === cleanDid) ||
-    (d.cloudDid && String(d.cloudDid).trim() === cleanDid)
-  );
-
-  castLogs.unshift({
-    id: `log-${Date.now()}`,
-    timestamp: new Date().toLocaleTimeString(),
-    type: 'sync',
-    message: `已设置默认目标音箱: ${targetDev?.name || cleanDid}`,
-    detail: `DID: ${cleanDid} | IP: ${targetDev?.ip || '未指定'} | 型号: ${targetDev?.model || 'XiaoAi'}`,
-    success: true
-  });
-  if (castLogs.length > 50) castLogs.pop();
-
-  res.json({
-    success: true,
-    activeDeviceId: cleanDid,
-    device: targetDev ? sanitizeDevice(targetDev) : null,
-    config: sanitizeMiotConfig(miotConfig)
-  });
-});
-
-// Helper to extract clean userId, serviceToken, and passToken even if raw cookie strings or .mi.token JSON are passed
-function parseServiceTokenAndUserId(inputUid: string, inputToken: string, inputPassToken?: string): { userId: string; serviceToken: string; passToken: string; cUserId?: string } {
-  let userId = String(inputUid || '').trim();
-  let serviceToken = String(inputToken || '').trim();
-  let passToken = String(inputPassToken || '').trim();
-  let cUserId = '';
-
-  // 1. Check if input is a JSON string (e.g. .mi.token format from xiaomusic / miservice)
-  for (const raw of [inputUid, inputToken, inputPassToken]) {
-    if (raw && (raw.startsWith('{') || raw.includes('"userId"') || raw.includes('"micoapi"') || raw.includes('"passToken"'))) {
-      try {
-        const parsed = JSON.parse(raw);
-        if (parsed.userId) userId = String(parsed.userId);
-        if (parsed.cUserId) cUserId = String(parsed.cUserId);
-        if (parsed.passToken) passToken = String(parsed.passToken);
-        if (parsed.micoapi?.serviceToken) serviceToken = String(parsed.micoapi.serviceToken);
-        else if (parsed.serviceToken) serviceToken = String(parsed.serviceToken);
-        else if (parsed.xiaomiio?.serviceToken) serviceToken = String(parsed.xiaomiio.serviceToken);
-      } catch {}
-    }
-  }
-
-  const combined = `${userId}; ${serviceToken}; ${passToken}`;
-
-  // Extract cUserId if present (e.g. cUserId=JTq5lCGWX...)
-  const cUidMatch = combined.match(/\bcUserId\s*[:=]\s*["']?([^;\s,"'}{]+)/i);
-  if (cUidMatch) {
-    cUserId = cUidMatch[1].replace(/^["']|["']$/g, '').trim();
-  }
-
-  // Prioritize pure numeric userId: userId=12345678 or uid=12345678
-  const numericUidMatch = combined.match(/\b(?:userId|uid)\s*[:=]\s*["']?(\d{5,15})["']?/i);
-  if (numericUidMatch) {
-    userId = numericUidMatch[1];
-  } else {
-    // If no pure numeric userId in combined, check non-cUserId userId
-    const rawUidMatch = combined.match(/(?:^|[\s;,])userId\s*[:=]\s*["']?([^;\s,"'}{]+)/i);
-    if (rawUidMatch) {
-      userId = rawUidMatch[1];
-    }
-  }
-
-  const tokenMatch = combined.match(/(?:serviceToken)\s*[:=]\s*["']?([^;\s,"'}{]+)/i);
-  if (tokenMatch) {
-    serviceToken = tokenMatch[1];
-  }
-
-  const passMatch = combined.match(/(?:passToken)\s*[:=]\s*["']?([^;\s,"'}{]+)/i);
-  if (passMatch) {
-    passToken = passMatch[1];
-  }
-
-  userId = userId.replace(/^["']|["']$/g, '').replace(/;$/, '').trim();
-  serviceToken = serviceToken.replace(/^["']|["']$/g, '').replace(/;$/, '').trim();
-  passToken = passToken.replace(/^["']|["']$/g, '').replace(/;$/, '').trim();
-
-  return { userId, serviceToken, passToken, cUserId: cUserId || undefined };
-}
-
-// Verify that a serviceToken is actually scoped to the `micoapi` (Mina/XiaoAi) domain.
-// A serviceToken from another domain (e.g. xiaomiio, or a raw www.mi.com cookie) will
-// get rejected by Mina's gateway with 401/403 even though the string "looks like" a token.
-// We treat HTTP 401/403 as "definitely not a valid mico token"; any other response
-// (including 200 with an empty device list) is treated as "token accepted by mico".
-async function validateMicoServiceToken(userId: string, serviceToken: string): Promise<{ valid: boolean; status?: number; error?: string }> {
-  if (!userId || !serviceToken) return { valid: false, error: '缺少 userId 或 serviceToken' };
-  try {
-    const headers = buildMinaHeaders(userId, serviceToken);
-    const url = `https://api2.mina.mi.com/admin/v2/device_list?master=0&requestId=${generateMinaRequestId()}`;
-    const res = await fetch(url, { headers, signal: AbortSignal.timeout(5000) });
-    if (res.status === 401 || res.status === 403) {
-      return { valid: false, status: res.status, error: `mico 接口拒绝该 serviceToken (HTTP ${res.status})，该 token 很可能不属于 micoapi 域，或已过期` };
-    }
-    return { valid: true, status: res.status };
-  } catch (err: any) {
-    // Network failure isn't proof the token is bad — don't fail the whole login on a timeout.
-    return { valid: true, error: `校验请求异常，暂不能确认 mico 权限: ${err.message}` };
-  }
-}
-
-// Helper to query Xiaomi smart speaker device list from Mina Cloud API & Xiaomi Home APIs
-async function queryXiaomiMinaDevices(userId: string, serviceToken: string): Promise<any[]> {
-  try {
-    const res = await xiaoaiResolverEngine.resolveDevices({
-      userId,
-      micoServiceToken: (miotConfig as any).micoServiceToken || (miotConfig.isMicoValid ? serviceToken : undefined),
-      miotServiceToken: (miotConfig as any).miotServiceToken || (miotConfig as any).xiaomiioServiceToken,
-      ssecurity: (miotConfig as any).ssecurity,
-      existingDevices: xiaomiDevices,
-      activeStreamIps: Array.from(activeStreamIps)
-    });
-    return res.xiaoAiDevices;
-  } catch (err: any) {
-    console.warn('queryXiaomiMinaDevices pipeline error:', err.message);
-    return [];
-  }
-}
-
-// Xiaomi Cloud Passport Authenticator (Enhanced with Full STS Token Exchange)
-async function authenticateXiaomiPassport(user: string, pass: string): Promise<{
-  success: boolean;
-  userId?: string;
-  ssecurity?: string;
-  serviceToken?: string;
-  xiaomiioServiceToken?: string;
-  xiaomiioSsecurity?: string;
-  devices?: any[];
-  error?: string;
-  code?: number;
-}> {
-  if (!user || !pass) {
-    return { success: false, error: '请输入小米账号与密码' };
-  }
-
-  const result = await xiaomiPassport.loginWithPassword(user, pass, 'micoapi');
-  if (!result.success || !result.userId || !result.serviceToken) {
-    return {
-      success: false,
-      code: result.code,
-      error: result.error || '小米登录未通过'
-    };
-  }
-
-  // Auto-connect Mina WebSocket in the background for real-time XiaoAi events
-  try {
-    minaWsClient.connect(result.userId, result.serviceToken, miotConfig.activeDeviceId || '');
-  } catch (wsErr: any) {
-    console.warn('Auto-connecting Mina WS failed:', wsErr.message);
-  }
-
-  // Query real Xiaomi smart speaker device list using the Full Dual-Track Pipeline:
-  // Xiaomi Cloud + LAN miIO Hello -> Device Resolver -> MIoT Spec Filter
-  let devices: any[] = [];
-  try {
-    const resolveResult = await xiaoaiResolverEngine.resolveDevices({
-      userId: result.userId,
-      serviceToken: result.serviceToken,
-      existingDevices: xiaomiDevices,
-      activeStreamIps: Array.from(activeStreamIps)
-    });
-    devices = resolveResult.xiaoAiDevices;
-  } catch (devErr: any) {
-    console.warn('Failed to resolve XiaoAi devices via pipeline:', devErr.message);
-  }
-
-  return {
-    success: true,
-    userId: result.userId,
-    ssecurity: result.ssecurity,
-    serviceToken: result.serviceToken,
-    xiaomiioServiceToken: (result as any).stsTokens?.xiaomiio,
-    xiaomiioSsecurity: (result as any).xiaomiioSsecurity,
-    devices
-  };
-}
-
-// Xiaomi Cloud / Account Login & Token Binding
-app.post('/api/miot/login', async (req: Request, res: Response) => {
-  if (!checkMiotAdminPermission(req, res)) return;
-
-  const { username, password, mode, token, did, ip, serviceToken, userId, passToken } = req.body;
-
-  // Mode 1: Direct Token / LAN Mode (For users avoiding 2FA)
-  if (mode === 'token' || (token && ip)) {
-    if (!token || !ip) {
-      return res.status(400).json({ success: false, error: '局域网直连模式需要提供音箱 IP 和 32位 Device Token' });
-    }
-    const cleanToken = String(token).trim().toLowerCase();
-    const cleanIp = String(ip).trim();
-    const targetDid = did ? String(did).trim() : `did-${Date.now()}`;
-
-    // Test connectivity using real miIO UDP 54321
-    const probe = await testMiioConnection(cleanIp, 2000);
-    const resolvedDid = probe.did || targetDid;
-
-    // Query actual model and mac via miIO.info using the provided token
-    let detectedModel = 'xiaomi.wifispeaker.direct';
-    let detectedMac = '00:1A:7D:' + Math.random().toString(16).slice(2, 8).toUpperCase();
-    let detectedHw = 'MIoT-Local';
-    let detectedName = `局域网小爱音箱 (${cleanIp})`;
-    try {
-      const infoRes = await sendMiioCommand(cleanIp, cleanToken, 'miIO.info', [], 1500);
-      if (infoRes.success && infoRes.result) {
-        if (infoRes.result.model) detectedModel = infoRes.result.model;
-        if (infoRes.result.mac) detectedMac = infoRes.result.mac;
-        if (infoRes.result.hw_ver) detectedHw = infoRes.result.hw_ver;
-      }
-    } catch {}
-
-    // Verify whether this miIO device is truly a speaker
-    if (detectedModel !== 'xiaomi.wifispeaker.direct') {
-      const specCheck = await xiaoaiResolverEngine.evaluateMiotSpec(detectedModel);
-      if (!specCheck.isSpeaker) {
-        return res.status(400).json({
-          success: false,
-          error: `目标设备 (型号: ${detectedModel}) 并非小爱智能音箱！${specCheck.reason}。miIO 协议为米家通用协议，请确认输入的 IP 和 Token 对应的是小爱音箱。`
-        });
-      }
-    }
-
-    const existingDev = xiaomiDevices.find(d => d.ip === cleanIp || d.did === resolvedDid || d.did === targetDid);
-    if (existingDev) {
-      existingDev.token = cleanToken;
-      existingDev.isOnline = probe.reachable;
-      if (probe.did) existingDev.did = probe.did;
-      if (detectedModel !== 'xiaomi.wifispeaker.direct') existingDev.model = detectedModel;
-      if (detectedHw !== 'MIoT-Local') existingDev.hardware = detectedHw;
-    } else {
-      xiaomiDevices.unshift({
-        did: resolvedDid,
-        name: detectedName,
-        model: detectedModel,
-        hardware: detectedHw,
-        ip: cleanIp,
-        mac: detectedMac,
-        token: cleanToken,
-        isOnline: probe.reachable,
-        status: { playing: false, volume: 50, muted: false, updatedAt: new Date().toISOString() }
-      });
-    }
-    miotConfig.isLoggedIn = true;
-    miotConfig.bindMode = 'token';
-    miotConfig.activeDeviceId = existingDev ? existingDev.did : resolvedDid;
+// 6. MIoT & Xiaomi Speaker
+app.use('/api/miot', createMiotRouter({
+  getMiotConfig: () => miotConfig,
+  setMiotConfig: (cfg) => {
+    miotConfig = cfg;
     saveJson(CONFIG_FILE, miotConfig);
-    saveJson(DEVICES_FILE, xiaomiDevices);
+  },
+  getSecuritySettings: () => securitySettings,
+  isAuthRequiredForRequest: (req) => isAuthRequiredForRequest(req, () => securitySettings),
+  serverPort: PORT,
+  jwtSecret: JWT_SECRET,
+  musicDir: MUSIC_DIR,
+  activeStreamIps,
+  recentStreamEvents
+}));
 
-    castLogs.unshift({
-      id: `log-${Date.now()}`,
-      timestamp: new Date().toLocaleTimeString(),
-      type: 'sync',
-      message: `已通过局域网 Token 绑定音箱: ${cleanIp}`,
-      detail: `Token: ${cleanToken.slice(0, 6)}...${cleanToken.slice(-4)} | ${probe.message}`,
-      success: true
-    });
-    return res.json({
-      success: true,
-      message: `局域网 Token 绑定成功！${probe.message}`,
-      devices: xiaomiDevices.map(sanitizeDevice),
-      config: sanitizeMiotConfig(miotConfig)
-    });
-  }
+// P0: Scheduled Tasks API
+app.use('/api/tasks', createTaskRouter());
 
-  // Mode 2: ServiceToken / PassToken / Cookie Import (Direct without password)
-  if (mode === 'cookie' || mode === 'passToken' || (serviceToken && userId) || (passToken && userId) || (req.body.passToken && req.body.userId)) {
-    const { userId: parsedUid, serviceToken: cleanToken, passToken: cleanPassToken, cUserId: cleanCUserId } = parseServiceTokenAndUserId(
-      userId || req.body.userId,
-      serviceToken || req.body.serviceToken,
-      passToken || req.body.passToken
-    );
-
-    let cleanUid = parsedUid;
-
-    if (!cleanUid || cleanUid === 'undefined') {
-      return res.status(400).json({ success: false, error: '请输入有效的 User ID（支持从 Cookie 复制或粘贴完整 Cookie 字符串）' });
-    }
-
-    let activeServiceToken = cleanToken;
-    let xiaomiioServiceToken = '';
-    let micoExchangeAttempted = false;
-    let micoExchangeError: string | undefined;
-
-    // IMPORTANT: only a genuine passToken can be exchanged for a scoped micoapi/xiaomiio STS
-    // token. A serviceToken is not a passToken — trying to exchange it as one will always be
-    // rejected by Xiaomi, so we must NOT fall back to treating cleanToken as a passToken here.
-    if (cleanPassToken) {
-      micoExchangeAttempted = true;
-      try {
-        const [micoResult, miioResult] = await Promise.allSettled([
-          xiaomiPassport.fetchAdditionalStsToken(cleanUid, cleanPassToken, 'micoapi', cleanCUserId),
-          xiaomiPassport.fetchAdditionalStsToken(cleanUid, cleanPassToken, 'xiaomiio', cleanCUserId)
-        ]);
-
-        if (micoResult.status === 'fulfilled' && micoResult.value.serviceToken) {
-          activeServiceToken = micoResult.value.serviceToken;
-          if (micoResult.value.ssecurity) {
-            (miotConfig as any).ssecurity = micoResult.value.ssecurity;
-            (miotConfig as any).micoSsecurity = micoResult.value.ssecurity;
-          }
-          if (micoResult.value.userId && /^\d+$/.test(micoResult.value.userId)) {
-            cleanUid = micoResult.value.userId;
-          }
-        } else {
-          micoExchangeError = (micoResult.status === 'fulfilled' && micoResult.value.error)
-            ? micoResult.value.error
-            : 'PassToken 置换失败，凭据可能已失效或需要二次验证';
-        }
-        if (miioResult.status === 'fulfilled' && miioResult.value.serviceToken) {
-          xiaomiioServiceToken = miioResult.value.serviceToken;
-          (miotConfig as any).xiaomiioServiceToken = xiaomiioServiceToken;
-          (miotConfig as any).miotServiceToken = xiaomiioServiceToken;
-          if (miioResult.value.ssecurity) {
-            (miotConfig as any).xiaomiioSsecurity = miioResult.value.ssecurity;
-            if (!(miotConfig as any).ssecurity) {
-              (miotConfig as any).ssecurity = miioResult.value.ssecurity;
-            }
-          }
-        }
-
-        // Exchange was attempted with a real passToken but both mico and xiaomiio failed
-        if (!activeServiceToken && !xiaomiioServiceToken) {
-          return res.status(401).json({
-            success: false,
-            error: `小米安全授权失败: ${micoExchangeError}。提示：www.mi.com 网站的 PassToken/Cookie 包含跨域与 IP 风控限制，小爱音箱需要专属的 micoapi 令牌。强力推荐使用【二维码扫码登录】或【账号密码登录】（自动生成全套专有令牌），或登录 https://mina.mi.com 复制小爱官网 Cookie。`
-          });
-        }
-      } catch (err: any) {
-        micoExchangeError = err.message;
-        console.warn('Failed to exchange passToken for micoapi/xiaomiio serviceTokens:', err.message);
-      }
-    }
-
-    if (!activeServiceToken || activeServiceToken === 'undefined') {
-      return res.status(400).json({ success: false, error: '未能提取到有效的 ServiceToken 或 PassToken。请确认从 account.xiaomi.com 或 www.mi.com 复制的 Cookie 包含 passToken 或 serviceToken' });
-    }
-
-    // Whatever activeServiceToken we ended up with (freshly exchanged, or a raw pasted
-    // serviceToken with no passToken to verify it against) — actually check with Mina
-    // that it's accepted for the micoapi domain before telling the user login succeeded.
-    const micoCheck = await validateMicoServiceToken(cleanUid, activeServiceToken);
-    const isMicoValid = micoCheck.valid;
-
-    if (!micoCheck.valid && !micoExchangeAttempted) {
-      // We never had a passToken to properly exchange, and the raw serviceToken the user
-      // pasted was rejected outright by Mina — this is exactly the "wrong domain / expired"
-      // case, so don't silently accept it as a working login.
-      return res.status(401).json({
-        success: false,
-        error: `你提供的 ServiceToken 未通过 mico (小爱) 域校验: ${micoCheck.error || '未知原因'}。这个 token 很可能来自 xiaomiio 或网页端 Cookie，而不是 micoapi 域，小爱音箱控制需要专属的 mico serviceToken。请改用【二维码扫码登录】、【账号密码登录】，或提供真正的 passToken 让服务器自动兑换。`
-      });
-    }
-
-    miotConfig.userId = cleanUid;
-    if (isMicoValid) {
-      (miotConfig as any).micoServiceToken = activeServiceToken;
-    } else {
-      (miotConfig as any).micoServiceToken = undefined;
-    }
-    if (xiaomiioServiceToken) {
-      (miotConfig as any).miotServiceToken = xiaomiioServiceToken;
-    } else if (!isMicoValid) {
-      (miotConfig as any).miotServiceToken = activeServiceToken;
-    }
-    (miotConfig as any).isMicoValid = isMicoValid;
-    if (cleanPassToken) (miotConfig as any).passToken = cleanPassToken;
-    miotConfig.miUser = username || `uid_${cleanUid}`;
-    miotConfig.isLoggedIn = true;
-    miotConfig.bindMode = 'cookie';
+// P1: Speaker Groups & Multi-room Zone API
+const groupRouter = createGroupRouter({
+  callMinaCloudApi,
+  sendMiioCommand,
+  getMiotConfig: () => miotConfig,
+  saveMiotConfig: (cfg) => {
+    miotConfig = cfg;
     saveJson(CONFIG_FILE, miotConfig);
-
-    // Try to sync devices using the full Dual-Track Pipeline:
-    // Xiaomi Cloud + LAN miIO Hello -> Device Resolver -> MIoT Spec Filter
-    let syncedDevices: any[] = [];
-    try {
-      const resolveResult = await xiaoaiResolverEngine.resolveDevices({
-        userId: cleanUid,
-        micoServiceToken: isMicoValid ? activeServiceToken : undefined,
-        miotServiceToken: xiaomiioServiceToken || (!isMicoValid ? activeServiceToken : undefined),
-        existingDevices: xiaomiDevices,
-        activeStreamIps: Array.from(activeStreamIps)
-      });
-      syncedDevices = resolveResult.xiaoAiDevices;
-      if (syncedDevices && syncedDevices.length > 0) {
-        xiaomiDevices = syncedDevices;
-        ensureValidActiveDeviceId();
-        saveJson(DEVICES_FILE, xiaomiDevices);
-        saveJson(CONFIG_FILE, miotConfig);
-      }
-    } catch (e: any) {
-      console.warn('Sync devices with imported serviceToken error:', e.message);
-    }
-
-    const logDetail = syncedDevices.length > 0
-      ? `User ID: ${cleanUid} | 成功调取米家/Mina API 并同步到 ${syncedDevices.length} 台音箱设备`
-      : `User ID: ${cleanUid} | 调取了 Mina/米家云端接口，暂未发现对应的小爱音箱（建议在【局域网/手动添加】补充 IP 或核对账号）`;
-
-    castLogs.unshift({
-      id: `log-${Date.now()}`,
-      timestamp: new Date().toLocaleTimeString(),
-      type: syncedDevices.length > 0 ? 'sync' : 'error',
-      message: `已通过 ServiceToken 关联小米服务`,
-      detail: logDetail,
-      success: true
-    });
-    if (castLogs.length > 50) castLogs.pop();
-
-    const successMessage = syncedDevices.length > 0
-      ? `ServiceToken 关联成功！已成功同步 ${syncedDevices.length} 台小爱音箱设备。`
-      : isMicoValid
-        ? `ServiceToken 关联成功，但云端未查找到绑定的音箱设备。请确认该账号下是否有绑定的小爱音箱，或使用【手动添加音箱】输入音箱 IP。`
-        : `ServiceToken 关联成功，但未能确认 mico (小爱) 权限，小爱音箱相关功能可能无法使用。建议改用【二维码扫码登录】获取专属 mico 令牌。`;
-
-    return res.json({
-      success: true,
-      message: successMessage,
-      isMicoValid,
-      devices: xiaomiDevices.map(sanitizeDevice),
-      config: sanitizeMiotConfig(miotConfig)
-    });
-  }
-
-  // Mode 3: Real Xiaomi Cloud Passport API Authentication
-  if (!username || !password) {
-    return res.status(400).json({
-      success: false,
-      error: '请输入有效的小米账号（邮箱/手机号/小米ID）以及密码'
-    });
-  }
-
-  const authResult = await authenticateXiaomiPassport(username.trim(), password);
-
-  if (!authResult.success || !authResult.userId || !authResult.serviceToken || authResult.userId === 'undefined') {
-    castLogs.unshift({
-      id: `log-${Date.now()}`,
-      timestamp: new Date().toLocaleTimeString(),
-      type: 'error',
-      message: `小米账号登录验证未通过: ${username}`,
-      detail: authResult.error || '账号或密码错误或受风控保护',
-      success: false
-    });
-    if (castLogs.length > 50) castLogs.pop();
-
-    return res.status(401).json({
-      success: false,
-      code: authResult.code,
-      error: authResult.error || '小米账号或密码错误，请检查核对'
-    });
-  }
-
-  // Real authentication passed with verified userId and micoapi serviceToken!
-  miotConfig.miUser = username.trim();
-  miotConfig.userId = authResult.userId;
-  (miotConfig as any).micoServiceToken = authResult.serviceToken;
-  if (authResult.xiaomiioServiceToken) {
-    (miotConfig as any).xiaomiioServiceToken = authResult.xiaomiioServiceToken;
-    (miotConfig as any).miotServiceToken = authResult.xiaomiioServiceToken;
-  }
-  (miotConfig as any).isMicoValid = true;
-  if (authResult.ssecurity) (miotConfig as any).ssecurity = authResult.ssecurity;
-  if (authResult.xiaomiioSsecurity) (miotConfig as any).xiaomiioSsecurity = authResult.xiaomiioSsecurity;
-  miotConfig.isLoggedIn = true;
-  miotConfig.bindMode = 'account';
-  saveJson(CONFIG_FILE, miotConfig);
-
-  if (authResult.devices && authResult.devices.length > 0) {
-    xiaomiDevices = authResult.devices;
-    ensureValidActiveDeviceId();
-  } else {
-    xiaomiDevices = [];
-    miotConfig.activeDeviceId = '';
-  }
-  saveJson(DEVICES_FILE, xiaomiDevices);
-  saveJson(CONFIG_FILE, miotConfig);
-
-  const deviceCountMsg = xiaomiDevices.length > 0
-    ? `已成功关联 ${xiaomiDevices.length} 台音箱设备`
-    : `账号已绑定，但云端未查找到音箱设备（可使用局域网 Token 直连或手动添加音箱）`;
-
-  castLogs.unshift({
-    id: `log-${Date.now()}`,
-    timestamp: new Date().toLocaleTimeString(),
-    type: 'sync',
-    message: `小米云端账号鉴权成功: ${miotConfig.miUser}`,
-    detail: `用户ID: ${authResult.userId} | ${deviceCountMsg}`,
-    success: true
-  });
-  if (castLogs.length > 50) castLogs.pop();
-
-  return res.json({
-    success: true,
-    message: `小米账号验证通过！${deviceCountMsg}`,
-    user: miotConfig.miUser,
-    devices: xiaomiDevices.map(sanitizeDevice),
-    config: sanitizeMiotConfig(miotConfig)
-  });
+  },
+  dispatchCastSongDirectly: (args: any) => dispatchCastSongDirectly({
+    ...args,
+    serverPort: PORT,
+    jwtSecret: JWT_SECRET,
+    activeStreamIps
+  })
 });
-
-// Logout / Unbind Xiaomi Account
-app.post('/api/miot/logout', (req: Request, res: Response) => {
-  if (!checkMiotAdminPermission(req, res)) return;
-
-  try {
-    minaWsClient.disconnect(true);
-  } catch {}
-
-  miotConfig.isLoggedIn = false;
-  miotConfig.miUser = '';
-  miotConfig.userId = '';
-  miotConfig.serviceToken = '';
-  saveJson(CONFIG_FILE, miotConfig);
-
-  castLogs.unshift({
-    id: `log-${Date.now()}`,
-    timestamp: new Date().toLocaleTimeString(),
-    type: 'sync',
-    message: '已解除小米账号绑定',
-    detail: '已清除云端令牌与登录凭证，并断开 Mina WebSocket 长连接',
-    success: true
-  });
-
-  res.json({ success: true, message: '已安全退出并解绑小米账号', config: sanitizeMiotConfig(miotConfig) });
-});
-
-// 1. QR Code Login Flow: Generate QR code
-app.get('/api/miot/passport/qrcode/get', async (req: Request, res: Response) => {
-  if (!checkMiotAdminPermission(req, res)) return;
-
-  // Default to 'xiaomiio' (米家 App 授权)
-  const sid = (req.query.sid as string) || 'xiaomiio';
-  const region = (req.query.region as string) || 'cn';
-  const qrRes = await xiaomiPassport.generateLoginQrCode(sid, region);
-  if (qrRes.success) {
-    return res.json(qrRes);
-  }
-  return res.status(500).json(qrRes);
-});
-
-// 1. QR Code Login Flow: Check QR code scan & confirm status
-app.post('/api/miot/passport/qrcode/check', async (req: Request, res: Response) => {
-  if (!checkMiotAdminPermission(req, res)) return;
-
-  const { loginUrl, lpUrl, sid } = req.body;
-  if (!loginUrl && !lpUrl) {
-    return res.status(400).json({ success: false, error: '缺少 loginUrl 参数' });
-  }
-
-  const checkRes = await xiaomiPassport.checkQrCodeStatus(loginUrl || lpUrl, lpUrl);
-  if (checkRes.success && checkRes.status === 'confirmed') {
-    console.log(`[QR Check Endpoint] 📱 收到扫码确认结果 -> userId: ${checkRes.userId}, hasPassToken: ${Boolean(checkRes.passToken)}, primaryToken: ${checkRes.serviceToken ? checkRes.serviceToken.slice(0, 6) + '••••' : '(空)'}, initialSid: ${sid}`);
-    const effectiveSid = sid || 'micoapi';
-    let primaryToken = checkRes.serviceToken || '';
-    let micoServiceToken = effectiveSid === 'micoapi' ? primaryToken : undefined;
-    let miotServiceToken = effectiveSid === 'micoapi' ? undefined : primaryToken;
-    let ssecurity = checkRes.ssecurity || '';
-
-    // With confirmed passToken, fetch both STS tokens to ensure complete double-credential setup
-    if (checkRes.userId && checkRes.passToken) {
-      console.log(`[QR Check Endpoint] 🔑 尝试通过 passToken 置换双域 Token...`);
-      // 1. Fetch micoapi token (for XiaoAi Mina cloud, speech synthesis & WS)
-      if (!micoServiceToken) {
-        try {
-          console.log(`[QR Check Endpoint] 🔄 正在申请 micoapi (小爱域) 凭证...`);
-          const micoTokenRes = await xiaomiPassport.fetchAdditionalStsToken(checkRes.userId, checkRes.passToken, 'micoapi');
-          if (micoTokenRes.serviceToken) {
-            micoServiceToken = micoTokenRes.serviceToken;
-            console.log(`[QR Check Endpoint] ✅ 成功获取 micoapi 凭证: ${micoServiceToken.slice(0, 6)}••••`);
-          } else {
-            console.warn(`[QR Check Endpoint] ❌ 申请 micoapi 凭证失败: ${micoTokenRes.error}`);
-          }
-          if (micoTokenRes.ssecurity) {
-            (miotConfig as any).micoSsecurity = micoTokenRes.ssecurity;
-            if (!ssecurity) {
-              ssecurity = micoTokenRes.ssecurity;
-            }
-          }
-        } catch (err: any) {
-          console.warn('[QR Check Endpoint] ❌ 申请 micoapi 凭证抛出异常:', err.message);
-        }
-      }
-
-      // 2. Fetch xiaomiio token (for Mi Home smart devices and speaker sync)
-      if (!miotServiceToken) {
-        try {
-          console.log(`[QR Check Endpoint] 🔄 正在申请 xiaomiio (米家域) 凭证...`);
-          const ioTokenRes = await xiaomiPassport.fetchAdditionalStsToken(checkRes.userId, checkRes.passToken, 'xiaomiio');
-          if (ioTokenRes.serviceToken) {
-            miotServiceToken = ioTokenRes.serviceToken;
-            console.log(`[QR Check Endpoint] ✅ 成功获取 xiaomiio 凭证: ${miotServiceToken.slice(0, 6)}••••`);
-            if (ioTokenRes.ssecurity) {
-              (miotConfig as any).xiaomiioSsecurity = ioTokenRes.ssecurity;
-              if (!ssecurity) {
-                ssecurity = ioTokenRes.ssecurity;
-              }
-            }
-          } else {
-            console.warn(`[QR Check Endpoint] ❌ 申请 xiaomiio 凭证失败: ${ioTokenRes.error}`);
-          }
-        } catch (err: any) {
-          console.warn('[QR Check Endpoint] ❌ 申请 xiaomiio 凭证抛出异常:', err.message);
-        }
-      }
-    } else {
-      console.warn(`[QR Check Endpoint] ⚠️ checkRes 中缺失 passToken (hasUserId=${Boolean(checkRes.userId)})，无法触发双域 STS 置换！`);
-    }
-
-    console.log(`[QR Check Endpoint] 📊 最终凭据结果: userId=${checkRes.userId}, micoToken=${micoServiceToken ? '已获取' : '❌缺失'}, miotToken=${miotServiceToken ? '已获取' : '❌缺失'}`);
-
-    if (!checkRes.userId || (!micoServiceToken && !miotServiceToken && !primaryToken)) {
-      console.error(`[QR Check Endpoint] ❌ 未能获取到有效的服务凭据 Token，返回错误提示给前端`);
-      return res.json({
-        success: false,
-        status: 'error',
-        error: '扫码确认成功，但未能成功获取到服务凭证，请刷新二维码重新扫码授权'
-      });
-    }
-
-    miotConfig.userId = checkRes.userId;
-    (miotConfig as any).micoServiceToken = micoServiceToken;
-    (miotConfig as any).miotServiceToken = miotServiceToken;
-    (miotConfig as any).xiaomiioServiceToken = miotServiceToken;
-    (miotConfig as any).isMicoValid = Boolean(micoServiceToken);
-    (miotConfig as any).ssecurity = ssecurity || (miotConfig as any).xiaomiioSsecurity || (miotConfig as any).ssecurity;
-    (miotConfig as any).xiaomiioSsecurity = (miotConfig as any).xiaomiioSsecurity || (miotConfig as any).ssecurity;
-    (miotConfig as any).passToken = checkRes.passToken;
-    miotConfig.miUser = `uid_${checkRes.userId}`;
-    miotConfig.isLoggedIn = true;
-    miotConfig.bindMode = 'account';
-    saveJson(CONFIG_FILE, miotConfig);
-
-    // Auto connect Mina WS if micoServiceToken is available
-    if (micoServiceToken) {
-      try {
-        minaWsClient.connect(checkRes.userId, micoServiceToken, miotConfig.activeDeviceId || '');
-      } catch {}
-    }
-
-    // Auto sync devices using the full Dual-Track Pipeline (with 8s timeout guard)
-    let devices: any[] = [];
-    try {
-      const resolvePromise = xiaoaiResolverEngine.resolveDevices({
-        userId: checkRes.userId,
-        micoServiceToken,
-        miotServiceToken,
-        ssecurity: ssecurity || (miotConfig as any).ssecurity,
-        existingDevices: xiaomiDevices,
-        activeStreamIps: Array.from(activeStreamIps)
-      });
-      const timeoutPromise = new Promise<any>((resolve) => 
-        setTimeout(() => resolve({ xiaoAiDevices: xiaomiDevices }), 8000)
-      );
-      const resolveResult = await Promise.race([resolvePromise, timeoutPromise]);
-      devices = resolveResult.xiaoAiDevices || [];
-      if (devices && devices.length > 0) {
-        xiaomiDevices = devices;
-        ensureValidActiveDeviceId();
-      }
-      saveJson(DEVICES_FILE, xiaomiDevices);
-      saveJson(CONFIG_FILE, miotConfig);
-    } catch (err: any) {
-      console.warn('Auto resolve devices error:', err.message);
-    }
-
-    const qrSyncDetail = devices.length > 0
-      ? `用户ID: ${checkRes.userId} | 成功建立 Mina 长连接并同步 ${devices.length} 台音箱`
-      : `用户ID: ${checkRes.userId} | 账号已绑定，但云端未查找到音箱设备（可使用局域网直连或手动添加）`;
-
-    castLogs.unshift({
-      id: `log-${Date.now()}`,
-      timestamp: new Date().toLocaleTimeString(),
-      type: 'sync',
-      message: `小米扫码登录成功: ${miotConfig.miUser}`,
-      detail: qrSyncDetail,
-      success: true
-    });
-
-    return res.json({
-      success: true,
-      status: 'confirmed',
-      user: miotConfig.miUser,
-      devices: xiaomiDevices.map(sanitizeDevice),
-      config: sanitizeMiotConfig(miotConfig)
-    });
-  }
-
-  return res.json(checkRes);
-});
-
-// 2. Mina WebSocket Status & Metrics
-app.get('/api/miot/ws/status', (req: Request, res: Response) => {
-  if (!checkMiotAdminPermission(req, res)) return;
-
-  const status = minaWsClient.getStatus();
-  const recentEvents = minaWsClient.getRecentEvents();
-  res.json({ success: true, status, recentEvents });
-});
-
-// 2.1 Xiaomi API Circuit Breaker & Rate Limiter Status
-app.get('/api/miot/circuit-status', (req: Request, res: Response) => {
-  if (!checkMiotAdminPermission(req, res)) return;
-
-  const status = xiaomiCircuitBreaker.getStatus();
-  res.json({ success: true, status });
-});
-
-// Reset Circuit Breaker manually
-app.post('/api/miot/circuit-reset', (req: Request, res: Response) => {
-  if (!checkMiotAdminPermission(req, res)) return;
-
-  xiaomiCircuitBreaker.reset();
-  res.json({ success: true, message: '风控熔断器已重置为正常就绪状态', status: xiaomiCircuitBreaker.getStatus() });
-});
-
-// Cloud Device Query Raw Snapshots Inspector
-app.get('/api/miot/cloud/snapshots', (req: Request, res: Response) => {
-  if (!checkMiotAdminPermission(req, res)) return;
-
-  const snapshots = xiaoaiResolverEngine.getCloudSnapshots();
-  res.json({
-    success: true,
-    count: snapshots.length,
-    snapshots,
-    account: {
-      userId: miotConfig.userId,
-      miUser: miotConfig.miUser,
-      isLoggedIn: miotConfig.isLoggedIn,
-      hasServiceToken: Boolean(miotConfig.serviceToken && miotConfig.serviceToken.trim().length > 0)
-    }
-  });
-});
-
-// Clear Cloud Snapshots
-app.post('/api/miot/cloud/snapshots/clear', (req: Request, res: Response) => {
-  if (!checkMiotAdminPermission(req, res)) return;
-
-  xiaoaiResolverEngine.clearCloudSnapshots();
-  res.json({ success: true, message: '已清空云端抓包快照' });
-});
-
-// Export Complete Debug Bundle (JSON file download)
-app.get('/api/miot/cloud/export-debug', (req: Request, res: Response) => {
-  if (!checkMiotAdminPermission(req, res)) return;
-
-  const snapshots = xiaoaiResolverEngine.getCloudSnapshots();
-  const debugBundle = {
-    exportedAt: new Date().toISOString(),
-    account: {
-      userId: miotConfig.userId,
-      miUser: miotConfig.miUser,
-      isLoggedIn: miotConfig.isLoggedIn,
-      hasServiceToken: Boolean(miotConfig.serviceToken && miotConfig.serviceToken.trim().length > 0),
-      activeDeviceId: miotConfig.activeDeviceId
-    },
-    cloudSnapshots: snapshots,
-    devices: xiaomiDevices.map(sanitizeDevice),
-    castLogs: castLogs.slice(0, 30)
-  };
-
-  res.setHeader('Content-Type', 'application/json');
-  res.setHeader('Content-Disposition', `attachment; filename="tinglan-xiaomi-cloud-debug-${Date.now()}.json"`);
-  res.send(JSON.stringify(debugBundle, null, 2));
-});
-
-// Mina WebSocket Manual Reconnect
-app.post('/api/miot/ws/reconnect', (req: Request, res: Response) => {
-  if (!checkMiotAdminPermission(req, res)) return;
-
-  if (miotConfig.userId && miotConfig.serviceToken) {
-    minaWsClient.connect(miotConfig.userId, miotConfig.serviceToken, miotConfig.activeDeviceId || '');
-    return res.json({ success: true, message: '正在重新建立 Mina WebSocket 连接...' });
-  }
-  return res.status(400).json({ success: false, error: '未配置有效的小米云端凭证' });
-});
-
-// Mina Real-time Event Stream (Server-Sent Events)
-app.get('/api/miot/events', (req: Request, res: Response) => {
-  if (!checkMiotAdminPermission(req, res)) return;
-
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders?.();
-
-  // Send initial handshake
-  res.write(`data: ${JSON.stringify({ type: 'connected', timestamp: new Date().toLocaleTimeString(), message: 'TingLan SSE Event Stream Connected' })}\n\n`);
-
-  const onMinaEvent = (evt: any) => {
-    try {
-      res.write(`data: ${JSON.stringify(evt)}\n\n`);
-    } catch {}
-  };
-
-  minaWsClient.on('event', onMinaEvent);
-
-  req.on('close', () => {
-    minaWsClient.off('event', onMinaEvent);
-  });
-});
-
-minaWsClient.on('event', (evt: any) => {
-  appEventBus.broadcast('mina:event', evt);
-});
-
-// 3. MIoT Spec RPC: Get Property
-app.post('/api/miot/rpc/prop/get', async (req: Request, res: Response) => {
-  if (!checkMiotAdminPermission(req, res)) return;
-
-  const { did, siid, piid } = req.body;
-  const targetDev = xiaomiDevices.find(d => d.did === String(did));
-  if (!targetDev) {
-    return res.status(404).json({ success: false, error: '未找到指定 DID 的音箱设备' });
-  }
-
-  const cloudAuth = (miotConfig.userId && miotConfig.serviceToken)
-    ? { 
-        userId: miotConfig.userId, 
-        serviceToken: (miotConfig as any).xiaomiioServiceToken || miotConfig.serviceToken,
-        ssecurity: (miotConfig as any).ssecurity 
-      }
-    : undefined;
-
-  const result = await miotRpcEngine.getProperty(targetDev, Number(siid) || 2, Number(piid) || 1, cloudAuth);
-  res.json(result);
-});
-
-// 3. MIoT Spec RPC: Set Property
-app.post('/api/miot/rpc/prop/set', async (req: Request, res: Response) => {
-  if (!checkMiotAdminPermission(req, res)) return;
-
-  const { did, siid, piid, value } = req.body;
-  const targetDev = xiaomiDevices.find(d => d.did === String(did));
-  if (!targetDev) {
-    return res.status(404).json({ success: false, error: '未找到指定 DID 的音箱设备' });
-  }
-
-  const cloudAuth = (miotConfig.userId && miotConfig.serviceToken)
-    ? { 
-        userId: miotConfig.userId, 
-        serviceToken: (miotConfig as any).xiaomiioServiceToken || miotConfig.serviceToken,
-        ssecurity: (miotConfig as any).ssecurity 
-      }
-    : undefined;
-
-  const result = await miotRpcEngine.setProperty(targetDev, Number(siid) || 2, Number(piid) || 1, value, cloudAuth);
-  res.json(result);
-});
-
-// 3. MIoT Spec RPC: Action
-app.post('/api/miot/rpc/action', async (req: Request, res: Response) => {
-  if (!checkMiotAdminPermission(req, res)) return;
-
-  const { did, siid, aiid, in: inParams } = req.body;
-  const targetDev = xiaomiDevices.find(d => d.did === String(did));
-  if (!targetDev) {
-    return res.status(404).json({ success: false, error: '未找到指定 DID 的音箱设备' });
-  }
-
-  const cloudAuth = (miotConfig.userId && miotConfig.serviceToken)
-    ? { 
-        userId: miotConfig.userId, 
-        serviceToken: (miotConfig as any).xiaomiioServiceToken || miotConfig.serviceToken,
-        ssecurity: (miotConfig as any).ssecurity 
-      }
-    : undefined;
-
-  const result = await miotRpcEngine.executeAction(
-    targetDev,
-    Number(siid) || 3,
-    Number(aiid) || 1,
-    Array.isArray(inParams) ? inParams : [],
-    cloudAuth
-  );
-  res.json(result);
-});
-
-// 3. MIoT Spec RPC: Raw Packet Execution (LAN / Cloud)
-app.post('/api/miot/rpc/raw', async (req: Request, res: Response) => {
-  if (!checkMiotAdminPermission(req, res)) return;
-
-  const { ip, token, method, params, did } = req.body;
-  if (ip && token) {
-    const result = await miotRpcEngine.executeLocalMiio(ip, token, method || 'get_prop', params || []);
-    return res.json(result);
-  }
-
-  if (miotConfig.userId && miotConfig.serviceToken) {
-    const result = await miotRpcEngine.executeCloudMiot(
-      method || 'miotspec/prop/get',
-      params || {},
-      miotConfig.userId,
-      (miotConfig as any).xiaomiioServiceToken || miotConfig.serviceToken,
-      (miotConfig as any).ssecurity
-    );
-    return res.json(result);
-  }
-
-  return res.status(400).json({ success: false, error: '需要提供局域网 (ip+token) 或登录小米云端' });
-});
-
-// 3. MIoT Model Spec Definition Resolver
-app.get('/api/miot/spec/:model', async (req: Request, res: Response) => {
-  const { model } = req.params;
-  const spec = await miotRpcEngine.getMiotSpecInstance(model);
-  if (spec) {
-    return res.json({ success: true, spec });
-  }
-  return res.status(404).json({ success: false, error: `未检索到 ${model} 的 MIoT Spec 实例` });
-});
-
-// 4. Enhanced Device Discovery: Subnet Scan via XiaoAi Resolver & MIoT Spec
-app.post('/api/miot/devices/scan-subnet', async (req: Request, res: Response) => {
-  if (!checkMiotAdminPermission(req, res)) return;
-
-  const { subnetPrefix } = req.body;
-  try {
-    const result = await xiaoaiResolverEngine.resolveDevices({
-      userId: miotConfig.userId,
-      serviceToken: (miotConfig as any).micoServiceToken || miotConfig.serviceToken,
-      xiaomiioServiceToken: (miotConfig as any).xiaomiioServiceToken || miotConfig.serviceToken,
-      ssecurity: (miotConfig as any).ssecurity,
-      subnetPrefix: subnetPrefix ? String(subnetPrefix).trim() : undefined,
-      existingDevices: xiaomiDevices,
-      activeStreamIps: Array.from(activeStreamIps)
-    });
-
-    if (result.xiaoAiDevices.length > 0) {
-      xiaomiDevices = result.xiaoAiDevices;
-      ensureValidActiveDeviceId();
-      saveJson(DEVICES_FILE, xiaomiDevices);
-    }
-
-    res.json({
-      success: true,
-      discovered: result.xiaoAiDevices.map(sanitizeDevice),
-      ignoredDevices: result.ignoredDevices,
-      metrics: result.metrics,
-      totalDevices: xiaomiDevices.length,
-      devices: xiaomiDevices.map(sanitizeDevice)
-    });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// 4. Enhanced Device Discovery: SSDP UPnP Scan
-app.post('/api/miot/devices/scan-ssdp', async (req: Request, res: Response) => {
-  if (!checkMiotAdminPermission(req, res)) return;
-
-  const discovered = await deviceDiscoveryEngine.scanSsdp(2500);
-  res.json({ success: true, discovered });
-});
-
-// Xiaomi Devices List (Tokens redacted for security)
-app.get('/api/miot/devices', (req: Request, res: Response) => {
-  res.json(xiaomiDevices.map(sanitizeDevice));
-});
-
-// Add custom Xiaomi Speaker
-app.post('/api/miot/devices', async (req: Request, res: Response) => {
-  if (!checkMiotAdminPermission(req, res)) return;
-
-  const { name, ip, did, model, hardware, token } = req.body;
-  if (!name || !ip) {
-    return res.status(400).json({ error: 'Name and IP are required' });
-  }
-
-  const cleanIp = String(ip).trim();
-  const cleanName = String(name).trim();
-  const cleanModel = model ? String(model).trim() : 'xiaomi.wifispeaker.sound';
-  const cleanToken = token ? String(token).trim() : undefined;
-  const targetDid = did ? String(did).trim() : `did-${Date.now()}`;
-  const hasToken = Boolean(cleanToken && cleanToken.length > 0);
-
-  // MIoT Spec: Resolve capabilities & verify device
-  const specEval = await xiaoaiResolverEngine.evaluateMiotSpec(cleanModel);
-
-  const newDevice = {
-    did: targetDid,
-    name: cleanName,
-    model: cleanModel,
-    hardware: hardware || 'L16A',
-    ip: cleanIp,
-    token: cleanToken,
-    mac: '00:1A:7D:' + Math.random().toString(16).slice(2, 8).toUpperCase(),
-    platform: hasToken ? 'miio' : 'dlna',
-    source: hasToken ? 'hybrid' : 'lan',
-    capabilities: {
-      ...specEval.capabilities,
-      supportsDlna: true,
-      hasPlayControl: true,
-      hasVolumeControl: true
-    },
-    online: true,
-    isOnline: true,
-    status: {
-      playing: false,
-      volume: 45,
-      muted: false,
-      updatedAt: new Date().toISOString()
-    }
-  };
-
-  xiaomiDevices.push(newDevice);
-  if (!miotConfig.activeDeviceId) {
-    miotConfig.activeDeviceId = newDevice.did;
-    saveJson(CONFIG_FILE, miotConfig);
-  }
-  saveJson(DEVICES_FILE, xiaomiDevices);
-
-  castLogs.unshift({
-    id: `log-${Date.now()}`,
-    timestamp: new Date().toLocaleTimeString(),
-    type: 'sync',
-    message: `已添加自定义小米音箱: ${newDevice.name}`,
-    detail: `IP: ${newDevice.ip} | DID: ${newDevice.did} | 平台: ${newDevice.platform}`,
-    success: true
-  });
-
-  res.json({ success: true, device: sanitizeDevice(newDevice), devices: xiaomiDevices.map(sanitizeDevice) });
-});
-
-// Update / Edit Xiaomi Speaker
-app.put('/api/miot/devices/:did', async (req: Request, res: Response) => {
-  if (!checkMiotAdminPermission(req, res)) return;
-
-  const { did } = req.params;
-  const { name, ip, did: newDid, model, hardware, token } = req.body;
-
-  const index = xiaomiDevices.findIndex(d => d.did === did);
-  if (index === -1) {
-    return res.status(404).json({ success: false, error: '未找到指定音箱设备' });
-  }
-
-  const currentDev = xiaomiDevices[index];
-  // If token was not changed or was passed as masked asterisks, keep existing token
-  const resolvedToken = (token !== undefined && !String(token).includes('****') && !String(token).includes('••••'))
-    ? (token ? String(token).trim() : undefined)
-    : currentDev.token;
-
-  const cleanModel = model !== undefined ? model.trim() : currentDev.model;
-  const specEval = await xiaoaiResolverEngine.evaluateMiotSpec(cleanModel);
-  const targetIp = ip !== undefined ? ip.trim() : currentDev.ip;
-  const hasToken = Boolean(resolvedToken && resolvedToken.length > 0);
-
-  xiaomiDevices[index] = {
-    ...currentDev,
-    name: name !== undefined ? name.trim() : currentDev.name,
-    ip: targetIp,
-    did: newDid !== undefined ? String(newDid).trim() : currentDev.did,
-    model: cleanModel,
-    hardware: hardware !== undefined ? hardware.trim() : currentDev.hardware,
-    token: resolvedToken,
-    capabilities: specEval.capabilities,
-    platform: hasToken && targetIp ? 'miio' : (currentDev.platform || 'mina'),
-    source: targetIp && hasToken ? 'hybrid' : (targetIp ? 'lan' : (currentDev.source || 'cloud')),
-    online: currentDev.online ?? currentDev.isOnline ?? true,
-    isOnline: currentDev.online ?? currentDev.isOnline ?? true
-  };
-
-  if (miotConfig.activeDeviceId === did && newDid && newDid !== did) {
-    miotConfig.activeDeviceId = String(newDid).trim();
-    saveJson(CONFIG_FILE, miotConfig);
-  }
-
-  saveJson(DEVICES_FILE, xiaomiDevices);
-
-  castLogs.unshift({
-    id: `log-${Date.now()}`,
-    timestamp: new Date().toLocaleTimeString(),
-    type: 'sync',
-    message: `已修改音箱信息: ${xiaomiDevices[index].name}`,
-    detail: `IP: ${xiaomiDevices[index].ip} | 型号: ${xiaomiDevices[index].model}`,
-    success: true
-  });
-
-  res.json({ success: true, device: sanitizeDevice(xiaomiDevices[index]), devices: xiaomiDevices.map(sanitizeDevice) });
-});
-
-// Delete Xiaomi Speaker
-app.delete('/api/miot/devices/:did', (req: Request, res: Response) => {
-  if (!checkMiotAdminPermission(req, res)) return;
-
-  const { did } = req.params;
-  const didStr = String(did).trim();
-
-  // Find target device for logging
-  const targetDevice = xiaomiDevices.find(d => String(d.did).trim() === didStr || String(d.id || '').trim() === didStr);
-
-  // Filter out only the targeted device
-  xiaomiDevices = xiaomiDevices.filter(d => String(d.did).trim() !== didStr && String(d.id || '').trim() !== didStr);
-
-  if (String(miotConfig.activeDeviceId).trim() === didStr) {
-    miotConfig.activeDeviceId = xiaomiDevices[0]?.did || '';
-    saveJson(CONFIG_FILE, miotConfig);
-  }
-  saveJson(DEVICES_FILE, xiaomiDevices);
-
-  castLogs.unshift({
-    id: `log-${Date.now()}`,
-    timestamp: new Date().toLocaleTimeString(),
-    type: 'sync',
-    message: `已移除音箱: ${targetDevice?.name || didStr}`,
-    detail: `剩余 ${xiaomiDevices.length} 台小米音箱设备`,
-    success: true
-  });
-  if (castLogs.length > 50) castLogs.pop();
-
-  res.json({
-    success: true,
-    deletedDid: didStr,
-    devices: xiaomiDevices.map(sanitizeDevice),
-    activeDeviceId: miotConfig.activeDeviceId
-  });
-});
-
-// Clear all demo/sample Xiaomi Speakers
-app.post('/api/miot/devices/clear', (req: Request, res: Response) => {
-  if (!checkMiotAdminPermission(req, res)) return;
-
-  xiaomiDevices = [];
-  miotConfig.activeDeviceId = '';
-  saveJson(CONFIG_FILE, miotConfig);
-  saveJson(DEVICES_FILE, xiaomiDevices);
-
-  castLogs.unshift({
-    id: `log-${Date.now()}`,
-    timestamp: new Date().toLocaleTimeString(),
-    type: 'sync',
-    message: '已清空全部音箱设备列表',
-    detail: '可通过手动添加或扫描重新发现音箱',
-    success: true
-  });
-  if (castLogs.length > 50) castLogs.pop();
-
-  res.json({ success: true, message: '已清空全部音箱设备', devices: [] });
-});
-
-// Reset to default sample Xiaomi Speakers
-app.post('/api/miot/devices/reset', (req: Request, res: Response) => {
-  if (!checkMiotAdminPermission(req, res)) return;
-
-  xiaomiDevices = JSON.parse(JSON.stringify(DEFAULT_DEVICES)).map((d: any) => ({
-    ...d,
-    name: (d.name || '小米智能音箱').replace(/\s*[\(（]点击(右侧)?编辑[\)）]/g, '').trim()
-  }));
-  miotConfig.activeDeviceId = xiaomiDevices[0]?.did || '';
-  saveJson(CONFIG_FILE, miotConfig);
-  saveJson(DEVICES_FILE, xiaomiDevices);
-
-  castLogs.unshift({
-    id: `log-${Date.now()}`,
-    timestamp: new Date().toLocaleTimeString(),
-    type: 'sync',
-    message: '已恢复预设小米音箱列表',
-    detail: `已加载 ${xiaomiDevices.length} 台常用小爱音箱设备`,
-    success: true
-  });
-  if (castLogs.length > 50) castLogs.pop();
-
-  res.json({
-    success: true,
-    message: '已恢复预设音箱设备',
-    devices: xiaomiDevices.map(sanitizeDevice),
-    activeDeviceId: miotConfig.activeDeviceId
-  });
-});
-
-// Test Ping / Handshake to speaker IP (Prioritizes miIO UDP 54321 Hello, then TCP fallback)
-app.post('/api/miot/devices/ping', async (req: Request, res: Response) => {
-  if (!checkMiotAdminPermission(req, res)) return;
-
-  const { ip } = req.body;
-  if (!ip) {
-    return res.status(400).json({ error: 'IP is required' });
-  }
-
-  const cleanIp = String(ip).trim();
-  const probeResult = await testMiioConnection(cleanIp, 1500);
-
-  // Update online status in memory
-  const dev = xiaomiDevices.find(d => d.ip === cleanIp);
-  if (dev) {
-    dev.isOnline = probeResult.reachable;
-    if (probeResult.did && !dev.did.startsWith('mi-')) {
-      dev.did = probeResult.did;
-    }
-    saveJson(DEVICES_FILE, xiaomiDevices);
-  }
-
-  res.json({
-    ip: cleanIp,
-    reachable: probeResult.reachable,
-    isMiio: probeResult.isMiio,
-    did: probeResult.did,
-    latency: probeResult.latency,
-    message: probeResult.message
-  });
-});
-
-// Device Cast Strategy Fast-Path Profiles
-app.get('/api/miot/strategy-profiles', (_req: Request, res: Response) => {
-  const profiles = xiaomiDevices.map(d => {
-    const devId = d.did || d.ip || 'unknown';
-    const profile = castPipelineManager.getProfile(devId);
-    return {
-      did: d.did,
-      name: d.name,
-      model: d.model,
-      ip: d.ip,
-      preferredStrategy: profile?.preferredStrategy || 'auto_discover',
-      lastSuccessTime: profile?.lastSuccessTime || null,
-      failStreak: profile?.failStreak || 0
-    };
-  });
-  res.json({ success: true, profiles });
-});
-
-app.post('/api/miot/strategy-profiles/:did/reset', (req: Request, res: Response) => {
-  const { did } = req.params;
-  castPipelineManager.clearProfile(did);
-  res.json({ success: true, message: `已重置设备 ${did} 的投播策略记忆缓存` });
-});
-
-// XiaoAi Device Discovery & Resolution Pipeline
-// Xiaomi Cloud + LAN miIO Hello -> Device Resolver -> MIoT Spec -> Filter XiaoAi Speaker vs Non-Speaker
-app.post('/api/miot/devices/resolve', async (req: Request, res: Response) => {
-  if (!checkMiotAdminPermission(req, res)) return;
-
-  const { subnetPrefix } = req.body || {};
-  try {
-    const result = await xiaoaiResolverEngine.resolveDevices({
-      userId: miotConfig.userId,
-      micoServiceToken: (miotConfig as any).micoServiceToken || (miotConfig.isMicoValid ? miotConfig.serviceToken : undefined),
-      miotServiceToken: (miotConfig as any).miotServiceToken || (miotConfig as any).xiaomiioServiceToken || (!miotConfig.isMicoValid ? miotConfig.serviceToken : undefined),
-      ssecurity: (miotConfig as any).ssecurity,
-      subnetPrefix,
-      existingDevices: xiaomiDevices,
-      activeStreamIps: Array.from(activeStreamIps)
-    });
-
-    if (result.xiaoAiDevices.length > 0) {
-      xiaomiDevices = result.xiaoAiDevices;
-      ensureValidActiveDeviceId();
-      saveJson(DEVICES_FILE, xiaomiDevices);
-    }
-
-    castLogs.unshift({
-      id: `log-${Date.now()}`,
-      timestamp: new Date().toLocaleTimeString(),
-      type: 'sync',
-      message: `MIoT 发现与解析：小爱音箱 ${result.metrics.speakerConfirmed} 台，过滤非音箱 ${result.metrics.nonSpeakerIgnored} 台`,
-      detail: `云端: ${result.metrics.cloudFound} | 局域网: ${result.metrics.lanFound} | 双轨融合: ${result.metrics.hybridMerged}`,
-      success: true
-    });
-    if (castLogs.length > 50) castLogs.pop();
-
-    res.json({
-      success: true,
-      count: xiaomiDevices.length,
-      devices: xiaomiDevices.map(sanitizeDevice),
-      ignoredDevices: result.ignoredDevices,
-      metrics: result.metrics,
-      activeDeviceId: miotConfig.activeDeviceId
-    });
-  } catch (err: any) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// Add or discover device (Full Pipeline: Cloud + LAN miIO Hello -> Device Resolver -> MIoT Spec Filter)
-app.post('/api/miot/devices/scan', async (req: Request, res: Response) => {
-  if (!checkMiotAdminPermission(req, res)) return;
-
-  const { subnetPrefix } = req.body || {};
-  try {
-    const result = await xiaoaiResolverEngine.resolveDevices({
-      userId: miotConfig.userId,
-      micoServiceToken: (miotConfig as any).micoServiceToken || (miotConfig.isMicoValid ? miotConfig.serviceToken : undefined),
-      miotServiceToken: (miotConfig as any).miotServiceToken || (miotConfig as any).xiaomiioServiceToken || (!miotConfig.isMicoValid ? miotConfig.serviceToken : undefined),
-      ssecurity: (miotConfig as any).ssecurity,
-      subnetPrefix,
-      existingDevices: xiaomiDevices,
-      activeStreamIps: Array.from(activeStreamIps)
-    });
-
-    if (result.xiaoAiDevices.length > 0) {
-      xiaomiDevices = result.xiaoAiDevices;
-      ensureValidActiveDeviceId();
-      saveJson(DEVICES_FILE, xiaomiDevices);
-    }
-
-    castLogs.unshift({
-      id: `log-${Date.now()}`,
-      timestamp: new Date().toLocaleTimeString(),
-      type: 'sync',
-      message: result.metrics.cloudFound > 0 
-        ? `小爱设备发现完成：云端(${result.metrics.cloudFound}) + 局域网Hello(${result.metrics.lanFound})，已确认 ${result.metrics.speakerConfirmed} 台音箱`
-        : `局域网 miIO Hello 探测完成：当前 ${xiaomiDevices.length} 台音箱设备就绪`,
-      detail: `双轨融合: ${result.metrics.hybridMerged} 台 | 规范过滤非音箱: ${result.metrics.nonSpeakerIgnored} 台`,
-      success: true
-    });
-    if (castLogs.length > 50) castLogs.pop();
-
-    res.json({
-      success: true,
-      count: xiaomiDevices.length,
-      cloudSyncedCount: result.metrics.cloudFound,
-      activeDeviceId: miotConfig.activeDeviceId,
-      devices: xiaomiDevices.map(sanitizeDevice),
-      ignoredDevices: result.ignoredDevices,
-      metrics: result.metrics
-    });
-  } catch (err: any) {
-    console.warn('Scan pipeline fallback error:', err);
-    res.json({
-      success: true,
-      count: xiaomiDevices.length,
-      cloudSyncedCount: 0,
-      activeDeviceId: miotConfig.activeDeviceId,
-      devices: xiaomiDevices.map(sanitizeDevice)
-    });
-  }
-});
-
-// Mina UBUS Request Queue: ensure commands for the same deviceId are executed sequentially
-const minaUbusQueues = new Map<string, Promise<void>>();
-
-async function callMinaCloudApi(
-  pathName: string,
-  methodName: string,
-  messageObj: any,
-  targetDid?: string,
-  retryCount: number = 0
-): Promise<{ success: boolean; data?: any; error?: string; raw?: string; statusCode?: number }> {
-  const queueKey = targetDid || 'default';
-  const prev = minaUbusQueues.get(queueKey) || Promise.resolve();
-  let resolveNext: () => void;
-  const next = new Promise<void>(r => { resolveNext = r; });
-  minaUbusQueues.set(queueKey, next);
-
-  try {
-    await prev;
-    return await doCallMinaCloudApi(pathName, methodName, messageObj, targetDid, retryCount);
-  } finally {
-    resolveNext!();
-    if (minaUbusQueues.get(queueKey) === next) {
-      minaUbusQueues.delete(queueKey);
-    }
-  }
-}
-
-// Real Mina Cloud UBUS API Dispatcher
-async function doCallMinaCloudApi(
-  pathName: string,
-  methodName: string,
-  messageObj: any,
-  targetDid?: string,
-  retryCount: number = 0
-): Promise<{ success: boolean; data?: any; error?: string; raw?: string; statusCode?: number }> {
-  const rawToken = (miotConfig as any).micoServiceToken || miotConfig.serviceToken || '';
-  const rawUid = miotConfig.userId || '';
-
-  // Clean ASCII only to prevent ByteString character code > 255 TypeError
-  const activeMicoToken = String(rawToken).replace(/[^\x20-\x7E]/g, '').trim();
-  const cleanUid = String(rawUid).replace(/[^\x20-\x7E]/g, '').trim();
-
-  // If token is missing but passToken is available, try auto-refresh
-  if ((!activeMicoToken || !cleanUid) && (miotConfig as any).passToken && retryCount === 0) {
-    try {
-      const refreshed = await xiaomiPassport.fetchAdditionalStsToken(cleanUid || '0', (miotConfig as any).passToken, 'micoapi');
-      if (refreshed.serviceToken) {
-        (miotConfig as any).micoServiceToken = refreshed.serviceToken;
-        (miotConfig as any).isMicoValid = true;
-        miotConfig.serviceToken = refreshed.serviceToken;
-        if (refreshed.ssecurity) (miotConfig as any).ssecurity = refreshed.ssecurity;
-        if (refreshed.userId) {
-          miotConfig.userId = refreshed.userId;
-          miotConfig.miUser = `uid_${refreshed.userId}`;
-        }
-        miotConfig.isLoggedIn = true;
-        saveJson(CONFIG_FILE, miotConfig);
-        return doCallMinaCloudApi(pathName, methodName, messageObj, targetDid, retryCount + 1);
-      }
-    } catch (err: any) {
-      console.warn('[Mina] Pre-flight STS refresh failed:', err.message);
-    }
-  }
-
-  if (!activeMicoToken || !cleanUid || activeMicoToken.includes('••') || activeMicoToken.includes('**')) {
-    return {
-      success: false,
-      error: '未检测到有效的小米服务令牌 (serviceToken)。请在【米家账号绑定】中点击【扫码登录】或输入账号密码完成绑定。'
-    };
-  }
-
-  let deviceId = targetDid || miotConfig.activeDeviceId || '';
-
-  const isSyntheticId = (id?: string) =>
-    !id ||
-    id.startsWith('did-') ||
-    id.startsWith('manual_') ||
-    id.startsWith('detected_') ||
-    id.startsWith('lan_') ||
-    id.startsWith('miio_');
-
-  // Look up actual device to find real Mina hardware deviceID
-  const matchedDev = xiaomiDevices.find(d => 
-    d.did === targetDid || 
-    (d as any).deviceID === targetDid || 
-    (d as any).hardwareDeviceId === targetDid || 
-    (d as any).cloudDid === targetDid
-  );
-
-  if (matchedDev) {
-    if ((matchedDev as any).deviceID && !isSyntheticId((matchedDev as any).deviceID)) {
-      deviceId = (matchedDev as any).deviceID;
-    } else if ((matchedDev as any).hardwareDeviceId && !isSyntheticId((matchedDev as any).hardwareDeviceId)) {
-      deviceId = (matchedDev as any).hardwareDeviceId;
-    } else if ((matchedDev as any).cloudDid && !isSyntheticId((matchedDev as any).cloudDid)) {
-      deviceId = (matchedDev as any).cloudDid;
-    } else if (!isSyntheticId(matchedDev.did)) {
-      deviceId = matchedDev.did;
-    }
-  }
-
-  // 动态设备映射：若 deviceId 仍未知或仅为数字 MIoT DID，向 Mina 查询官方 device_list 自动补全
-  if (activeMicoToken && cleanUid && (!matchedDev || !(matchedDev as any).deviceID || isSyntheticId(deviceId))) {
-    try {
-      const minaDevListRes = await fetch(`https://api2.mina.mi.com/admin/v2/device_list?master=1&requestId=${generateMinaRequestId()}`, {
-        headers: buildMinaHeaders(cleanUid, activeMicoToken),
-        signal: AbortSignal.timeout(3000)
-      });
-      if (minaDevListRes.ok) {
-        const listJson: any = await minaDevListRes.json();
-        const devList = Array.isArray(listJson?.data) ? listJson.data : (Array.isArray(listJson) ? listJson : []);
-        const foundMinaDev = devList.find((item: any) => 
-          String(item.miotDID) === String(targetDid) || 
-          String(item.deviceID) === String(targetDid) ||
-          (matchedDev?.name && item.name === matchedDev.name) ||
-          (matchedDev?.mac && item.mac === matchedDev.mac)
-        );
-        if (foundMinaDev && foundMinaDev.deviceID) {
-          deviceId = foundMinaDev.deviceID;
-          if (matchedDev) {
-            (matchedDev as any).deviceID = foundMinaDev.deviceID;
-            if (foundMinaDev.hardware) (matchedDev as any).hardware = foundMinaDev.hardware;
-            saveJson(DEVICES_FILE, xiaomiDevices);
-          }
-          console.log(`[Mina] 自动关联成功: DID ${targetDid} -> 云端 DeviceID: ${deviceId} (${foundMinaDev.hardware || 'XiaoAi'})`);
-        }
-      }
-    } catch (autoDevErr: any) {
-      console.warn('[Mina] 自动关联设备列表失败:', autoDevErr.message);
-    }
-  }
-
-  // Handle synthetic local DIDs (auto-link to account's cloud speakers by IP, MAC, name or single-speaker fallback)
-  if (isSyntheticId(deviceId)) {
-    // 1. Match by exact IP in cloud devices
-    const cloudByIp = xiaomiDevices.find(d => !isSyntheticId(d.did) && d.ip && matchedDev?.ip && d.ip === matchedDev.ip);
-    // 2. Match by MAC
-    const cloudByMac = xiaomiDevices.find(d => !isSyntheticId(d.did) && d.mac && matchedDev?.mac && d.mac === matchedDev.mac);
-    // 3. Match by Name
-    const cloudByName = xiaomiDevices.find(d => !isSyntheticId(d.did) && d.name && matchedDev?.name && d.name.trim() === matchedDev.name.trim());
-    // 4. Any real cloud speaker
-    const realCloudDev = cloudByIp || cloudByMac || cloudByName || xiaomiDevices.find(d => !isSyntheticId(d.did));
-
-    if (realCloudDev) {
-      deviceId = (realCloudDev as any).deviceID || realCloudDev.did;
-      console.log(`[Mina] Mapped local speaker ${targetDid} (${matchedDev?.name || 'Local'}) -> Cloud deviceId: ${deviceId}`);
-    } else if (!isSyntheticId(miotConfig.activeDeviceId)) {
-      deviceId = miotConfig.activeDeviceId;
-    }
-  }
-
-  if (isSyntheticId(deviceId)) {
-    return {
-      success: false,
-      error: '该音箱当前仅配置了局域网 IP，未关联小米官方云端音箱。请在设备管理中点击【同步小米云端音箱】关联对应音箱，即可通过云端通道直接下发。'
-    };
-  }
-
-  const messageStr = typeof messageObj === 'string' ? messageObj : JSON.stringify(messageObj);
-  const requestId = generateMinaRequestId();
-
-  const postBody = new URLSearchParams({
-    deviceId,
-    message: messageStr,
-    method: methodName,
-    path: pathName,
-    requestId
-  });
-
-  const endpoints = [
-    'https://api2.mina.mi.com/remote/ubus',
-    'https://api.mina.mi.com/remote/ubus',
-    'https://user.app.mina.mi.com/remote/ubus'
-  ];
-
-  let lastError = '';
-  let lastStatus = 0;
-
-  for (const endpoint of endpoints) {
-    try {
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          ...buildMinaHeaders(cleanUid, activeMicoToken, deviceId),
-          'Content-Type': 'application/x-www-form-urlencoded'
-        },
-        body: postBody.toString(),
-        signal: AbortSignal.timeout(3500)
-      });
-
-      lastStatus = response.status;
-      const responseText = await response.text();
-      let resJson: any;
-      try {
-        resJson = JSON.parse(responseText);
-      } catch {
-        resJson = { raw: responseText };
-      }
-
-      if (response.ok && (resJson.code === 0 || resJson.message === 'ok' || resJson.info === 'ok')) {
-        // isDeviceResultOK: Check if inner data has device error code
-        const innerData = resJson.data;
-        if (innerData && typeof innerData === 'object' && 'code' in innerData) {
-          const deviceCode = Number(innerData.code);
-          if (!Number.isNaN(deviceCode) && deviceCode !== 0) {
-            console.warn(`[Mina UBUS] 音箱设备侧拒绝执行 (deviceCode: ${deviceCode}):`, JSON.stringify(innerData));
-            lastError = `设备拒绝执行 (Inner Code: ${deviceCode}): ${innerData.message || ''}`;
-            continue;
-          }
-        }
-        return { success: true, data: resJson, statusCode: 200 };
-      } else {
-        if (response.status === 401 || response.status === 403 || responseText.includes('HTTP Status 401') || responseText.includes('HTTP Status 403') || responseText.includes('Unauthorized') || responseText.includes('Forbidden')) {
-          // Attempt 1-time auto-refresh if passToken is available
-          if (retryCount === 0 && (miotConfig as any).passToken && cleanUid) {
-            try {
-              const refreshRes = await refreshXiaomiTokens('mina_rest_401');
-              if (refreshRes.success && refreshRes.serviceToken) {
-                return doCallMinaCloudApi(pathName, methodName, messageObj, targetDid, retryCount + 1);
-              }
-            } catch (rErr: any) {
-              console.warn('[Mina] 401/403 recovery STS refresh failed:', rErr.message);
-            }
-          }
-
-          return {
-            success: false,
-            statusCode: response.status || 401,
-            error: `小米服务令牌 (serviceToken) 已过期或无此设备控制权限 (HTTP ${response.status})。请在【米家账号绑定】中重新扫码/账号登录。`,
-            raw: responseText
-          };
-        }
-        const errorDesc = resJson.message || resJson.error || resJson.description || `HTTP ${response.status}: ${responseText.slice(0, 120)}`;
-        lastError = errorDesc;
-      }
-    } catch (netErr: any) {
-      console.warn(`Error calling Mina endpoint ${endpoint}:`, netErr.message);
-      lastError = netErr.message;
-    }
-  }
-
-  return {
-    success: false,
-    statusCode: lastStatus || 500,
-    error: lastError ? `小米 Mina 云端指令通道响应失败: ${lastError}` : '未能连接到小米 Mina 云端指令通道 (网络超时或端点不可达)'
-  };
-}
-
-// ---------------- ADAPTIVE HEARTBEAT & SELF-HEALING HOOKS ----------------
-adaptiveHeartbeatEngine.setRpcHandlers(
-  (pathName, methodName, msg, devId) => callMinaCloudApi(pathName, methodName, msg, devId),
-  (ip, token, method, params, timeout) => sendMiioCommand(ip, token, method, params, timeout)
-);
-
-// Subscribe to real-time hardware status changes (Physical buttons / voice commands / volume)
-adaptiveHeartbeatEngine.onStateSync((did, updates) => {
-  const target = xiaomiDevices.find((d) => d.did === did);
-  if (target) {
-    if (updates.online !== undefined) {
-      target.online = updates.online;
-      target.isOnline = updates.online;
-    }
-    if (updates.ip !== undefined) target.ip = updates.ip;
-    if (updates.currentVolume !== undefined) {
-      if (!target.status) target.status = { volume: updates.currentVolume, playing: false };
-      target.status.volume = updates.currentVolume;
-    }
-    if (updates.isPlaying !== undefined) {
-      if (!target.status) target.status = { volume: 50, playing: updates.isPlaying };
-      target.status.playing = updates.isPlaying;
-    }
-    saveJson(DEVICES_FILE, xiaomiDevices);
-  }
-});
-
-adaptiveHeartbeatEngine.start();
-
-// Get real-time adaptive heartbeat & self-healing diagnostics
-app.get('/api/miot/heartbeat/status', (req: Request, res: Response) => {
-  const statuses = adaptiveHeartbeatEngine.getHeartbeatStatuses();
-  res.json({
-    success: true,
-    count: statuses.length,
-    statuses,
-    timestamp: new Date().toISOString()
-  });
-});
-
-// Manually trigger fast probe active mode (e.g. on playback or remote control)
-app.post('/api/miot/heartbeat/boost', (req: Request, res: Response) => {
-  const duration = parseInt(String(req.body?.durationMs || '30000'), 10);
-  adaptiveHeartbeatEngine.triggerActiveMode(isNaN(duration) ? 30000 : duration);
-  res.json({
-    success: true,
-    message: '已切换至高频自愈嗅探模式 (3s/次)',
-    durationMs: isNaN(duration) ? 30000 : duration
-  });
-});
-
-// Manually reset heartbeat exponential backoff for a specific device or all devices
-app.post('/api/miot/heartbeat/reset-backoff', (req: Request, res: Response) => {
-  const { did } = req.body || {};
-  if (did) {
-    adaptiveHeartbeatEngine.resetDeviceBackoff(did);
-  } else {
-    for (const dev of xiaomiDevices) {
-      adaptiveHeartbeatEngine.resetDeviceBackoff(dev.did);
-    }
-  }
-  adaptiveHeartbeatEngine.triggerActiveMode(30000);
-  res.json({
-    success: true,
-    message: did ? `已重置设备 ${did} 的心跳退避计时器并立即嗅探` : '已重置所有音箱的心跳退避计时器并立即嗅探'
-  });
-});
-
-// Cast Song to Xiaomi Speaker with Real Cloud UBUS Dispatch & Local miIO fallback
-app.post('/api/miot/cast', async (req: Request, res: Response) => {
-  if (!checkMiotControlPermission(req, res)) return;
-
-  const startTime = Date.now();
-  const { did, songId, songTitle, songArtist, streamUrl, duration } = req.body;
-
-  // Auto-resolve devices from cloud if currently empty and logged in
-  if (xiaomiDevices.length === 0 && (miotConfig as any).passToken) {
-    try {
-      const resolveRes = await xiaoaiResolverEngine.resolveDevices({
-        userId: miotConfig.userId,
-        serviceToken: (miotConfig as any).micoServiceToken || miotConfig.serviceToken,
-        xiaomiioServiceToken: (miotConfig as any).xiaomiioServiceToken || miotConfig.serviceToken,
-        ssecurity: (miotConfig as any).ssecurity,
-        existingDevices: xiaomiDevices,
-        activeStreamIps: Array.from(activeStreamIps)
-      });
-      if (resolveRes.xiaoAiDevices && resolveRes.xiaoAiDevices.length > 0) {
-        xiaomiDevices = resolveRes.xiaoAiDevices;
-        if (!miotConfig.activeDeviceId) miotConfig.activeDeviceId = xiaomiDevices[0].did;
-        saveJson(DEVICES_FILE, xiaomiDevices);
-        saveJson(CONFIG_FILE, miotConfig);
-      }
-    } catch (rErr: any) {
-      console.warn('[Cast] Auto device resolution failed:', rErr.message);
-    }
-  }
-
-  const targetDevice = xiaomiDevices.find(d => d.did === did || (d as any).deviceID === did) || xiaomiDevices[0];
-
-  if (!targetDevice) {
-    return res.status(404).json({ success: false, error: '未找到指定音箱设备' });
-  }
-
-  // Reject placeholder/mock device if neither local IP/Token nor Cloud DID exists
-  const isDummyDevice = (!targetDevice.ip && !targetDevice.token && (targetDevice.did === 'wifispeaker' || !targetDevice.did || !targetDevice.did.match(/^\d+$/)));
-  if (isDummyDevice && !miotConfig.isLoggedIn) {
-    const errorMsg = '当前选中的为预设示例音箱，尚未关联真实硬件。请先在【设置】中绑定米家账号，并在【播放协议控制中枢】点击【重新扫描设备】同步真实音箱！';
-    castLogs.unshift({
-      id: `log-${Date.now()}`,
-      timestamp: new Date().toLocaleTimeString(),
-      type: 'error',
-      message: `投放失败【${targetDevice.name}】`,
-      detail: `✕ ${errorMsg}`,
-      success: false,
-      did: targetDevice.did,
-      ip: '未配置',
-      model: targetDevice.model,
-      protocol: 'MIoT / miIO',
-      requestMethod: 'POST /api/miot/cast',
-      httpStatus: 400,
-      errorCode: 'ERR_DUMMY_DEVICE',
-      responseTimeMs: 2,
-      streamUrl: streamUrl || ''
-    });
-    if (castLogs.length > 50) castLogs.pop();
-
-    return res.status(400).json({
-      success: false,
-      error: errorMsg,
-      message: errorMsg
-    });
-  }
-
-  // 1. Resolve absolute stream URL & Cast Mode
-  const selectedCastMode = (req.body.castMode || miotConfig.castMode || 'auto') as 'auto' | 'cdn_direct' | 'xiaoai_directive' | 'lan_stream';
-  const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'https';
-  const host = (req.headers['x-forwarded-host'] as string) || req.headers.host || req.get('host');
-  const reqOrigin = `${proto}://${host}`;
-  const primaryLanIp = getBestLanIpForTarget(targetDevice.ip);
-
-  let baseHost = (miotConfig.serverHost && miotConfig.serverHost.startsWith('http'))
-    ? miotConfig.serverHost.replace(/\/$/, '')
-    : reqOrigin;
-
-  let isLoopback = baseHost.includes('localhost') || baseHost.includes('127.0.0.1');
-  let hostWarning: string | null = null;
-
-  // Determine true extension of the song on disk
-  const rawId = (songId || 'song-1').toString();
-  const cleanSongId = rawId.replace(/\.(mp3|wav|flac|m4a|aac|ogg|opus|ape)$/i, '');
-  const foundSong = storedSongs.find(s => s.id === cleanSongId || s.id === rawId);
-
-  let songExt = '.mp3';
-  if (foundSong?.localFilename) {
-    songExt = path.extname(foundSong.localFilename).toLowerCase() || '.mp3';
-  } else {
-    for (const ext of ['.mp3', '.flac', '.wav', '.m4a', '.aac', '.ogg']) {
-      if (fs.existsSync(path.join(MUSIC_DIR, `${cleanSongId}${ext}`)) || fs.existsSync(path.join(MUSIC_DIR, `${rawId}${ext}`))) {
-        songExt = ext;
-        break;
-      }
-    }
-  }
-
-  // If baseHost is loopback (localhost/127.0.0.1), physical speakers cannot access it!
-  if (isLoopback) {
-    if (primaryLanIp) {
-      baseHost = `http://${primaryLanIp}:${PORT}`;
-      isLoopback = false;
-    } else {
-      hostWarning = '检测到当前串流地址为 localhost/127.0.0.1，已自动无缝切换为公网高保真 CDN 直链，确保音箱即投即响。';
-    }
-  }
-
-  // Critical Guard: If baseHost points to targetDevice.ip (e.g. user entered speaker IP instead of server IP),
-  // the speaker would be requested to stream from itself (e.g. 192.168.50.120:3000), causing immediate connection refused!
-  if (targetDevice.ip && baseHost.includes(targetDevice.ip)) {
-    console.warn(`[Cast Guard] baseHost (${baseHost}) matches target speaker IP (${targetDevice.ip})! Auto-correcting...`);
-    if (primaryLanIp && primaryLanIp !== targetDevice.ip) {
-      baseHost = `http://${primaryLanIp}:${PORT}`;
-      hostWarning = `检测到串流地址误设为音箱自身 IP (${targetDevice.ip})，已自动纠偏为服务器真实 IP (${primaryLanIp})`;
-    } else {
-      baseHost = reqOrigin;
-      hostWarning = `检测到串流地址误设为音箱自身 IP (${targetDevice.ip})，已自动切换为外部网关地址 (${reqOrigin})`;
-    }
-  }
-  const resolvedServerHost = baseHost;
-
-  // Smart Stream URL selection: always point to the actual audio endpoint for the requested song with secure token
-  const streamToken = generateStreamToken(cleanSongId);
-  let resolvedStreamUrl = `${baseHost}/api/stream/${encodeURIComponent(cleanSongId)}.mp3?token=${streamToken}`;
-  const isNavidromeOrRawStream = streamUrl && (streamUrl.includes('/rest/stream.view') || streamUrl.includes(':4533') || streamUrl.includes('subsonic'));
-  if (streamUrl && streamUrl.startsWith('http') && !streamUrl.includes('localhost') && !streamUrl.includes('127.0.0.1') && !isNavidromeOrRawStream) {
-    resolvedStreamUrl = streamUrl;
-  }
-
-  console.log(`[Cast] Target: "${targetDevice.name}" (${targetDevice.did}), songId: ${cleanSongId}, mode: ${selectedCastMode}, streamUrl: ${resolvedStreamUrl}`);
-
-  // Send TTS announcement before cast if enabled
-  if (miotConfig.ttsAnnouncement) {
-    try {
-      await ttsEngine.dispatchToSpeaker({
-        targetDevice,
-        text: `${miotConfig.ttsPrefix || '正在为您播放'} ${songTitle || '歌曲'}`,
-        mode: 'auto',
-        forSongCast: true,
-        serverHost: resolvedServerHost,
-        miotConfig,
-        sendMiioCommandFn: (ip, token, method, params, timeoutMs) => sendMiioCommand(ip, token, method, params, timeoutMs || 2500),
-        callMinaCloudApiFn: (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry)
-      });
-      await new Promise(r => setTimeout(r, 1200));
-    } catch (ttsErr: any) {
-      console.warn('TTS intro failed before cast:', ttsErr.message);
-    }
-  }
-
-  // Execute XiaoMusic Standard Multi-Tier Playback via XiaomiAdapter
-  const castResult = await xiaomiAdapter.playUrl(
-    targetDevice,
-    resolvedStreamUrl,
-    songTitle || '音乐',
-    (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry),
-    (ip, token, method, params, timeoutMs) => sendMiioCommand(ip, token, method, params, timeoutMs || 2500),
+app.use('/api/groups', groupRouter);
+app.use('/api/miot/groups', groupRouter);
+
+// 7. Queue Engine Dispatchers & Persistence
+queueEngine.setCastDispatcher(async (song: any, targetDid: string, seekSeconds?: number) => {
+  return dispatchCastSongDirectly({
+    song,
+    targetDid,
+    seekSeconds,
     miotConfig,
-    {
-      songArtist,
-      duration,
-      castMode: selectedCastMode,
-      waitForStreamConsumption
-    }
-  );
-
-  const isSuccess = castResult.success;
-  const responseTimeMs = Date.now() - startTime;
-  const nowTime = new Date().toLocaleTimeString();
-
-  // Accurate diagnostic stages: distinguish between command acknowledgement and real audio stream fetch
-  const stages = [
-    { stage: 'COMMAND_SENT' as const, label: '指令发送成功', success: true, timestamp: nowTime },
-    { stage: 'DEVICE_ACK' as const, label: isSuccess ? `音箱响应成功 (${castResult.protocol})` : '指令被拒绝', success: isSuccess, timestamp: nowTime },
-    { stage: 'STREAM_CONNECTED' as const, label: '等待音箱拉取音频流', success: false, pending: true, timestamp: nowTime },
-    { stage: 'PLAYING' as const, label: '等待音箱解码播放', success: false, pending: true, timestamp: nowTime }
-  ];
-
-  // Only reflect active playback state if the command was actually accepted by the device
-  if (isSuccess) {
-    targetDevice.status = {
-      ...targetDevice.status,
-      playing: true,
-      currentSongId: cleanSongId,
-      currentTitle: songTitle || '未知曲目',
-      currentArtist: songArtist || '未知歌手',
-      currentDuration: duration || 200,
-      currentPosition: 0,
-      streamUrl: resolvedStreamUrl,
-      lastTts: miotConfig.ttsAnnouncement ? `${miotConfig.ttsPrefix || '正在为您播放'}: ${songTitle || '歌曲'}` : targetDevice.status?.lastTts,
-      updatedAt: new Date().toISOString()
-    };
-    saveJson(DEVICES_FILE, xiaomiDevices);
-    adaptiveHeartbeatEngine.notifyDeviceActivity(targetDevice.did);
-
-    // Synchronize active track and full playlist context into QueueEngine for continuous queue playback
-    try {
-      const matchedSong = storedSongs.find(s => s.id === cleanSongId || s.title === songTitle);
-      const activeSongObj = {
-        id: cleanSongId,
-        title: songTitle || matchedSong?.title || '未知曲目',
-        artist: songArtist || matchedSong?.artist || '未知歌手',
-        duration: duration || matchedSong?.duration || 180,
-        url: resolvedStreamUrl
-      };
-      const incomingQueue = (Array.isArray(req.body.queue) && req.body.queue.length > 0) ? req.body.queue : storedSongs;
-      const queueMode = req.body.mode || 'all';
-      queueEngine.syncCurrentSong(activeSongObj as any, targetDevice.did, incomingQueue, targetDevice.name, queueMode);
-    } catch (qErr: any) {
-      console.warn('[Cast] QueueEngine sync failed:', qErr.message);
-    }
-  } else {
-    if (targetDevice.status) {
-      targetDevice.status.playing = false;
-      targetDevice.status.updatedAt = new Date().toISOString();
-      saveJson(DEVICES_FILE, xiaomiDevices);
-    }
-  }
-
-  const logEntry = {
-    id: `log-${Date.now()}`,
-    timestamp: nowTime,
-    type: 'cast' as const,
-    message: isSuccess ? `已向【${targetDevice.name}】下发播放指令` : `投放失败【${targetDevice.name}】`,
-    detail: `${castResult.message} | 串流源: ${resolvedStreamUrl}`,
-    success: isSuccess,
-
-    // Comprehensive Diagnostic Metrics
-    did: targetDevice.did,
-    ip: targetDevice.ip || '未配置局域网IP',
-    model: targetDevice.model || 'xiaomi.wifispeaker',
-    protocol: castResult.protocol,
-    requestMethod: 'POST /api/miot/cast',
-    httpStatus: isSuccess ? 200 : 502,
-    errorCode: isSuccess ? 0 : (castResult.errorCode || 'ERR_CAST_FAILED'),
-    responseTimeMs,
-    streamUrl: resolvedStreamUrl,
-    steps: castResult.steps || []
-  };
-
-  castLogs.unshift(logEntry);
-  if (castLogs.length > 50) castLogs.pop();
-
-  if (!isSuccess) {
-    return res.status(502).json({
-      success: false,
-      error: castResult.message,
-      message: `向 ${targetDevice.name} 投播失败: ${castResult.message}`,
-      protocol: castResult.protocol,
-      details: castResult.details,
-      stages,
-      device: sanitizeDevice(targetDevice),
-      streamUrl: resolvedStreamUrl
-    });
-  }
-
-  res.json({
-    success: true,
-    message: hostWarning
-      ? `已向 ${targetDevice.name} 下发指令，但提示：${hostWarning}`
-      : castResult.message,
-    warning: hostWarning,
-    protocol: castResult.protocol,
-    details: castResult.details,
-    stages,
-    device: sanitizeDevice(targetDevice),
-    streamUrl: resolvedStreamUrl
+    saveMiotConfigFn: (cfg) => saveJson(CONFIG_FILE, cfg),
+    serverPort: PORT,
+    jwtSecret: JWT_SECRET,
+    activeStreamIps
   });
 });
+queueEngine.setSongProvider(() => musicRepository.getAllSongs() as any);
 
-/**
- * Direct casting dispatcher for QueueEngine automated playlist playback
- */
-async function dispatchCastSongDirectly(
-  song: any,
-  targetDid: string,
-  seekSeconds?: number
-): Promise<{ success: boolean; message?: string; error?: string }> {
-  if (xiaomiDevices.length === 0 && (miotConfig as any).passToken) {
-    try {
-      const resolveRes = await xiaoaiResolverEngine.resolveDevices({
-        userId: miotConfig.userId,
-        serviceToken: (miotConfig as any).micoServiceToken || miotConfig.serviceToken,
-        xiaomiioServiceToken: (miotConfig as any).xiaomiioServiceToken || miotConfig.serviceToken,
-        ssecurity: (miotConfig as any).ssecurity,
-        existingDevices: xiaomiDevices,
-        activeStreamIps: Array.from(activeStreamIps)
-      });
-      if (resolveRes.xiaoAiDevices && resolveRes.xiaoAiDevices.length > 0) {
-        xiaomiDevices = resolveRes.xiaoAiDevices;
-        if (!miotConfig.activeDeviceId) miotConfig.activeDeviceId = xiaomiDevices[0].did;
-        saveJson(DEVICES_FILE, xiaomiDevices);
-        saveJson(CONFIG_FILE, miotConfig);
-      }
-    } catch {}
-  }
-
-  const targetDevice = xiaomiDevices.find(d => d.did === targetDid || (d as any).deviceID === targetDid) || xiaomiDevices[0];
-  if (!targetDevice) {
-    return { success: false, error: '未找到可用的小米音箱设备' };
-  }
-
-  const primaryLanIp = getBestLanIpForTarget(targetDevice.ip);
-
-  let baseHost = (miotConfig.serverHost && miotConfig.serverHost.startsWith('http'))
-    ? miotConfig.serverHost.replace(/\/$/, '')
-    : (primaryLanIp ? `http://${primaryLanIp}:${PORT}` : `http://localhost:${PORT}`);
-
-  // Loopback and speaker-self-IP guards
-  const isLoopback = baseHost.includes('localhost') || baseHost.includes('127.0.0.1');
-  if (isLoopback && primaryLanIp) {
-    baseHost = `http://${primaryLanIp}:${PORT}`;
-  }
-  if (targetDevice.ip && baseHost.includes(targetDevice.ip) && primaryLanIp && primaryLanIp !== targetDevice.ip) {
-    baseHost = `http://${primaryLanIp}:${PORT}`;
-  }
-
-  const rawId = (song.id || 'song-1').toString();
-  const cleanSongId = rawId.replace(/\.(mp3|wav|flac|m4a|aac|ogg|opus|ape)$/i, '');
-  
-  // ALWAYS stream through Tinglan proxy endpoint (/api/stream/:id.mp3)
-  // Phase 3: Supports Accurate Seek parameter (?t=seconds) for cross-speaker handover
-  const streamToken = generateStreamToken(cleanSongId);
-  const seekParam = (typeof seekSeconds === 'number' && seekSeconds > 0) ? `&t=${Math.floor(seekSeconds)}` : '';
-  const resolvedStreamUrl = `${baseHost}/api/stream/${encodeURIComponent(cleanSongId)}.mp3?token=${streamToken}${seekParam}`;
-
-  const selectedCastMode = (miotConfig.castMode || 'auto') as any;
-
-  if (miotConfig.ttsAnnouncement && (!seekSeconds || seekSeconds <= 0)) {
-    try {
-      await ttsEngine.dispatchToSpeaker({
-        targetDevice,
-        text: `${miotConfig.ttsPrefix || '正在为您播放'} ${song.title || '歌曲'}`,
-        mode: 'auto',
-        forSongCast: true,
-        serverHost: baseHost,
-        miotConfig,
-        sendMiioCommandFn: (ip, token, method, params, timeoutMs) => sendMiioCommand(ip, token, method, params, timeoutMs || 2500),
-        callMinaCloudApiFn: (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry)
-      });
-      await new Promise(r => setTimeout(r, 1200));
-    } catch {}
-  }
-
-  const castResult = await xiaomiAdapter.playUrl(
-    targetDevice,
-    resolvedStreamUrl,
-    song.title || '音乐',
-    (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry),
-    (ip, token, method, params, timeoutMs) => sendMiioCommand(ip, token, method, params, timeoutMs || 2500),
-    miotConfig,
-    {
-      songArtist: song.artist,
-      duration: song.duration,
-      castMode: selectedCastMode,
-      waitForStreamConsumption
-    }
-  );
-
-  if (castResult.success) {
-    targetDevice.status = {
-      ...targetDevice.status,
-      playing: true,
-      currentSongId: cleanSongId,
-      currentTitle: song.title || '未知曲目',
-      currentArtist: song.artist || '未知歌手',
-      currentDuration: song.duration || 200,
-      currentPosition: seekSeconds || 0,
-      streamUrl: resolvedStreamUrl,
-      updatedAt: new Date().toISOString()
-    };
-    saveJson(DEVICES_FILE, xiaomiDevices);
-    adaptiveHeartbeatEngine.notifyDeviceActivity(targetDevice.did);
-
-    castLogs.unshift({
-      id: `log-q-${Date.now()}`,
-      timestamp: new Date().toLocaleTimeString(),
-      type: 'cast',
-      message: seekSeconds
-        ? `【跨音箱无缝流转】《${song.title}》接续至【${targetDevice.name}】(${seekSeconds}s)`
-        : `【歌单队列自动切播】《${song.title}》->【${targetDevice.name}】`,
-      detail: `歌手: ${song.artist} | 协议: ${castResult.protocol} | 串流源: ${resolvedStreamUrl}`,
-      success: true,
-      did: targetDevice.did,
-      ip: targetDevice.ip,
-      model: targetDevice.model,
-      protocol: castResult.protocol || 'MIoT / DLNA',
-      streamUrl: resolvedStreamUrl
-    });
-    if (castLogs.length > 50) castLogs.pop();
-
-    return { success: true, message: `已成功切播《${song.title}》` };
-  } else {
-    castLogs.unshift({
-      id: `log-q-err-${Date.now()}`,
-      timestamp: new Date().toLocaleTimeString(),
-      type: 'error',
-      message: `【歌单队列切播失败】《${song.title}》`,
-      detail: castResult.message || (castResult as any).error || '音箱未响应',
-      success: false,
-      did: targetDevice.did,
-      ip: targetDevice.ip,
-      model: targetDevice.model
-    });
-    if (castLogs.length > 50) castLogs.pop();
-
-    return { success: false, error: castResult.message || (castResult as any).error || '切播失败' };
-  }
-}
-
-queueEngine.setCastDispatcher(dispatchCastSongDirectly);
-queueEngine.setSongProvider(() => storedSongs);
-
-// Phase 3: Pause old device on handover
 queueEngine.setPauseDispatcher(async (did: string) => {
-  const dev = xiaomiDevices.find(d => d.did === did || (d as any).deviceID === did);
+  const dev = deviceRepository.getDeviceByDid(did) || deviceRepository.getAllDevices().find(d => (d as any).deviceID === did);
   if (!dev) return;
   try {
     await xiaomiAdapter.setPlaybackOperation(
       dev,
       'pause',
-      (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry),
+      (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry, miotConfig, (cfg) => saveJson(CONFIG_FILE, cfg)),
       (ip, token, method, params, timeoutMs) => sendMiioCommand(ip, token, method, params, timeoutMs || 2500),
       miotConfig
     );
@@ -4413,13 +660,12 @@ queueEngine.setPauseDispatcher(async (did: string) => {
   }
 });
 
-// Phase 3: Dual-stage next-track idle pre-transcoding handler
 queueEngine.setPreheatHandler(async (nextSong, targetDid, isDeep) => {
   if (!nextSong) return;
   try {
     const rawId = (nextSong.id || '').toString();
     const cleanSongId = rawId.replace(/\.(mp3|wav|flac|m4a|aac|ogg|opus|ape)$/i, '');
-    const found = storedSongs.find(s => s.id === cleanSongId || s.id === rawId);
+    const found = musicRepository.getSongById(cleanSongId) || musicRepository.getSongById(rawId);
     let resolvedFilePath = found?.localFilename || '';
     if (!resolvedFilePath) {
       for (const ext of ['.flac', '.wav', '.m4a', '.aac', '.ogg', '.opus', '.ape']) {
@@ -4431,9 +677,9 @@ queueEngine.setPreheatHandler(async (nextSong, targetDid, isDeep) => {
       }
     }
     if (resolvedFilePath && fs.existsSync(resolvedFilePath)) {
-      const targetDev = xiaomiDevices.find(d => d.did === targetDid);
+      const targetDev = deviceRepository.getDeviceByDid(targetDid);
       console.log(`[QueueEngine] ⚡ 双阶段预热 ${isDeep ? 'Stage 2 (全量转码)' : 'Stage 1 (轻量预备)'} 《${nextSong.title}》`);
-      await ffmpegTranscoder.preheatSongAsync(resolvedFilePath, cleanSongId, {
+      await audioTranscoder.preheatSongAsync(resolvedFilePath, cleanSongId, {
         deviceModel: targetDev?.model,
         cueStartSeconds: (nextSong as any).cueTrack?.startSeconds,
         cueDurationSeconds: (nextSong as any).cueTrack?.durationSeconds,
@@ -4447,7 +693,6 @@ queueEngine.setPreheatHandler(async (nextSong, targetDid, isDeep) => {
   }
 });
 
-// Restore persistent queue state if exists on disk
 try {
   const savedQueue = loadJson<any>(QUEUE_FILE, null);
   if (savedQueue && Array.isArray(savedQueue.queue) && savedQueue.queue.length > 0) {
@@ -4458,10 +703,8 @@ try {
   console.warn('[QueueEngine] 恢复 queue.json 失败:', err);
 }
 
-// Provide queueEngine to appEventBus
 appEventBus.setQueueEngineProvider(() => queueEngine);
 
-// Auto-save queue state on any mutation & broadcast to all connected SSE clients
 queueEngine.on('change', (status) => {
   try {
     saveJson(QUEUE_FILE, {
@@ -4477,7 +720,7 @@ queueEngine.on('change', (status) => {
   appEventBus.checkPlaybackTickLoop();
 });
 
-// Real-time Unified Server-Sent Events (SSE) Hub (Phase 5)
+// Real-time Unified Server-Sent Events (SSE) Hub
 app.get('/api/events', (req: Request, res: Response) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -4490,801 +733,68 @@ app.get('/api/events', (req: Request, res: Response) => {
   const clientIp = req.headers['x-forwarded-for']?.toString().split(',')[0].trim() || req.socket.remoteAddress || '127.0.0.1';
 
   appEventBus.registerClient(clientId, res, clientIp);
-
-  req.on('close', () => {
-    appEventBus.removeClient(clientId);
-  });
+  req.on('close', () => appEventBus.removeClient(clientId));
 });
 
-// --- Queue Engine Domain Router (Phase 1 Decoupling & Phase 3 Cross-Speaker Handover) ---
+// 8. Queue API
 app.use('/api/queue', createQueueRouter({
   getTargetDevice: (did) => {
-    const targetDid = did || miotConfig.activeDeviceId || (xiaomiDevices[0] ? xiaomiDevices[0].did : '');
-    return xiaomiDevices.find(d => d.did === targetDid || (d as any).deviceID === targetDid) || xiaomiDevices[0];
+    const targetDid = did || miotConfig.activeDeviceId || (deviceRepository.getAllDevices()[0] ? deviceRepository.getAllDevices()[0].did : '');
+    return deviceRepository.getDeviceByDid(targetDid) || deviceRepository.getAllDevices().find(d => (d as any).deviceID === targetDid) || deviceRepository.getAllDevices()[0];
   },
-  getAllDevices: () => xiaomiDevices
+  getAllDevices: () => deviceRepository.getAllDevices()
 }));
 
-// Stream status & reachability diagnostic endpoint
-app.get('/api/miot/stream-status', (req: Request, res: Response) => {
-  const localIps = getLocalNetworkIps();
-  const primaryLanIp = localIps.find(ip => !ip.startsWith('127.') && !ip.startsWith('169.254.') && !ip.startsWith('172.17.')) || localIps[0] || '';
-  const currentServerHost = miotConfig.serverHost || (primaryLanIp ? `http://${primaryLanIp}:${PORT}` : '');
-  const isLoopback = currentServerHost.includes('localhost') || currentServerHost.includes('127.0.0.1');
-
-  const speakerStreams = recentStreamEvents.filter(e => !e.isBrowser);
-  const lastSpeakerStream = speakerStreams[0] || null;
-
-  res.json({
-    success: true,
-    serverHost: currentServerHost,
-    isLoopback,
-    detectedLanIps: localIps,
-    primaryLanIp,
-    lastSpeakerStream,
-    speakerStreamCount: speakerStreams.length,
-    recentStreamEvents: recentStreamEvents.slice(0, 10),
-    activeIps: Array.from(activeStreamIps)
-  });
-});
-
-// 1-Click Audio Playback Verification Test on Xiaomi Speaker
-app.post('/api/miot/test-sound', async (req: Request, res: Response) => {
-  const deviceId = req.body.deviceId || miotConfig.activeDeviceId;
-  const targetDevice = xiaomiDevices.find(d => d.did === deviceId || (d as any).deviceID === deviceId) || xiaomiDevices[0];
-
-  if (!targetDevice) {
-    return res.status(400).json({ success: false, error: '未找到指定音箱设备' });
-  }
-
-  const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'https';
-  const host = (req.headers['x-forwarded-host'] as string) || req.headers.host || req.get('host');
-  const reqOrigin = `${proto}://${host}`;
-  const localIps = getLocalNetworkIps();
-  const primaryLanIp = localIps.find(ip => !ip.startsWith('127.') && !ip.startsWith('169.254.') && !ip.startsWith('172.17.')) || localIps[0] || '';
-  let baseHost = (miotConfig.serverHost && miotConfig.serverHost.startsWith('http'))
-    ? miotConfig.serverHost.replace(/\/$/, '')
-    : reqOrigin;
-  if (baseHost.includes('localhost') || baseHost.includes('127.0.0.1')) {
-    if (primaryLanIp) baseHost = `http://${primaryLanIp}:${PORT}`;
-  }
-
-  // Guard against self-loop
-  if (targetDevice.ip && baseHost.includes(targetDevice.ip)) {
-    if (primaryLanIp && primaryLanIp !== targetDevice.ip) {
-      baseHost = `http://${primaryLanIp}:${PORT}`;
-    } else {
-      baseHost = reqOrigin;
-    }
-  }
-
-  const testAudioUrl = `${baseHost}/api/stream/song-1.mp3`;
-  let cloudResult: any = null;
-  let localResult: any = null;
-  const logs: string[] = [];
-
-  const activeMicoToken = (miotConfig as any).micoServiceToken || (miotConfig.isMicoValid ? miotConfig.serviceToken : undefined);
-  if (miotConfig.isLoggedIn && activeMicoToken && miotConfig.userId) {
-    try {
-      logs.push(`正在通过小米云端 UBUS (mediaplayer/player_play_url) 投播测试流...`);
-      cloudResult = await callMinaCloudApi(
-        'mediaplayer',
-        'player_play_url',
-        { url: testAudioUrl, type: 1, media: 'app_ios' },
-        targetDevice.did
-      );
-      if (!cloudResult?.success) {
-        logs.push(`尝试备用 player_play_url type 0 (带 media: 'app_ios') 格式...`);
-        cloudResult = await callMinaCloudApi(
-          'mediaplayer',
-          'player_play_url',
-          { url: testAudioUrl, type: 0, media: 'app_ios' },
-          targetDevice.did
-        );
-      }
-      if (!cloudResult?.success) {
-        logs.push(`尝试备用 player_play_music 格式...`);
-        cloudResult = await callMinaCloudApi(
-          'mediaplayer',
-          'player_play_music',
-          { music: testAudioUrl, startOffset: 0, media: 'app_ios' },
-          targetDevice.did
-        );
-      }
-      if (cloudResult?.success) {
-        logs.push(`云端投播指令下发成功 (${targetDevice.name})`);
-      }
-    } catch (err: any) {
-      logs.push(`云端下发异常: ${err.message}`);
-    }
-  }
-
-  if (targetDevice.token && targetDevice.ip) {
-    try {
-      logs.push(`正在通过局域网 miIO UDP 下发测试流...`);
-      localResult = await sendMiioCommand(
-        targetDevice.ip,
-        targetDevice.token,
-        'play_specify_url',
-        [testAudioUrl, 1],
-        2000
-      );
-      if (!localResult?.success) {
-        localResult = await sendMiioCommand(
-          targetDevice.ip,
-          targetDevice.token,
-          'player_play_url',
-          [{ url: testAudioUrl, type: 1, media: 'app_ios' }],
-          2000
-        );
-      }
-    } catch (err: any) {
-      logs.push(`局域网下发异常: ${err.message}`);
-    }
-  }
-
-  const success = Boolean(cloudResult?.success || localResult?.success);
-  return res.json({
-    success,
-    targetDevice: targetDevice.name,
-    testAudioUrl,
-    cloudResult,
-    localResult,
-    logs
-  });
-});
-
-// Xiaomi Speaker Remote Control (play, pause, toggle, next, prev, volume, mute, seek)
-app.post('/api/miot/control', async (req: Request, res: Response) => {
-  if (!checkMiotControlPermission(req, res)) return;
-
-  const { did, action, value } = req.body;
-  const targetDevice = xiaomiDevices.find(d => d.did === did || (d as any).deviceID === did) || xiaomiDevices[0];
-
-  if (!targetDevice) {
-    return res.status(404).json({ error: 'Device not found' });
-  }
-
-  if (!targetDevice.status) {
-    targetDevice.status = { playing: false, volume: 45, muted: false, updatedAt: new Date().toISOString() };
-  }
-
-  let detail = '';
-  let cloudResult: any = null;
-  let localMiioResult: any = null;
-
-  const activeMicoToken = (miotConfig as any).micoServiceToken || (miotConfig.isMicoValid ? miotConfig.serviceToken : undefined);
-  const activeIoToken = (miotConfig as any).miotServiceToken || (miotConfig as any).xiaomiioServiceToken || (!miotConfig.isMicoValid ? miotConfig.serviceToken : undefined);
-  const cloudAuth = (miotConfig.userId && activeIoToken) ? {
-    userId: String(miotConfig.userId),
-    serviceToken: activeIoToken,
-    ssecurity: (miotConfig as any).ssecurity
-  } : undefined;
-
-  // Fast-dispatch runner across Local miIO, DLNA, and Cloud MIoT
-  const dispatchAction = async (miioMethod: string, miioParams: any[], siid: number, aiid: number, inArgs: any[] = [], minaAction?: { path: string; method: string; msg: any }) => {
-    const tasks: Promise<any>[] = [];
-
-    // Channel 0: Local DLNA (No token needed, works for pause/stop)
-    if (targetDevice.ip && (action === 'pause' || action === 'stop')) {
-      tasks.push(
-        dlnaEngine.pause(targetDevice.ip)
-          .then(res => {
-            if (res.success) localMiioResult = { success: true, protocol: 'DLNA' };
-            return res;
-          })
-          .catch(() => ({ success: false }))
-      );
-    }
-
-    // Channel 1: Local miIO (if IP + token configured, fast 800ms probe)
-    if (targetDevice.token && targetDevice.ip) {
-      tasks.push(
-        sendMiioCommand(targetDevice.ip, targetDevice.token, miioMethod, miioParams, 1200)
-          .then(res => {
-            if (res.success) localMiioResult = res;
-            return res;
-          })
-          .catch(() => ({ success: false }))
-      );
-    }
-
-    // Channel 2: Cloud MIoT Action (Primary & most reliable for all XiaoAi models)
-    if (cloudAuth) {
-      tasks.push(
-        miotRpcEngine.executeAction(targetDevice, siid, aiid, inArgs, cloudAuth)
-          .then(res => {
-            if (res.code === 0) {
-              cloudResult = { success: true, data: res.result };
-            }
-            return res;
-          })
-          .catch(() => ({ code: -1 }))
-      );
-    }
-
-    // Channel 3: Mina Cloud UBUS (if configured and separate from miot)
-    if (minaAction && miotConfig.isLoggedIn && activeMicoToken && miotConfig.userId) {
-      tasks.push(
-        callMinaCloudApi(minaAction.path, minaAction.method, minaAction.msg, targetDevice.did)
-          .then(res => {
-            if (res.success && !cloudResult?.success) {
-              cloudResult = res;
-            }
-            return res;
-          })
-          .catch(() => ({ success: false }))
-      );
-    }
-
-    if (tasks.length > 0) {
-      await Promise.allSettled(tasks);
-    }
-  };
-
-  const dispatchProperty = async (miioMethod: string, miioParams: any[], siid: number, piid: number, propVal: any, minaAction?: { path: string; method: string; msg: any }) => {
-    const tasks: Promise<any>[] = [];
-
-    if (targetDevice.token && targetDevice.ip) {
-      tasks.push(
-        sendMiioCommand(targetDevice.ip, targetDevice.token, miioMethod, miioParams, 1200)
-          .then(res => {
-            if (res.success) localMiioResult = res;
-            return res;
-          })
-          .catch(() => ({ success: false }))
-      );
-    }
-
-    if (cloudAuth) {
-      tasks.push(
-        miotRpcEngine.setProperty(targetDevice, siid, piid, propVal, cloudAuth)
-          .then(res => {
-            if (res.code === 0) {
-              cloudResult = { success: true, data: res.result };
-            }
-            return res;
-          })
-          .catch(() => ({ code: -1 }))
-      );
-    }
-
-    if (minaAction && miotConfig.isLoggedIn && activeMicoToken && miotConfig.userId) {
-      tasks.push(
-        callMinaCloudApi(minaAction.path, minaAction.method, minaAction.msg, targetDevice.did)
-          .then(res => {
-            if (res.success && !cloudResult?.success) {
-              cloudResult = res;
-            }
-            return res;
-          })
-          .catch(() => ({ success: false }))
-      );
-    }
-
-    if (tasks.length > 0) {
-      await Promise.allSettled(tasks);
-    }
-  };
-
-  switch (action) {
-    case 'play':
-      targetDevice.status.playing = true;
-      detail = '已发送播放指令';
-      // Try standard MIoT aiid: 2 (OH2P/Sound/Pro), and mediaplayer 'play'
-      await dispatchAction(
-        'player_play_operation', ['play'],
-        3, 2, [],
-        { path: 'mediaplayer', method: 'player_play_operation', msg: { action: 'play' } }
-      );
-      if (!cloudResult?.success && !localMiioResult?.success) {
-        await dispatchAction(
-          'player_play_operation', ['play'],
-          3, 1, [],
-          { path: 'mediaplayer', method: 'player_play_operation', msg: { action: 'play' } }
-        );
-      }
-      break;
-    case 'pause':
-    case 'stop':
-      targetDevice.status.playing = false;
-      detail = '已发送暂停指令';
-      // Try standard MIoT aiid: 3 (OH2P/Sound/Pro), and mediaplayer 'pause'
-      await dispatchAction(
-        'player_play_operation', ['pause'],
-        3, 3, [],
-        { path: 'mediaplayer', method: 'player_play_operation', msg: { action: 'pause' } }
-      );
-      if (!cloudResult?.success && !localMiioResult?.success) {
-        await dispatchAction(
-          'player_play_operation', ['pause'],
-          3, 2, [],
-          { path: 'mediaplayer', method: 'player_play_operation', msg: { action: 'pause' } }
-        );
-      }
-      break;
-    case 'toggle':
-      targetDevice.status.playing = !targetDevice.status.playing;
-      detail = `切换播放状态 -> ${targetDevice.status.playing ? '播放' : '暂停'}`;
-      const playOp = targetDevice.status.playing ? 'play' : 'pause';
-      const playAiid = targetDevice.status.playing ? 2 : 3;
-      await dispatchAction(
-        'player_play_operation', [playOp],
-        3, playAiid, [],
-        { path: 'mediaplayer', method: 'player_play_operation', msg: { action: playOp } }
-      );
-      break;
-    case 'next':
-      detail = '下一首';
-      await dispatchAction(
-        'player_play_operation', ['next'],
-        3, 6, [],
-        { path: 'mediaplayer', method: 'player_play_operation', msg: { action: 'next' } }
-      );
-      if (!cloudResult?.success && !localMiioResult?.success) {
-        await dispatchAction(
-          'player_play_operation', ['next'],
-          3, 4, [],
-          { path: 'mediaplayer', method: 'player_play_operation', msg: { action: 'next' } }
-        );
-      }
-      break;
-    case 'prev':
-    case 'previous':
-      detail = '上一首';
-      await dispatchAction(
-        'player_play_operation', ['prev'],
-        3, 5, [],
-        { path: 'mediaplayer', method: 'player_play_operation', msg: { action: 'prev' } }
-      );
-      break;
-    case 'volume':
-      targetDevice.status.volume = Math.max(0, Math.min(100, Number(value) || 50));
-      detail = `设置音箱音量 -> ${targetDevice.status.volume}%`;
-      if (targetDevice.ip) {
-        dlnaEngine.setVolume(targetDevice.ip, targetDevice.status.volume).catch(() => {});
-      }
-      await dispatchProperty(
-        'player_set_volume', [targetDevice.status.volume],
-        2, 1, targetDevice.status.volume,
-        { path: 'mediaplayer', method: 'player_set_volume', msg: { volume: targetDevice.status.volume } }
-      );
-      break;
-    case 'mute':
-      targetDevice.status.muted = !targetDevice.status.muted;
-      detail = `静音开关 -> ${targetDevice.status.muted ? '已静音' : '已取消静音'}`;
-      const targetVol = targetDevice.status.muted ? 0 : targetDevice.status.volume;
-      await dispatchProperty(
-        'player_set_volume', [targetVol],
-        2, 2, targetDevice.status.muted,
-        { path: 'mediaplayer', method: 'player_set_volume', msg: { volume: targetVol } }
-      );
-      break;
-    case 'seek':
-      targetDevice.status.currentPosition = Number(value) || 0;
-      detail = `进度跳转 -> ${targetDevice.status.currentPosition}s`;
-      break;
-    default:
-      detail = `执行操作: ${action}`;
-  }
-
-  targetDevice.status.updatedAt = new Date().toISOString();
-  saveJson(DEVICES_FILE, xiaomiDevices);
-
-  const isControlSuccess = (action === 'seek' || ((action === 'pause' || action === 'stop' || action === 'volume') && Boolean(targetDevice.ip)))
-    ? true
-    : (Boolean(localMiioResult?.success) || Boolean(cloudResult?.success) || Boolean(cloudAuth));
-
-  const controlError = !isControlSuccess
-    ? (cloudResult?.error || localMiioResult?.error || '无可用控制通道（音箱无 IP/Token 且未登录小米云端）')
-    : undefined;
-
-  const logEntry = {
-    id: `log-${Date.now()}`,
-    timestamp: new Date().toLocaleTimeString(),
-    type: 'control' as const,
-    message: isControlSuccess ? `控制【${targetDevice.name}】: ${action}` : `控制【${targetDevice.name}】失败: ${action}`,
-    detail: isControlSuccess
-      ? (localMiioResult?.success
-          ? `✓ ${detail} (miIO 本地响应成功)`
-          : (cloudResult?.success ? `✓ ${detail} (云端指令执行成功)` : detail))
-      : `✕ 操作未生效: ${controlError}`,
-    success: isControlSuccess
-  };
-  castLogs.unshift(logEntry);
-  if (castLogs.length > 50) castLogs.pop();
-
-  if (!isControlSuccess) {
-    return res.status(502).json({
-      success: false,
-      error: controlError,
-      message: `控制音箱失败: ${controlError}`,
-      action,
-      cloudResult,
-      localMiioResult,
-      device: sanitizeDevice(targetDevice)
-    });
-  }
-
-  res.json({
-    success: true,
-    action,
-    cloudResult,
-    localMiioResult,
-    device: sanitizeDevice(targetDevice)
-  });
-});
-
-// Multi-Room Speaker Group Casting & Synchronous Broadcast
-app.post('/api/miot/group-cast', async (req: Request, res: Response) => {
-  if (!checkMiotControlPermission(req, res)) return;
-
-  const { dids, action = 'cast', song, streamUrl, volume } = req.body;
-  if (!Array.isArray(dids) || dids.length === 0) {
-    return res.status(400).json({ success: false, error: '请选择至少一个目标音箱' });
-  }
-
-  const results: { did: string; name: string; success: boolean; message: string }[] = [];
-
-  const tasks = dids.map(async (did: string) => {
-    const dev = xiaomiDevices.find(d => d.did === did || (d as any).deviceID === did);
-    const devName = dev?.name || `音箱(${did})`;
-
-    if (!dev) {
-      results.push({ did, name: devName, success: false, message: '未找到指定音箱' });
-      return;
-    }
-
-    try {
-      if (action === 'cast') {
-        const targetSong = song || storedSongs[0];
-        if (!targetSong) {
-          results.push({ did, name: devName, success: false, message: '未指定要广播的曲目' });
-          return;
-        }
-        const castRes = await dispatchCastSongDirectly(targetSong, did);
-        results.push({
-          did,
-          name: devName,
-          success: castRes.success,
-          message: castRes.success ? (castRes.message || '已成功串流') : (castRes.error || '串流未响应')
-        });
-      } else if (action === 'volume') {
-        const volVal = Math.max(0, Math.min(100, Number(volume) || 45));
-        if (dev.status) dev.status.volume = volVal;
-        results.push({ did, name: devName, success: true, message: `音量已调整为 ${volVal}%` });
-      } else {
-        // play / pause / stop
-        const isPlay = action === 'play';
-        if (dev.status) dev.status.playing = isPlay;
-        results.push({ did, name: devName, success: true, message: isPlay ? '已同步播放' : '已同步暂停' });
-      }
-    } catch (err: any) {
-      results.push({ did, name: devName, success: false, message: err.message || '指令发送异常' });
-    }
-  });
-
-  await Promise.allSettled(tasks);
-  saveJson(DEVICES_FILE, xiaomiDevices);
-
-  const successCount = results.filter(r => r.success).length;
-  const failedCount = results.length - successCount;
-
-  castLogs.unshift({
-    id: `log-group-${Date.now()}`,
-    timestamp: new Date().toLocaleTimeString(),
-    type: 'cast',
-    message: `【全屋多音箱广播】${action.toUpperCase()} (${successCount}/${results.length} 成功)`,
-    detail: results.map(r => `${r.name}: ${r.success ? '✓' : '✕'} ${r.message}`).join(' | '),
-    success: successCount > 0
-  });
-  if (castLogs.length > 50) castLogs.pop();
-
-  res.json({
-    success: successCount > 0,
-    total: results.length,
-    successCount,
-    failedCount,
-    results
-  });
-});
-
-// Text to Speech (TTS) broadcast to speaker (Multi-Channel with Audio Streaming Fallback)
-app.post('/api/miot/tts', async (req: Request, res: Response) => {
-  if (!checkMiotTtsPermission(req, res)) return;
-
-  const { did, text, mode, voice } = req.body;
-  if (!text || !String(text).trim()) {
-    return res.status(400).json({ success: false, error: '请输入播报文本内容' });
-  }
-
-  // Auto-resolve devices from cloud if currently empty and logged in
-  if (xiaomiDevices.length === 0 && (miotConfig as any).passToken) {
-    try {
-      const resolveRes = await xiaoaiResolverEngine.resolveDevices({
-        userId: miotConfig.userId,
-        micoServiceToken: (miotConfig as any).micoServiceToken || (miotConfig.isMicoValid ? miotConfig.serviceToken : undefined),
-        miotServiceToken: (miotConfig as any).miotServiceToken || (miotConfig as any).xiaomiioServiceToken || (!miotConfig.isMicoValid ? miotConfig.serviceToken : undefined),
-        ssecurity: (miotConfig as any).ssecurity,
-        existingDevices: xiaomiDevices,
-        activeStreamIps: Array.from(activeStreamIps)
-      });
-      if (resolveRes.xiaoAiDevices && resolveRes.xiaoAiDevices.length > 0) {
-        xiaomiDevices = resolveRes.xiaoAiDevices;
-        if (!miotConfig.activeDeviceId) miotConfig.activeDeviceId = xiaomiDevices[0].did;
-        saveJson(DEVICES_FILE, xiaomiDevices);
-        saveJson(CONFIG_FILE, miotConfig);
-      }
-    } catch (rErr: any) {
-      console.warn('[TTS] Auto device resolution failed:', rErr.message);
-    }
-  }
-
-  const targetDevice = xiaomiDevices.find(d => d.did === did || (d as any).deviceID === did) || xiaomiDevices[0];
-
-  if (!targetDevice) {
-    const errorMsg = '未检测到可用的小米音箱设备。请先在【音箱控制台】绑定米家账号或添加音箱设备！';
-    const failLog = {
-      id: `log-${Date.now()}`,
-      timestamp: new Date().toLocaleTimeString(),
-      type: 'tts' as const,
-      message: 'TTS 播报未执行: 未找到目标音箱设备',
-      detail: `✕ 内容: “${text}” | 原因: 尚未绑定小米账号或设备列表为空，请先在【音箱中枢】同步或添加音箱`,
-      success: false
-    };
-    castLogs.unshift(failLog);
-    if (castLogs.length > 50) castLogs.pop();
-    return res.status(404).json({ success: false, error: errorMsg, message: errorMsg });
-  }
-
-  if (!targetDevice.status) {
-    targetDevice.status = { playing: false, volume: 45, muted: false, updatedAt: new Date().toISOString() };
-  }
-
-  targetDevice.status.lastTts = text;
-  targetDevice.status.updatedAt = new Date().toISOString();
-  saveJson(DEVICES_FILE, xiaomiDevices);
-
-  // Derive resolved serverHost for audio stream fallback
-  const localIps = getLocalNetworkIps();
-  const primaryIp = localIps.length > 0 ? localIps[0] : '127.0.0.1';
-  const reqHost = req.get('host');
-  const reqProtocol = req.protocol || 'http';
-  const resolvedServerHost = miotConfig.serverHost || (reqHost ? `${reqProtocol}://${reqHost}` : `http://${primaryIp}:${PORT}`);
-
-  const dispatchRes = await ttsEngine.dispatchToSpeaker({
-    targetDevice,
-    text: String(text).trim(),
-    mode: mode || 'auto',
-    voice: voice || 'zh-CN-XiaoxiaoNeural',
-    serverHost: resolvedServerHost,
-    miotConfig,
-    sendMiioCommandFn: (ip, token, method, params, timeoutMs) => sendMiioCommand(ip, token, method, params, timeoutMs || 2500),
-    callMinaCloudApiFn: (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry)
-  });
-
-  const isTtsSuccess = dispatchRes.success;
-  const logEntry = {
-    id: `log-${Date.now()}`,
-    timestamp: new Date().toLocaleTimeString(),
-    type: 'tts' as const,
-    message: isTtsSuccess ? `【${targetDevice.name}】TTS 语音播报成功` : `【${targetDevice.name}】TTS 播报超时/失败`,
-    detail: isTtsSuccess
-      ? `✓ “${text}” (${dispatchRes.channel})`
-      : `✕ 播报未响应: ${dispatchRes.error || '音箱未在预期时间内确认'} | 已尝试: ${dispatchRes.triedChannels.join(', ')}`,
-    success: isTtsSuccess
-  };
-  castLogs.unshift(logEntry);
-  if (castLogs.length > 50) castLogs.pop();
-
-  if (!isTtsSuccess) {
-    return res.status(502).json({
-      success: false,
-      error: dispatchRes.error || '音箱未响应语音播报请求',
-      message: `向 ${targetDevice.name} 下发 TTS 失败: ${dispatchRes.error}`,
-      triedChannels: dispatchRes.triedChannels,
-      device: sanitizeDevice(targetDevice)
-    });
-  }
-
-  res.json({
-    success: true,
-    message: `已成功向【${targetDevice.name}】下发语音播报: “${text}”`,
-    channel: dispatchRes.channel,
-    triedChannels: dispatchRes.triedChannels,
-    details: dispatchRes.details,
-    device: sanitizeDevice(targetDevice)
-  });
-});
-
-// Device status polling
-app.get('/api/miot/status', (req: Request, res: Response) => {
-  const { did } = req.query;
-  if (did) {
-    const dev = xiaomiDevices.find(d => d.did === did);
-    return res.json(dev ? sanitizeDevice(dev) : null);
-  }
-  res.json(xiaomiDevices.map(sanitizeDevice));
-});
-
-// Cast logs
-app.get('/api/miot/logs', (req: Request, res: Response) => {
-  res.json(castLogs);
-});
-
-// ---------------- VOICE COMMAND LISTENER & DIRECTIVE ENGINE ----------------
-
-// Get Voice Listener Status & Config
-app.get('/api/miot/voice/status', (req: Request, res: Response) => {
-  res.json({
-    success: true,
-    status: voiceCommandService.getStatus(),
-    config: voiceCommandService.getConfig(),
-    logs: voiceCommandService.getDialogueLogs()
-  });
-});
-
-// Update Voice Listener Config (toggle on/off, rules, pollInterval, targetDevice, ttsFeedback)
-app.post('/api/miot/voice/config', (req: Request, res: Response) => {
-  if (!checkMiotControlPermission(req, res)) return;
-
-  const { enabled, pollIntervalMs, targetDeviceId, ttsFeedbackEnabled, rules } = req.body || {};
-  voiceCommandService.updateConfig({
-    ...(typeof enabled === 'boolean' ? { enabled } : {}),
-    ...(typeof pollIntervalMs === 'number' ? { pollIntervalMs } : {}),
-    ...(typeof targetDeviceId === 'string' ? { targetDeviceId } : {}),
-    ...(typeof ttsFeedbackEnabled === 'boolean' ? { ttsFeedbackEnabled } : {}),
-    ...(Array.isArray(rules) ? { rules } : {})
-  });
-
-  res.json({
-    success: true,
-    status: voiceCommandService.getStatus(),
-    config: voiceCommandService.getConfig()
-  });
-});
-
-// Start/Stop Voice Listener directly
-app.post('/api/miot/voice/toggle', (req: Request, res: Response) => {
-  if (!checkMiotControlPermission(req, res)) return;
-
-  const { enabled } = req.body || {};
-  if (enabled) {
-    voiceCommandService.start();
-  } else {
-    voiceCommandService.stop();
-  }
-
-  res.json({
-    success: true,
-    status: voiceCommandService.getStatus(),
-    config: voiceCommandService.getConfig()
-  });
-});
-
-// Get Voice Dialogue Logs
-app.get('/api/miot/voice/logs', (req: Request, res: Response) => {
-  res.json({
-    success: true,
-    logs: voiceCommandService.getDialogueLogs()
-  });
-});
-
-// Clear Voice Dialogue Logs
-app.post('/api/miot/voice/logs/clear', (req: Request, res: Response) => {
-  if (!checkMiotControlPermission(req, res)) return;
-  voiceCommandService.clearLogs();
-  res.json({ success: true, message: '已清空语音指令捕获日志' });
-});
-
-// Test/Simulate Voice Query Execution (for debugging & instant testing)
-app.post('/api/miot/voice/test-query', async (req: Request, res: Response) => {
-  if (!checkMiotControlPermission(req, res)) return;
-
-  const { query, did } = req.body || {};
-  if (!query || !String(query).trim()) {
-    return res.status(400).json({ success: false, error: '请输入待测试的语音指令文本' });
-  }
-
-  const targetDev = xiaomiDevices.find(d => d.did === did) || xiaomiDevices[0];
-  const deviceId = targetDev?.did || miotConfig.activeDeviceId || 'test-speaker';
-  const deviceName = targetDev?.name || '测试音箱';
-
-  try {
-    const result = await voiceCommandService.processVoiceQuery(query, deviceId, deviceName, 'test_manual');
-    res.json({
-      success: true,
-      result,
-      logs: voiceCommandService.getDialogueLogs().slice(0, 10)
-    });
-  } catch (err: any) {
-    res.status(500).json({
-      success: false,
-      error: err.message
-    });
-  }
-});
-
-// Trigger instant cloud conversation fetch & diagnostics
-app.post('/api/miot/voice/poll-now', async (req: Request, res: Response) => {
-  if (!checkMiotControlPermission(req, res)) return;
-  try {
-    const report = await voiceCommandService.pollNow();
-    res.json({
-      success: report.success,
-      message: report.message,
-      recordsFound: report.recordsFound,
-      lastQuery: report.lastQuery,
-      status: voiceCommandService.getStatus(),
-      logs: voiceCommandService.getDialogueLogs()
-    });
-  } catch (err: any) {
-    res.status(500).json({
-      success: false,
-      error: err.message,
-      status: voiceCommandService.getStatus(),
-      logs: voiceCommandService.getDialogueLogs()
-    });
-  }
-});
-
-// ---------------- SUBSONIC DOMAIN ROUTER ----------------
-const subsonicRouter = createSubsonicRouter({
-  getStoredSongs: () => storedSongs,
-  getStoredPlaylists: () => storedPlaylists,
+// 9. Subsonic API
+app.use('/rest', createSubsonicRouter({
+  getStoredSongs: () => musicRepository.getAllSongs(),
+  getStoredPlaylists: () => musicRepository.getAllPlaylists(),
   getStoredUsers: () => {
     storedUsers = loadJson(USERS_FILE, storedUsers);
     return storedUsers;
   },
-  saveStoredSongs: (songs) => {
-    storedSongs = songs;
-    saveJson(SONGS_FILE, storedSongs);
-  },
+  saveStoredSongs: (songs) => musicRepository.setSongs(songs),
   streamHandler: streamAudioHandler,
   lyricsService,
   getClientIp
-});
-app.use('/rest', subsonicRouter);
+}));
+
 app.get('/api/subsonic/info', (req: Request, res: Response) => {
   res.json({
-    status: "ok",
-    version: "1.16.1",
-    server: "TingLan-Music",
-    subsonicUrl: `/rest`,
+    status: 'ok',
+    version: '1.16.1',
+    server: 'TingLan-Music',
+    subsonicUrl: '/rest',
     endpoints: [
-      "/rest/ping",
-      "/rest/getMusicFolders",
-      "/rest/getIndexes",
-      "/rest/search3",
-      "/rest/getPlaylists",
-      "/rest/getLyrics",
-      "/rest/stream?id=<songId>"
+      '/rest/ping',
+      '/rest/getMusicFolders',
+      '/rest/getIndexes',
+      '/rest/search3',
+      '/rest/getPlaylists',
+      '/rest/getLyrics',
+      '/rest/stream?id=<songId>'
     ]
   });
 });
 
-// ---------------- SYSTEM & HEALTH & AI ROUTER ----------------
-const systemRouter = createSystemRouter({
+// 10. System, Health & AI Diagnosis
+app.use('/api', createSystemRouter({
   musicDir: MUSIC_DIR,
   dataDir: DATA_DIR,
   serverStartTime: SERVER_START_TIME,
-  getStoredSongs: () => storedSongs,
-  saveStoredSongs: (songs) => {
-    storedSongs = songs;
-    saveJson(SONGS_FILE, storedSongs);
-  },
+  getStoredSongs: () => musicRepository.getAllSongs(),
+  saveStoredSongs: (songs) => musicRepository.setSongs(songs),
   lyricsService,
   queueEngine,
-  xiaomiDevices: () => xiaomiDevices,
+  xiaomiDevices: () => deviceRepository.getAllDevices(),
   audioTranscoder,
   transcodeSemaphorePool,
   getMiotConfig: () => miotConfig,
   castPipelineManager
-});
-app.use('/api', systemRouter);
+}));
 
-// ---------------- NAVIDROME / SUBSONIC REMOTE SERVER INTEGRATION (Phase 1 Decoupling) ----------------
-app.use("/api/navidrome", createNavidromeRouter({
+// 11. Navidrome / Subsonic Remote Sync
+app.use('/api/navidrome', createNavidromeRouter({
   getNavidromeConfig: () => navidromeConfig,
   setNavidromeConfig: (cfg) => {
     navidromeConfig = cfg;
@@ -5293,111 +803,31 @@ app.use("/api/navidrome", createNavidromeRouter({
   refreshNavidromeSongCredentials,
   getSubsonicAuthQuery,
   getSubsonicPassAuthQuery,
-  getStoredSongs: () => storedSongs,
-  setStoredSongs: (songs) => {
-    storedSongs = songs;
-    saveJson(SONGS_FILE, storedSongs);
-  },
-  getStoredPlaylists: () => storedPlaylists,
-  setStoredPlaylists: (pls) => {
-    storedPlaylists = pls;
-    saveJson(PLAYLISTS_FILE, storedPlaylists);
-  }
+  getStoredSongs: () => musicRepository.getAllSongs(),
+  setStoredSongs: (songs) => musicRepository.setSongs(songs),
+  getStoredPlaylists: () => musicRepository.getAllPlaylists(),
+  setStoredPlaylists: (pls) => musicRepository.setPlaylists(pls)
 }));
 
-// Start server with Vite middleware in development or static in production
+// Server bootstrap & entry point
 async function startServer() {
-  // Bind callbacks for Voice Command Service
-  voiceCommandService.bindCallbacks({
-    getSongs: () => storedSongs,
-    getPlaylists: () => storedPlaylists,
-    playSong: async (song, playlistName, deviceId) => {
-      const targetDev = xiaomiDevices.find(d => d.did === deviceId) || xiaomiDevices.find(d => d.did === miotConfig.activeDeviceId) || xiaomiDevices[0];
-      if (!targetDev) return false;
-      queueEngine.syncCurrentSong(song as any, targetDev.did, storedSongs, targetDev.name);
-      const res = await dispatchCastSongDirectly(song, targetDev.did);
-      return res.success;
-    },
-    playPlaylist: async (playlistId, deviceId) => {
-      const targetDev = xiaomiDevices.find(d => d.did === deviceId) || xiaomiDevices.find(d => d.did === miotConfig.activeDeviceId) || xiaomiDevices[0];
-      if (!targetDev) return false;
-      let plSongs: any[] = [];
-      if (playlistId === 'favorites') {
-        plSongs = storedSongs.filter(s => s.isFavorite);
-        if (plSongs.length === 0) {
-          plSongs = storedSongs.slice(0, 10);
-        }
-      } else {
-        const playlist = storedPlaylists.find(p => p.id === playlistId) || storedPlaylists[0];
-        if (playlist) {
-          plSongs = storedSongs.filter(s => playlist.songIds.includes(s.id));
-        }
-      }
-      if (plSongs.length === 0) plSongs = storedSongs;
-      if (plSongs.length === 0) return false;
-      const res = await queueEngine.playQueue(plSongs, 0, targetDev.did, targetDev.name);
-      return res.success;
-    },
-    controlPlayback: async (action: any, deviceId?: string): Promise<any> => {
-      const targetDev = xiaomiDevices.find(d => d.did === deviceId) || xiaomiDevices.find(d => d.did === miotConfig.activeDeviceId) || xiaomiDevices[0];
-      if (!targetDev) return false;
-      if (action === 'next') {
-        const res = await queueEngine.next(true, targetDev.did);
-        return res;
-      } else if (action === 'prev') {
-        const res = await queueEngine.prev(targetDev.did);
-        return res;
-      } else if (action === 'pause' || action === 'stop') {
-        queueEngine.pause();
-        await xiaomiAdapter.setPlaybackOperation(targetDev, 'pause', (p, m, msg, tDid, r) => callMinaCloudApi(p, m, msg, tDid, r), (ip, tk, m, p, t) => sendMiioCommand(ip, tk, m, p, t), miotConfig).catch(() => {});
-        return { success: true, message: '已暂停播放' };
-      } else if (action === 'resume') {
-        queueEngine.resume();
-        await xiaomiAdapter.setPlaybackOperation(targetDev, 'play', (p, m, msg, tDid, r) => callMinaCloudApi(p, m, msg, tDid, r), (ip, tk, m, p, t) => sendMiioCommand(ip, tk, m, p, t), miotConfig).catch(() => {});
-        return { success: true, message: '已恢复播放' };
-      } else if (action === 'volume_up') {
-        const currentVol = targetDev.status?.volume || 40;
-        const newVol = Math.min(100, currentVol + 10);
-        targetDev.status = targetDev.status || {};
-        targetDev.status.volume = newVol;
-        await xiaomiAdapter.setVolume(targetDev, newVol, (p, m, msg, tDid, r) => callMinaCloudApi(p, m, msg, tDid, r), (ip, tk, m, p, t) => sendMiioCommand(ip, tk, m, p, t), miotConfig).catch(() => {});
-        return { success: true, message: `音量已调大至 ${newVol}%` };
-      } else if (action === 'volume_down') {
-        const currentVol = targetDev.status?.volume || 40;
-        const newVol = Math.max(0, currentVol - 10);
-        targetDev.status = targetDev.status || {};
-        targetDev.status.volume = newVol;
-        await xiaomiAdapter.setVolume(targetDev, newVol, (p, m, msg, tDid, r) => callMinaCloudApi(p, m, msg, tDid, r), (ip, tk, m, p, t) => sendMiioCommand(ip, tk, m, p, t), miotConfig).catch(() => {});
-        return { success: true, message: `音量已调小至 ${newVol}%` };
-      }
-      return false;
-    },
-    earlyStop: async (deviceId?: string) => {
-      const targetDev = xiaomiDevices.find(d => d.did === deviceId) || xiaomiDevices.find(d => d.did === miotConfig.activeDeviceId) || xiaomiDevices[0];
-      if (!targetDev) return;
-      // Instantly pause / silence speaker to intercept official music playback
-      queueEngine.pause();
-      await xiaomiAdapter.setPlaybackOperation(targetDev, 'pause', (p, m, msg, tDid, r) => callMinaCloudApi(p, m, msg, tDid, r), (ip, tk, m, p, t) => sendMiioCommand(ip, tk, m, p, t), miotConfig).catch(() => {});
-    },
-    sendTts: async (deviceId, text) => {
-      const targetDev = xiaomiDevices.find(d => d.did === deviceId) || xiaomiDevices[0];
-      if (!targetDev) return { success: false };
-      return ttsEngine.dispatchToSpeaker({
-        targetDevice: targetDev,
-        text,
-        miotConfig,
-        sendMiioCommandFn: (ip, token, method, params, timeoutMs) => sendMiioCommand(ip, token, method, params, timeoutMs),
-        callMinaCloudApiFn: (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry)
-      });
-    },
-    getAuthInfo: () => ({
-      userId: miotConfig.userId,
-      serviceToken: (miotConfig as any).micoServiceToken || (miotConfig as any).xiaomiioServiceToken || miotConfig.serviceToken,
-      devices: xiaomiDevices
-    })
+  restoreSessionAndDevicesOnStartup({
+    getMiotConfig: () => miotConfig,
+    saveMiotConfig: (cfg) => saveJson(CONFIG_FILE, cfg),
+    activeStreamIps,
+    serverPort: PORT,
+    jwtSecret: JWT_SECRET
   });
 
-  if (process.env.NODE_ENV !== "production") {
+  bindVoiceCommandCallbacks({
+    getMiotConfig: () => miotConfig,
+    saveMiotConfig: (cfg) => saveJson(CONFIG_FILE, cfg),
+    activeStreamIps,
+    serverPort: PORT,
+    jwtSecret: JWT_SECRET
+  });
+
+  if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
@@ -5405,7 +835,7 @@ async function startServer() {
           ignored: ['**/data/**', '**/music/**', '**/dist/**']
         }
       },
-      appType: "spa",
+      appType: 'spa',
     });
     app.use(vite.middlewares);
   } else {
@@ -5416,13 +846,13 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  app.listen(PORT, '0.0.0.0', () => {
     console.log(`TingLan Music Server running on http://0.0.0.0:${PORT}`);
     console.log(`Local network addresses: ${getLocalNetworkIps().map(ip => `http://${ip}:${PORT}`).join(', ')}`);
   });
 }
 
 startServer().catch(err => {
-  console.error("Failed to start server:", err);
+  console.error('Failed to start server:', err);
   process.exit(1);
 });

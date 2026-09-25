@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { Song } from '../core/musicEngine.js';
+import { interactionRepository } from '../core/repositories/interactionRepository.js';
 
 export interface SubsonicRouterOptions {
   getStoredSongs: () => Song[];
@@ -264,6 +265,101 @@ export function createSubsonicRouter(options: SubsonicRouterOptions): Router {
     return options.streamHandler(req, res);
   };
 
+  // Subsonic Star / Unstar
+  const subsonicStar = (req: Request, res: Response) => {
+    if (!verifySubsonicAuth(req, res)) return;
+    const u = String(req.query.u || 'admin').trim();
+    const storedUsers = options.getStoredUsers();
+    const user = storedUsers.find(usr => usr.username.toLowerCase() === u.toLowerCase()) || storedUsers[0];
+    const userId = user?.id || 'usr-admin-001';
+
+    const rawIds = req.query.id;
+    const ids: string[] = Array.isArray(rawIds) ? rawIds.map(String) : (rawIds ? [String(rawIds)] : []);
+    
+    ids.forEach(songId => {
+      interactionRepository.setFavorite(userId, songId, true);
+    });
+    subsonicResponse(req, res, 'starred', {});
+  };
+
+  const subsonicUnstar = (req: Request, res: Response) => {
+    if (!verifySubsonicAuth(req, res)) return;
+    const u = String(req.query.u || 'admin').trim();
+    const storedUsers = options.getStoredUsers();
+    const user = storedUsers.find(usr => usr.username.toLowerCase() === u.toLowerCase()) || storedUsers[0];
+    const userId = user?.id || 'usr-admin-001';
+
+    const rawIds = req.query.id;
+    const ids: string[] = Array.isArray(rawIds) ? rawIds.map(String) : (rawIds ? [String(rawIds)] : []);
+    
+    ids.forEach(songId => {
+      interactionRepository.setFavorite(userId, songId, false);
+    });
+    subsonicResponse(req, res, 'unstarred', {});
+  };
+
+  const subsonicGetStarred = (req: Request, res: Response) => {
+    if (!verifySubsonicAuth(req, res)) return;
+    const u = String(req.query.u || 'admin').trim();
+    const storedUsers = options.getStoredUsers();
+    const user = storedUsers.find(usr => usr.username.toLowerCase() === u.toLowerCase()) || storedUsers[0];
+    const userId = user?.id || 'usr-admin-001';
+
+    const userInteractions = interactionRepository.getUserInteractions(userId);
+    const favSongIds = new Set(userInteractions.filter(i => i.isFavorite).map(i => i.songId));
+    
+    const storedSongs = options.getStoredSongs();
+    const starredSongs = storedSongs.filter(s => favSongIds.has(s.id) || (favSongIds.size === 0 && s.isFavorite)).map(s => ({
+      id: s.id,
+      parent: 'folder-root',
+      isDir: false,
+      title: s.title,
+      album: s.album || '听蓝精选专辑',
+      artist: s.artist || '听蓝艺术家',
+      track: 1,
+      year: s.year || 2024,
+      genre: s.genre || 'Soundtrack',
+      coverArt: s.coverUrl || s.id,
+      size: 10485760,
+      contentType: 'audio/mpeg',
+      suffix: 'mp3',
+      duration: s.duration || 240,
+      bitRate: 320,
+      path: s.url || `${s.id}.mp3`,
+      starred: new Date().toISOString()
+    }));
+
+    subsonicResponse(req, res, 'starred', { song: starredSongs });
+  };
+
+  // Subsonic Scrobble
+  const subsonicScrobble = (req: Request, res: Response) => {
+    if (!verifySubsonicAuth(req, res)) return;
+    const u = String(req.query.u || 'admin').trim();
+    const storedUsers = options.getStoredUsers();
+    const user = storedUsers.find(usr => usr.username.toLowerCase() === u.toLowerCase()) || storedUsers[0];
+    const userId = user?.id || 'usr-admin-001';
+
+    const id = String(req.query.id || '');
+    const submission = req.query.submission !== 'false';
+    const storedSongs = options.getStoredSongs();
+    const song = storedSongs.find(s => s.id === id);
+
+    if (id && submission) {
+      interactionRepository.recordPlayHistory({
+        userId,
+        songId: id,
+        songTitle: song?.title || 'Subsonic Client Track',
+        songArtist: song?.artist || 'Subsonic Artist',
+        deviceName: `Subsonic App (${u})`,
+        durationSeconds: song?.duration || 200,
+        playedSeconds: song?.duration || 200
+      });
+    }
+
+    subsonicResponse(req, res, 'scrobble', {});
+  };
+
   // Mount endpoints
   router.all('/ping*', subsonicPing);
   router.all('/getLicense*', subsonicLicense);
@@ -273,6 +369,10 @@ export function createSubsonicRouter(options: SubsonicRouterOptions): Router {
   router.all('/search3*', subsonicSearch);
   router.all('/getPlaylists*', subsonicPlaylists);
   router.all('/getLyrics*', subsonicGetLyrics);
+  router.all('/star*', subsonicStar);
+  router.all('/unstar*', subsonicUnstar);
+  router.all('/getStarred*', subsonicGetStarred);
+  router.all('/scrobble*', subsonicScrobble);
   router.all('/stream*', subsonicStream);
 
   return router;
