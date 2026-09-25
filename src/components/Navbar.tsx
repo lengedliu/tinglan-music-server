@@ -48,20 +48,20 @@ export const Navbar: React.FC<NavbarProps> = ({
   return (
     <header className="sticky top-0 z-40 bg-zinc-950/80 backdrop-blur-md border-b border-white/5 text-zinc-100">
       {/* Top Row: Brand on left, status indicators & user controls on right */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between gap-3">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-14 flex items-center justify-between gap-2 sm:gap-3 overflow-x-hidden">
         
         {/* Brand */}
-        <div className="flex items-center gap-3 flex-shrink-0">
+        <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
           <div 
-            className="w-8 h-8 rounded-lg flex items-center justify-center text-white flex-shrink-0 shadow-md"
+            className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center text-white flex-shrink-0 shadow-md"
             style={{ backgroundColor: themeConfig.primaryColor }}
           >
-            <Radio className="w-4.5 h-4.5" />
+            <Radio className="w-4 h-4 sm:w-4.5 sm:h-4.5" />
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xl font-bold tracking-tight text-white flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            <span className="text-base sm:text-xl font-bold tracking-tight text-white flex items-center gap-1 sm:gap-1.5">
               <span className="font-extrabold tracking-wider">TINGLAN</span>
-              <span className="text-xs font-normal text-zinc-400 font-serif">听澜</span>
+              <span className="text-[11px] sm:text-xs font-normal text-zinc-400 font-serif">听澜</span>
             </span>
             <span 
               className="text-[10px] uppercase tracking-[0.15em] px-2 py-0.5 rounded border font-semibold hidden sm:inline-block"
@@ -89,12 +89,12 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
 
           {/* Theme Quick Switcher Button */}
-          <div className="flex items-center gap-1.5 bg-zinc-900/90 p-1 rounded-full border border-white/10 backdrop-blur-sm">
+          <div className="flex items-center gap-1 bg-zinc-900/90 p-1 rounded-full border border-white/10 backdrop-blur-sm">
             <button
               id="btn-toggle-light-dark"
               onClick={toggleDarkLight}
               title={themeConfig.isLight ? '切换为极客暗夜模式 (Dark Mode)' : '切换为清爽日间亮色 (Light Mode)'}
-              className="p-1.5 rounded-full hover:bg-white/10 text-amber-400 transition cursor-pointer"
+              className="p-1.5 min-w-[32px] min-h-[32px] flex items-center justify-center rounded-full hover:bg-white/10 text-amber-400 transition cursor-pointer"
             >
               {themeConfig.isLight ? (
                 <Sun className="w-3.5 h-3.5 text-amber-400" />
@@ -107,7 +107,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               id="btn-theme-switcher"
               onClick={() => setIsThemeModalOpen(true)}
               title={`选择更多 UI 主题 (当前: ${themeConfig.name})`}
-              className="flex items-center gap-1.5 px-2 py-1 rounded-full hover:bg-white/10 transition text-xs cursor-pointer"
+              className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-full hover:bg-white/10 transition text-xs cursor-pointer"
             >
               <Palette className="w-3.5 h-3.5 text-amber-400" />
               <div 
@@ -125,18 +125,23 @@ export const Navbar: React.FC<NavbarProps> = ({
             id="btn-active-speaker-status"
             onClick={() => setActiveTab('xiaomi')}
             title="点击管理播放协议与音频设备路由"
-            className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-zinc-900/90 hover:bg-zinc-800/90 border border-white/10 transition text-left backdrop-blur-sm shadow-sm cursor-pointer"
+            className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 rounded-full bg-zinc-900/90 hover:bg-zinc-800/90 border border-white/10 transition text-left backdrop-blur-sm shadow-sm cursor-pointer min-h-[36px]"
             style={{
               borderColor: isCasting ? '#FF6700' : `rgba(${themeConfig.primaryRgb}, 0.2)`
             }}
           >
             <span 
-              className="w-2 h-2 rounded-full"
+              className="w-2 h-2 rounded-full shrink-0"
               style={{ 
                 backgroundColor: isCasting ? '#FF6700' : (activeDevice?.isOnline ? themeConfig.primaryColor : '#34d399'),
                 boxShadow: isCasting ? '0 0 10px rgba(255,103,0,0.8)' : `0 0 8px rgba(${themeConfig.primaryRgb}, 0.7)` 
               }} 
             />
+            {isCasting ? (
+              <Speaker className="w-3.5 h-3.5 text-[#FF6700] sm:hidden" />
+            ) : (
+              <Laptop className="w-3.5 h-3.5 text-zinc-400 sm:hidden" />
+            )}
             <div className="hidden sm:block text-xs">
               <span className="text-zinc-100 font-semibold flex items-center gap-1 leading-tight">
                 {isCasting ? (
@@ -156,10 +161,10 @@ export const Navbar: React.FC<NavbarProps> = ({
                 )}
               </span>
               <span className="text-zinc-400 text-[10px] block leading-none pt-0.5 font-medium">
-                {isCasting ? `音箱音量: ${activeDevice?.status?.volume ?? 40}%` : `待命: ${activeDevice?.name || '小爱音箱'}`}
+                {isCasting ? `音箱: ${activeDevice?.status?.volume ?? 40}%` : `待命: ${activeDevice?.name || '小爱音箱'}`}
               </span>
             </div>
-            <ChevronRight className="w-3.5 h-3.5 text-zinc-400" />
+            <ChevronRight className="w-3.5 h-3.5 text-zinc-400 hidden sm:inline" />
           </button>
 
           {/* User Auth Header Controls */}
@@ -174,8 +179,8 @@ export const Navbar: React.FC<NavbarProps> = ({
       </div>
 
 
-      {/* Bottom Row (中枢导航): 音乐曲库, 智能音箱, Subsonic API, 歌词播放, 设置 */}
-      <div className="border-t border-white/5 bg-zinc-950/50 backdrop-blur-md">
+      {/* Bottom Row (中枢导航): 仅在平板和桌面端展示，手机端采用触控底部导航栏 */}
+      <div className="hidden md:block border-t border-white/5 bg-transparent backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-12 flex items-center justify-between">
           <nav className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar py-1">
             <button

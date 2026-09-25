@@ -476,6 +476,13 @@ export class QueueEngine extends EventEmitter {
   }
 
   /**
+   * Compatibility alias for legacy stream completion event
+   */
+  public notifyStreamEof(songId: string, _totalBytes?: number, clientIp?: string) {
+    this.notifyStreamCompleted(songId, clientIp);
+  }
+
+  /**
    * Phase 3: Seamless cross-speaker playback handover
    * Transfers active queue, current track, and precise playback position to target speaker.
    */

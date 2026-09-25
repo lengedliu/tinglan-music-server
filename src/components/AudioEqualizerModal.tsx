@@ -223,8 +223,8 @@ export const AudioEqualizerModal: React.FC<AudioEqualizerModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[100] bg-black/75 backdrop-blur-xl flex items-center justify-center p-4 animate-in fade-in duration-200">
-      <div className="w-full max-w-2xl bg-zinc-950 border border-white/10 rounded-3xl p-6 sm:p-8 shadow-2xl relative overflow-hidden space-y-6">
+    <div className="fixed inset-0 z-[100] bg-black/75 backdrop-blur-xl flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
+      <div className="w-full max-w-2xl max-h-[92vh] overflow-y-auto bg-zinc-950 border border-white/10 rounded-2xl sm:rounded-3xl p-4 sm:p-8 shadow-2xl relative space-y-4 sm:space-y-6 scrollbar-thin scrollbar-thumb-zinc-800">
         
         {/* Glowing Background Accent */}
         <div className="absolute top-0 right-0 w-64 h-64 bg-[#FF6700]/10 blur-[80px] pointer-events-none" />

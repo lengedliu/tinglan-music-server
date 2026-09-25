@@ -120,11 +120,11 @@ export const SponsorPage: React.FC<SponsorPageProps> = ({ onShowToast }) => {
   ];
 
   return (
-    <div className="space-y-8 pb-24 max-w-5xl mx-auto animate-in fade-in duration-300">
+    <div className="space-y-6 sm:space-y-8 pb-36 sm:pb-28 max-w-5xl mx-auto animate-in fade-in duration-300">
       
       {/* Top Hero Banner */}
       <div 
-        className="relative overflow-hidden p-6 sm:p-10 rounded-3xl bg-gradient-to-br from-zinc-900/90 via-zinc-900/50 to-zinc-950/80 border border-white/10 shadow-2xl backdrop-blur-xl"
+        className="relative overflow-hidden p-4 sm:p-10 rounded-2xl sm:rounded-3xl bg-gradient-to-br from-zinc-900/90 via-zinc-900/50 to-zinc-950/80 border border-white/10 shadow-2xl backdrop-blur-xl"
         style={{
           boxShadow: `0 20px 60px -15px rgba(${themeConfig.primaryRgb}, 0.15)`
         }}

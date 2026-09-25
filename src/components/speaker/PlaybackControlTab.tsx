@@ -8,7 +8,10 @@ import {
   SkipForward, 
   CheckCircle2, 
   AlertCircle, 
-  ShieldCheck 
+  ShieldCheck,
+  Zap,
+  Activity,
+  Timer
 } from 'lucide-react';
 import { XiaomiDevice, Song, DeviceCommandState } from '../../types';
 import { apiFetch } from '../../utils/api';
@@ -413,6 +416,41 @@ export const PlaybackControlTab: React.FC<PlaybackControlTabProps> = ({
 
       {/* Side Info */}
       <div className="md:col-span-4 space-y-4">
+        {/* P1 Adaptive Critical-Point Cut Probe Monitor */}
+        <div className={`p-6 rounded-3xl backdrop-blur-md border space-y-3.5 ${
+          isLight ? 'bg-white/90 border-zinc-200 shadow-sm' : 'bg-zinc-900/40 border-white/5'
+        }`}>
+          <div className="flex items-center justify-between">
+            <h4 className={`text-sm font-bold flex items-center gap-2 ${isLight ? 'text-zinc-900' : 'text-white'}`}>
+              <Zap className="w-4 h-4 text-[#FF6700]" />
+              切歌临界自适应探针
+            </h4>
+            <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold flex items-center gap-1 ${
+              activeDevice.status?.playing
+                ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 animate-pulse'
+                : 'bg-zinc-800 text-zinc-400 border border-white/5'
+            }`}>
+              <Activity className="w-2.5 h-2.5" />
+              {activeDevice.status?.playing ? '动态探针运行中' : '就绪待命'}
+            </span>
+          </div>
+
+          <p className={`text-xs leading-relaxed ${isLight ? 'text-zinc-600' : 'text-zinc-400'}`}>
+            智能识别曲末临界区，通过 200ms 超高频轮询与硬件 Buffer 耗尽校准，消除音箱卡顿与时差，实现整曲听完后毫秒级零延迟切歌。
+          </p>
+
+          <div className="grid grid-cols-2 gap-2 text-xs font-mono">
+            <div className={`p-2 rounded-xl border ${isLight ? 'bg-zinc-50 border-zinc-200' : 'bg-zinc-950/60 border-white/5'}`}>
+              <span className="text-[10px] text-zinc-500 block">临界探测频次</span>
+              <span className={`font-bold ${isLight ? 'text-zinc-900' : 'text-white'}`}>200ms 级</span>
+            </div>
+            <div className={`p-2 rounded-xl border ${isLight ? 'bg-zinc-50 border-zinc-200' : 'bg-zinc-950/60 border-white/5'}`}>
+              <span className="text-[10px] text-zinc-500 block">网络提前量补偿</span>
+              <span className={`font-bold text-[#FF6700]`}>~120ms RTT</span>
+            </div>
+          </div>
+        </div>
+
         <div className={`p-6 rounded-3xl backdrop-blur-md border space-y-4 ${
           isLight ? 'bg-white/90 border-zinc-200 shadow-sm' : 'bg-zinc-900/40 border-white/5'
         }`}>

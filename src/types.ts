@@ -20,12 +20,36 @@ export interface Song {
   channels?: string;
   codec?: string;
   filePath?: string;
+  playCount?: number; // Total playback count across local player and Xiaomi speaker
+  lastPlayedAt?: number; // Timestamp (ms) of the most recent playback
 }
 
 export interface LyricLine {
   time: number; // in seconds
   text: string;
   translation?: string;
+}
+
+export type DynamicPlaylistId = 'dynamic:top_played' | 'dynamic:recently_played' | 'dynamic:lossless';
+
+export interface DynamicPlaylistInfo {
+  id: DynamicPlaylistId;
+  type: 'top_played' | 'recently_played' | 'lossless';
+  name: string;
+  description: string;
+  badge: string;
+  songIds: string[];
+  totalCount: number;
+}
+
+export interface PlayHistoryItem {
+  id: string;
+  songId: string;
+  songTitle: string;
+  songArtist: string;
+  timestamp: number;
+  playDuration?: number;
+  device?: string;
 }
 
 export interface Playlist {
@@ -35,6 +59,7 @@ export interface Playlist {
   coverUrl?: string;
   songIds: string[];
   createdAt: string;
+  isDynamic?: boolean;
 }
 
 export interface XiaomiDeviceStatus {
@@ -356,6 +381,38 @@ export interface GroupCastResponse {
   successCount: number;
   failedCount: number;
   results: GroupCastDeviceResult[];
+}
+
+export type QueueLoopMode = 'all' | 'one' | 'shuffle';
+
+export interface HardwareProbeStatus {
+  state: 'idle' | 'stable' | 'preheating' | 'critical' | 'switching';
+  inCriticalZone: boolean;
+  probeIntervalMs: number;
+  hardwareStatus?: string;
+  streamCompleted: boolean;
+  streamEofTime?: number;
+  calibratedRemainingMs: number;
+  leadCompensationMs: number;
+  lastProbeLatencyMs: number;
+  totalProbes: number;
+  lastProbeTime?: string;
+}
+
+export interface QueueStatus {
+  queue: Song[];
+  currentIndex: number;
+  currentSong: Song | null;
+  isPlaying: boolean;
+  loopMode: QueueLoopMode;
+  targetDid: string;
+  targetDeviceName?: string;
+  startTime: number;
+  duration: number;
+  elapsedSeconds: number;
+  remainingSeconds: number;
+  totalSongs: number;
+  probe?: HardwareProbeStatus;
 }
 
 

@@ -645,10 +645,10 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const activeUsersCount = usersList.filter(u => u.status !== 'disabled').length;
 
   return (
-    <div className="space-y-8 pb-20 max-w-5xl mx-auto">
+    <div className="space-y-6 sm:space-y-8 pb-36 sm:pb-28 max-w-5xl mx-auto">
       
       {/* Top Header Banner */}
-      <div className="p-6 sm:p-8 rounded-3xl bg-zinc-900/40 backdrop-blur-md border border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-6">
+      <div className="p-4 sm:p-8 rounded-2xl sm:rounded-3xl bg-zinc-900/40 backdrop-blur-md border border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-4 sm:gap-6">
         <div className="flex items-start gap-4">
           <div className="w-14 h-14 rounded-2xl bg-[#FF6700]/15 border border-[#FF6700]/30 text-[#FF6700] flex items-center justify-center flex-shrink-0 shadow-[0_0_20px_rgba(255,103,0,0.15)]">
             <Settings className="w-7 h-7" />

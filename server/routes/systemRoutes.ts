@@ -13,6 +13,10 @@ export interface SystemRouterOptions {
   lyricsService: any;
   queueEngine: any;
   xiaomiDevices: () => any[];
+  audioTranscoder?: any;
+  transcodeSemaphorePool?: any;
+  getMiotConfig?: () => any;
+  castPipelineManager?: any;
 }
 
 export function createSystemRouter(options: SystemRouterOptions): Router {
@@ -123,6 +127,79 @@ export function createSystemRouter(options: SystemRouterOptions): Router {
         insight: 'AI 乐评生成暂不可用',
         error: err.message
       });
+    }
+  });
+
+  // 3-Tier Architecture Status API
+  router.get(['/system/3tier-architecture', '/system/xiaomusic-architecture'], (req: Request, res: Response) => {
+    const transcodeStats = options.audioTranscoder?.getCacheStats() || { count: 0, totalSizeMb: '0.00' };
+    const poolStats = options.transcodeSemaphorePool?.getStats() || { maxConcurrency: 4, activeCount: 0, queuedCount: 0, totalReapedZombies: 0, totalDirectPassThrough: 0 };
+    const miotConfig = options.getMiotConfig ? options.getMiotConfig() : {};
+    const activeMicoToken = miotConfig.micoServiceToken || (miotConfig.isMicoValid ? miotConfig.serviceToken : undefined);
+    const devices = options.xiaomiDevices();
+    res.json({
+      success: true,
+      architecture: {
+        name: 'Tinglan 3-Tier Audio & Cast Engine',
+        version: '3.0.0',
+        audioLayer: {
+          engine: 'FFmpeg Standard MP3 Transcoder with Semaphore Concurrency Pool',
+          ffmpegAvailable: options.audioTranscoder?.isAvailable() ?? true,
+          standardBitrate: '320kbps CBR',
+          sampleRate: '44.1 kHz Stereo',
+          http206RangeSupport: true,
+          cacheCount: transcodeStats.count,
+          cacheSize: transcodeStats.totalSizeMb,
+          concurrencyLimit: poolStats.maxConcurrency,
+          activeTranscodes: poolStats.activeCount,
+          queuedTranscodes: poolStats.queuedCount,
+          totalReapedZombies: poolStats.totalReapedZombies,
+          totalDirectPassThrough: poolStats.totalDirectPassThrough,
+          routes: ['/api/stream/:songId', '/stream/:songId', '/music/:filename']
+        },
+        controlLayer: {
+          engine: 'MiService Mina UBUS Caller',
+          isLoggedIn: Boolean(miotConfig.isLoggedIn),
+          hasServiceToken: Boolean(activeMicoToken),
+          userId: miotConfig.userId || 'N/A',
+          primaryCommand: 'player_play_url (media: app_ios, type: 1)',
+          fallbackCommands: [
+            'player_play_url (type: 0, media: app_ios) [Touchscreen]',
+            'player_play_url (type: 1)',
+            'player_play_music (media: app_ios)'
+          ]
+        },
+        compatibilityLayer: {
+          modelMatrix: {
+            touchscreenModels: ['LX04', 'X08A', 'X08C', 'X08E', 'X10A'],
+            proSoundModels: ['OH2P', 'L16A', 'LX06', 'Xiaomi Sound'],
+            playModels: ['LX05', 'L05B', 'L05C', 'L07A']
+          },
+          fallbackChains: ['MiService Mina Cloud', 'MIoT Cloud Action', 'LAN miIO UDP 54321', 'DLNA UPnP AVTransport'],
+          activeDeviceCount: devices.length
+        }
+      }
+    });
+  });
+
+  // Phase 3: Hardware Strategy Telemetry & Self-Healing Profiles API
+  router.get('/system/cast-profiles', (req: Request, res: Response) => {
+    const profiles = options.castPipelineManager?.getProfilesReport() || [];
+    res.json({
+      success: true,
+      profiles,
+      totalDevices: options.xiaomiDevices().length
+    });
+  });
+
+  router.post('/system/cast-profiles/reset', (req: Request, res: Response) => {
+    const { did } = req.body || {};
+    if (did) {
+      options.castPipelineManager?.clearProfile(did);
+      res.json({ success: true, message: `已重置设备 [${did}] 的自适应策略画像` });
+    } else {
+      options.castPipelineManager?.resetAllProfiles();
+      res.json({ success: true, message: '已重置所有音箱的自学习策略画像' });
     }
   });
 

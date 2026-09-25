@@ -1,0 +1,35 @@
+{
+  "playCounts": {
+    "song-1": 44,
+    "song-2": 36,
+    "song-6": 29,
+    "song-4": 22,
+    "song-3": 15,
+    "song-5": 9
+  },
+  "lastPlayedTimes": {
+    "song-1": 1790342879549,
+    "song-2": 1790342879571
+  },
+  "history": [
+    {
+      "id": "hist-1790342879571-20nxp",
+      "songId": "song-2",
+      "songTitle": "春江花月夜 (Moonlit Spring River)",
+      "songArtist": "中央民族乐团 / 古筝与箫",
+      "timestamp": 1790342879571,
+      "playDuration": 278,
+      "device": "客厅·小米Sound音箱"
+    },
+    {
+      "id": "hist-1790342879549-4ezpn",
+      "songId": "song-1",
+      "songTitle": "月半小夜曲 (Acoustic Night)",
+      "songArtist": "李克勤 / 弦乐室内乐团",
+      "timestamp": 1790342879549,
+      "playDuration": 234,
+      "device": "网页高保真播放器"
+    }
+  ],
+  "updatedAt": "2026-09-25T13:27:59.572Z"
+}

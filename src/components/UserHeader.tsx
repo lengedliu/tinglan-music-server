@@ -30,11 +30,11 @@ export const UserHeader: React.FC<UserHeaderProps> = ({
                 (e.target as HTMLElement).style.display = 'none';
               }}
             />
-            <div className="flex flex-col">
-              <span className="text-xs font-semibold text-white leading-tight">
+            <div className="flex flex-col max-w-[70px] sm:max-w-[120px]">
+              <span className="text-xs font-semibold text-white leading-tight truncate">
                 {user.username}
               </span>
-              <span className="text-[9px] text-[#FF6700] font-mono leading-none">
+              <span className="text-[9px] text-[#FF6700] font-mono leading-none hidden sm:inline">
                 {user.role === 'admin' ? '管理员' : '普通会员'}
               </span>
             </div>
@@ -43,7 +43,7 @@ export const UserHeader: React.FC<UserHeaderProps> = ({
           <button
             id="btn-user-logout"
             onClick={onLogout}
-            className="p-1.5 rounded-full text-zinc-400 hover:text-rose-400 hover:bg-rose-500/10 transition cursor-pointer"
+            className="p-1.5 rounded-full text-zinc-400 hover:text-rose-400 hover:bg-rose-500/10 transition cursor-pointer min-w-[32px] min-h-[32px] flex items-center justify-center"
             title="退出登录"
           >
             <LogOut className="w-4 h-4" />
@@ -53,10 +53,10 @@ export const UserHeader: React.FC<UserHeaderProps> = ({
         <button
           id="btn-open-auth-modal"
           onClick={onOpenAuthModal}
-          className="flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-[#FF6700] hover:bg-[#e55c00] text-white text-xs font-semibold shadow-[0_2px_10px_rgba(255,103,0,0.3)] transition active:scale-95 cursor-pointer"
+          className="flex items-center gap-1.5 px-3 sm:px-4 py-1.5 rounded-full bg-[#FF6700] hover:bg-[#e55c00] text-white text-xs font-semibold shadow-[0_2px_10px_rgba(255,103,0,0.3)] transition active:scale-95 cursor-pointer min-h-[36px]"
         >
           <LogIn className="w-3.5 h-3.5" />
-          <span>登录 / 注册</span>
+          <span>登录<span className="hidden sm:inline"> / 注册</span></span>
         </button>
       )}
 

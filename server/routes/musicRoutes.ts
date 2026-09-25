@@ -4,6 +4,7 @@ import path from 'path';
 import { parseFile, parseBuffer } from 'music-metadata';
 import { asyncMusicScanner } from '../core/asyncMusicScanner.js';
 import { musicRepository } from '../core/repositories/musicRepository.js';
+import { DynamicPlaylistEngine } from '../core/dynamicPlaylistEngine.js';
 
 export interface SongsRouterOptions {
   getSongs: () => any[];
@@ -11,6 +12,7 @@ export interface SongsRouterOptions {
   getPlaylists: () => any[];
   setPlaylists: (playlists: any[]) => void;
   musicDir: string;
+  dynamicPlaylistEngine?: DynamicPlaylistEngine;
   audioTranscoder?: {
     ensureStandardMp3?: (filePath: string, songId: string) => any;
     ensureStandardMp3Async?: (filePath: string, songId: string, opts?: any) => Promise<any>;
@@ -21,6 +23,8 @@ export interface SongsRouterOptions {
 export interface PlaylistsRouterOptions {
   getPlaylists: () => any[];
   setPlaylists: (playlists: any[]) => void;
+  getSongs?: () => any[];
+  dynamicPlaylistEngine?: DynamicPlaylistEngine;
 }
 
 /**
@@ -51,11 +55,13 @@ export function scanMusicDirectory(dir: string, baseDir = dir): string[] {
  */
 export function createSongsRouter(options: SongsRouterOptions): Router {
   const router = Router();
-  const { getSongs, setSongs, getPlaylists, setPlaylists, musicDir, audioTranscoder, logCastAction } = options;
+  const { getSongs, setSongs, getPlaylists, setPlaylists, musicDir, dynamicPlaylistEngine, audioTranscoder, logCastAction } = options;
 
-  // Get all songs
+  // Get all songs (enriched with playCount and lastPlayedAt)
   router.get('/', (req: Request, res: Response) => {
-    res.json(getSongs());
+    const rawSongs = getSongs();
+    const songs = dynamicPlaylistEngine ? dynamicPlaylistEngine.enrichSongs(rawSongs) : rawSongs;
+    res.json(songs);
   });
 
   // Get detailed audio track technical parameters and ID3 metadata
@@ -407,6 +413,42 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
     res.status(404).json({ error: 'Song not found' });
   });
 
+  // Track playback event (increment playCount, record listening history)
+  router.post('/:id/play', (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { device, duration, title, artist } = req.body || {};
+    const song = getSongs().find(s => s.id === id || s.id.replace(/\.[^.]+$/, '') === id);
+
+    if (dynamicPlaylistEngine) {
+      const result = dynamicPlaylistEngine.recordPlay(id, {
+        title: title || song?.title,
+        artist: artist || song?.artist,
+        device: device || '网页播放器',
+        duration: duration || song?.duration
+      });
+      return res.json({ success: true, ...result });
+    }
+    res.json({ success: true, playCount: 1, lastPlayedAt: Date.now() });
+  });
+
+  // Batch or scrobble playback
+  router.post('/scrobble', (req: Request, res: Response) => {
+    const { songId, device, duration, title, artist } = req.body || {};
+    if (!songId) return res.status(400).json({ error: 'songId required' });
+    const song = getSongs().find(s => s.id === songId || s.id.replace(/\.[^.]+$/, '') === songId);
+
+    if (dynamicPlaylistEngine) {
+      const result = dynamicPlaylistEngine.recordPlay(songId, {
+        title: title || song?.title,
+        artist: artist || song?.artist,
+        device: device || '小米音箱/局域网设备',
+        duration: duration || song?.duration
+      });
+      return res.json({ success: true, ...result });
+    }
+    res.json({ success: true });
+  });
+
   return router;
 }
 
@@ -415,7 +457,29 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
  */
 export function createPlaylistsRouter(options: PlaylistsRouterOptions): Router {
   const router = Router();
-  const { getPlaylists, setPlaylists } = options;
+  const { getPlaylists, setPlaylists, getSongs, dynamicPlaylistEngine } = options;
+
+  // Smart Dynamic Playlists Overview (常听榜, 最近播放, 无损精选)
+  router.get('/dynamic', (req: Request, res: Response) => {
+    if (dynamicPlaylistEngine && getSongs) {
+      const songs = getSongs();
+      return res.json(dynamicPlaylistEngine.getDynamicPlaylistsOverview(songs));
+    }
+    res.json({
+      success: true,
+      playlists: [],
+      stats: { totalRecordedPlays: 0, historyCount: 0, topPlayedCount: 0, recentlyPlayedCount: 0, losslessCount: 0 }
+    });
+  });
+
+  // Clear "最近播放" history
+  router.delete('/dynamic/recent', (req: Request, res: Response) => {
+    if (dynamicPlaylistEngine) {
+      dynamicPlaylistEngine.clearHistory();
+      return res.json({ success: true, message: '最近播放记录已清空' });
+    }
+    res.json({ success: true });
+  });
 
   router.get('/', (req: Request, res: Response) => {
     res.json(getPlaylists());

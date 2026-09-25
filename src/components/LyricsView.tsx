@@ -141,10 +141,10 @@ export const LyricsView: React.FC<LyricsViewProps> = ({
   }
 
   return (
-    <div className="space-y-6 pb-28">
+    <div className="space-y-4 sm:space-y-6 pb-36 sm:pb-28">
       
       {/* Top Status Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 sm:p-5 rounded-3xl bg-zinc-950/80 border border-white/10 backdrop-blur-md shadow-xl">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl bg-zinc-950/80 border border-white/10 backdrop-blur-md shadow-xl">
         <div className="flex items-center gap-3">
           <div className="p-2 rounded-xl bg-[#FF6700]/20 text-[#FF6700] border border-[#FF6700]/30 shadow-[0_0_10px_rgba(255,103,0,0.3)]">
             <Mic2 className="w-5 h-5" />
@@ -201,13 +201,13 @@ export const LyricsView: React.FC<LyricsViewProps> = ({
             className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-zinc-900 hover:bg-zinc-800 border border-white/10 text-xs font-semibold text-zinc-200 transition disabled:opacity-50"
           >
             <Search className={`w-3.5 h-3.5 ${isSearchingLyrics ? 'animate-spin text-[#FF6700]' : ''}`} />
-            <span>{isSearchingLyrics ? '匹配歌词中...' : '在线匹配歌词'}</span>
+            <span>{isSearchingLyrics ? '匹配中...' : '在线匹配歌词'}</span>
           </button>
 
           <button
             id="btn-lyrics-toggle-cast"
             onClick={onToggleCast}
-            className={`flex items-center gap-2 px-5 py-2 rounded-full text-xs font-semibold transition ${
+            className={`flex items-center gap-2 px-4 sm:px-5 py-2 rounded-full text-xs font-semibold transition ${
               isCasting
                 ? 'bg-[#FF6700] text-white shadow-[0_0_15px_rgba(255,103,0,0.4)]'
                 : 'bg-white/10 hover:bg-white/20 text-white border border-white/10'
@@ -215,22 +215,22 @@ export const LyricsView: React.FC<LyricsViewProps> = ({
           >
             <Radio className={`w-4 h-4 ${isCasting ? 'animate-pulse' : 'text-[#FF6700]'}`} />
             <span>
-              {isCasting ? `投放中: ${activeDevice?.name}` : `投放至 ${activeDevice?.name || '小米音箱'}`}
+              {isCasting ? `投放中: ${activeDevice?.name}` : `投放至 ${activeDevice?.name || '音箱'}`}
             </span>
           </button>
         </div>
       </div>
 
       {/* Main Lyrics & Vinyl Layout with Immersive UI Styling */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start min-h-[520px]">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 sm:gap-8 items-start min-h-[520px]">
         
         {/* Left Column: Vinyl Record & Song Meta */}
-        <div className="lg:col-span-5 relative overflow-hidden flex flex-col items-center justify-center p-8 rounded-3xl bg-zinc-900/40 backdrop-blur-md border border-white/5 text-center space-y-6">
+        <div className="lg:col-span-5 relative overflow-hidden flex flex-col items-center justify-center p-4 sm:p-8 rounded-2xl sm:rounded-3xl bg-zinc-900/40 backdrop-blur-md border border-white/5 text-center space-y-4 sm:space-y-6">
           <div className="absolute top-1/4 w-48 h-48 rounded-full bg-[#FF6700]/10 blur-[60px] pointer-events-none" />
 
           {/* Vinyl Disc with Spinning Animation */}
-          <div className="relative group my-4">
-            <div className="w-60 h-60 sm:w-72 sm:h-72 rounded-full bg-gradient-to-tr from-zinc-950 via-zinc-900 to-zinc-950 p-2 shadow-[0_20px_50px_rgba(0,0,0,0.8)] border-4 border-zinc-800/80 flex items-center justify-center relative">
+          <div className="relative group my-2 sm:my-4">
+            <div className="w-44 h-44 sm:w-60 sm:h-60 lg:w-72 lg:h-72 rounded-full bg-gradient-to-tr from-zinc-950 via-zinc-900 to-zinc-950 p-2 shadow-[0_20px_50px_rgba(0,0,0,0.8)] border-4 border-zinc-800/80 flex items-center justify-center relative">
               
               {/* Vinyl Grooves texture */}
               <div className="absolute inset-4 rounded-full border border-zinc-800/80 pointer-events-none" />
@@ -240,7 +240,7 @@ export const LyricsView: React.FC<LyricsViewProps> = ({
 
               {/* Album Art Core */}
               <div 
-                className={`w-32 h-32 sm:w-36 sm:h-36 rounded-full overflow-hidden shadow-inner border-2 border-zinc-700 relative z-10 ${
+                className={`w-24 h-24 sm:w-32 sm:h-32 lg:w-36 lg:h-36 rounded-full overflow-hidden shadow-inner border-2 border-zinc-700 relative z-10 ${
                   isPlaying ? 'animate-[spin_12s_linear_infinite]' : ''
                 }`}
               >
@@ -308,7 +308,7 @@ export const LyricsView: React.FC<LyricsViewProps> = ({
         </div>
 
         {/* Right Column: Synchronized Lyrics Stream */}
-        <div className="lg:col-span-7 bg-zinc-900/40 backdrop-blur-md border border-white/5 rounded-3xl p-6 sm:p-8 flex flex-col h-[520px]">
+        <div className="lg:col-span-7 bg-zinc-900/40 backdrop-blur-md border border-white/5 rounded-2xl sm:rounded-3xl p-4 sm:p-8 flex flex-col h-[440px] sm:h-[520px]">
           
           <div className="flex items-center justify-between pb-4 border-b border-white/5 mb-4">
             <div className="flex items-center gap-2">

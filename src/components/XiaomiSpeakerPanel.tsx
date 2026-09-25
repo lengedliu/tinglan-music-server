@@ -1184,10 +1184,10 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
   };
 
   return (
-    <div className="space-y-6 pb-28">
+    <div className="space-y-4 sm:space-y-6 pb-36 sm:pb-28">
       
       {/* Top Banner: Xiaomi & Audio Protocol Hub (Referencing Subsonic Server Card Architecture) */}
-      <div className={`p-6 sm:p-8 rounded-3xl backdrop-blur-xl border relative overflow-hidden shadow-2xl transition-colors ${
+      <div className={`p-4 sm:p-8 rounded-2xl sm:rounded-3xl backdrop-blur-xl border relative overflow-hidden shadow-2xl transition-colors ${
         isLight ? 'bg-white/90 border-zinc-200 shadow-zinc-200/50' : 'bg-zinc-900/60 border-white/10'
       }`}>
         <div className="absolute top-0 right-0 w-96 h-96 bg-[#FF6700]/10 blur-[120px] pointer-events-none" />

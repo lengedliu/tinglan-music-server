@@ -1,5 +1,8 @@
 import { Song, Playlist, XiaomiDevice } from '../types';
 
+const now = Date.now();
+const HOUR = 3600 * 1000;
+
 export const INITIAL_SONGS: Song[] = [
   {
     id: 'song-1',
@@ -15,6 +18,8 @@ export const INITIAL_SONGS: Song[] = [
     fileSize: '9.2 MB',
     isFavorite: true,
     source: 'demo',
+    playCount: 42,
+    lastPlayedAt: now - 15 * 60 * 1000,
     lyrics: `[00:00.00]月半小夜曲 - 弦乐原声版
 [00:04.00]词：向雪怀 曲：河合奈保子
 [00:08.50]演奏：Tinglan 听澜 Hi-Fi 发烧工作室
@@ -47,6 +52,8 @@ export const INITIAL_SONGS: Song[] = [
     fileSize: '28.4 MB',
     isFavorite: true,
     source: 'demo',
+    playCount: 35,
+    lastPlayedAt: now - 2 * HOUR,
     lyrics: `[00:00.00]春江花月夜 - 古筝箫韵
 [00:06.00]古曲改编 / 高保真无损母带
 [00:14.00]春江潮水连海平，海上明月共潮生
@@ -74,6 +81,8 @@ export const INITIAL_SONGS: Song[] = [
     fileSize: '8.8 MB',
     isFavorite: false,
     source: 'demo',
+    playCount: 15,
+    lastPlayedAt: now - 36 * HOUR,
     lyrics: `[00:00.00]夜的第七章 - 华丽交响编曲
 [00:05.00]1983年小巷 12月晴朗
 [00:10.00]夜的第七章 打字机继续推向
@@ -99,6 +108,8 @@ export const INITIAL_SONGS: Song[] = [
     fileSize: '34.1 MB',
     isFavorite: true,
     source: 'demo',
+    playCount: 22,
+    lastPlayedAt: now - 18 * HOUR,
     lyrics: `[00:00.00]海阔天空 - Beyond
 [00:06.00]词：黄家驹 曲：黄家驹
 [00:18.00]今天我 寒夜里看雪飘过
@@ -128,6 +139,8 @@ export const INITIAL_SONGS: Song[] = [
     fileSize: '7.1 MB',
     isFavorite: false,
     source: 'demo',
+    playCount: 9,
+    lastPlayedAt: now - 72 * HOUR,
     lyrics: `[00:00.00]Rainy Cafe - 午后微雨与醇香
 [00:10.00]纯音乐放空曲目
 [00:25.00]雨丝敲击着木质窗棂
@@ -149,6 +162,8 @@ export const INITIAL_SONGS: Song[] = [
     fileSize: '46.8 MB',
     isFavorite: true,
     source: 'demo',
+    playCount: 29,
+    lastPlayedAt: now - 5 * HOUR,
     lyrics: `[00:00.00]Hotel California (Live Acoustic)
 [00:15.00]吉他独奏前奏与现场掌声
 [00:35.00]手鼓低频试音核心段落

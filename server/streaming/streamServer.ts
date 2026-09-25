@@ -5,6 +5,7 @@ import { MusicEngine } from '../core/musicEngine.js';
 import { FfmpegTranscoder } from './ffmpegTranscoder.js';
 import { DeviceManager } from '../xiaomi/deviceManager.js';
 import { transcodeSemaphorePool } from './transcodeSemaphore.js';
+import { queueEngine } from '../core/queueEngine.js';
 
 export interface StreamEvent {
   timestamp: string;
@@ -491,6 +492,11 @@ export class StreamServer {
         'Connection': 'keep-alive'
       };
       res.writeHead(206, head);
+      res.on('finish', () => {
+        if (!isBrowserClient && end >= fileSize - 4096) {
+          queueEngine.notifyStreamCompleted(String(cleanSongId), clientIp);
+        }
+      });
       file.pipe(res);
     } else {
       const head = {
@@ -501,7 +507,13 @@ export class StreamServer {
         'Connection': 'keep-alive'
       };
       res.writeHead(200, head);
-      fs.createReadStream(localFilePath).pipe(res);
+      const file = fs.createReadStream(localFilePath);
+      res.on('finish', () => {
+        if (!isBrowserClient) {
+          queueEngine.notifyStreamCompleted(String(cleanSongId), clientIp);
+        }
+      });
+      file.pipe(res);
     }
   };
 }

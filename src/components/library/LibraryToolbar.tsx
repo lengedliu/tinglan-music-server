@@ -46,7 +46,7 @@ export const LibraryToolbar: React.FC<LibraryToolbarProps> = memo(({
   const [showExportMenu, setShowExportMenu] = useState(false);
 
   return (
-    <div className={`p-4 rounded-2xl border flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xl transition-colors duration-200 ${
+    <div className={`p-3 sm:p-4 rounded-2xl border flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4 shadow-xl transition-colors duration-200 ${
       isLight ? 'bg-white border-zinc-200 shadow-sm' : 'bg-zinc-900/60 border-white/10'
     }`}>
       {/* Search Input */}
@@ -79,16 +79,16 @@ export const LibraryToolbar: React.FC<LibraryToolbarProps> = memo(({
       </div>
 
       {/* Right Controls: Filters, Sort, Export, Batch */}
-      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+      <div className="flex flex-wrap items-center gap-1.5 sm:gap-3">
         {/* Source Filter Group */}
-        <div className={`flex items-center gap-1 p-1 rounded-xl border text-xs ${
+        <div className={`flex items-center gap-0.5 sm:gap-1 p-1 rounded-xl border text-xs overflow-x-auto no-scrollbar ${
           isLight ? 'bg-zinc-100/90 border-zinc-200 text-zinc-700' : 'bg-zinc-800/80 border-white/5 text-zinc-300'
         }`}>
           <button
             type="button"
             id="btn-source-filter-all"
             onClick={() => onSourceFilterChange('all')}
-            className={`px-2.5 py-1 rounded-lg transition font-medium ${
+            className={`px-2 sm:px-2.5 py-1 rounded-lg transition font-medium ${
               sourceFilter === 'all' 
                 ? 'bg-[#FF6700] text-white font-bold shadow-sm' 
                 : isLight ? 'text-zinc-600 hover:text-zinc-950 hover:bg-zinc-200/60' : 'text-zinc-400 hover:text-white'
@@ -100,19 +100,19 @@ export const LibraryToolbar: React.FC<LibraryToolbarProps> = memo(({
             type="button"
             id="btn-source-filter-local"
             onClick={() => onSourceFilterChange('local')}
-            className={`px-2.5 py-1 rounded-lg transition font-medium ${
+            className={`px-2 sm:px-2.5 py-1 rounded-lg transition font-medium whitespace-nowrap ${
               sourceFilter === 'local' 
                 ? 'bg-[#FF6700] text-white font-bold shadow-sm' 
                 : isLight ? 'text-zinc-600 hover:text-zinc-950 hover:bg-zinc-200/60' : 'text-zinc-400 hover:text-white'
             }`}
           >
-            本地曲目
+            本地
           </button>
           <button
             type="button"
             id="btn-source-filter-navidrome"
             onClick={() => onSourceFilterChange('navidrome')}
-            className={`px-2.5 py-1 rounded-lg transition font-medium ${
+            className={`px-2 sm:px-2.5 py-1 rounded-lg transition font-medium whitespace-nowrap ${
               sourceFilter === 'navidrome' 
                 ? 'bg-[#FF6700] text-white font-bold shadow-sm' 
                 : isLight ? 'text-zinc-600 hover:text-zinc-950 hover:bg-zinc-200/60' : 'text-zinc-400 hover:text-white'
@@ -124,7 +124,7 @@ export const LibraryToolbar: React.FC<LibraryToolbarProps> = memo(({
             type="button"
             id="btn-source-filter-favorites"
             onClick={() => onSourceFilterChange('favorites')}
-            className={`px-2.5 py-1 rounded-lg transition font-medium ${
+            className={`px-2 sm:px-2.5 py-1 rounded-lg transition font-medium whitespace-nowrap ${
               sourceFilter === 'favorites' 
                 ? 'bg-[#FF6700] text-white font-bold shadow-sm' 
                 : isLight ? 'text-zinc-600 hover:text-zinc-950 hover:bg-zinc-200/60' : 'text-zinc-400 hover:text-white'

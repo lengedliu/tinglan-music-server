@@ -272,11 +272,16 @@ html.theme-light #btn-cast-xiaomi-speaker.is-casting * {
 }
 
 /* Header & Navigation for Light Mode */
-html.theme-light header,
-html.theme-light nav {
-  background-color: var(--theme-card-bg) !important;
+html.theme-light header {
+  background-color: var(--theme-bg) !important;
   border-bottom-color: var(--theme-card-border) !important;
   box-shadow: 0 1px 4px 0 rgba(0, 0, 0, 0.03) !important;
+}
+
+html.theme-light nav {
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
 }
 
 /* Form controls & inputs for Light Mode */
@@ -325,3 +330,27 @@ html.theme-light .bg-black\/80 {
 .animate-fadeIn {
   animation: fadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
+
+/* Mobile Safe Area & Touch Optimizations */
+.pb-safe {
+  padding-bottom: max(12px, env(safe-area-inset-bottom, 12px));
+}
+
+.pt-safe {
+  padding-top: max(12px, env(safe-area-inset-top, 12px));
+}
+
+.mb-safe {
+  margin-bottom: max(0px, env(safe-area-inset-bottom, 0px));
+}
+
+.touch-pan-y {
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Tap Highlight Color Reset */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+

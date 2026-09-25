@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Navbar } from './components/Navbar';
 import { PlayerBar } from './components/PlayerBar';
+import { MobileTabBar } from './components/MobileTabBar';
 import { MusicLibrary } from './components/MusicLibrary';
 import { LyricsView } from './components/LyricsView';
 import { XiaomiSpeakerPanel } from './components/XiaomiSpeakerPanel';
@@ -27,6 +28,7 @@ import { Song, Playlist, XiaomiDevice, MiotConfig, CastLog, User, SecurityStatus
 import { INITIAL_SONGS, INITIAL_PLAYLISTS, INITIAL_XIAOMI_DEVICES } from './data/mockSongs';
 import { apiFetch, setStoredAuthToken, getAuthToken } from './utils/api';
 import { formatTime } from './utils/lyricParser';
+import { recordSongPlay } from './utils/dynamicPlaylists';
 import { CheckCircle2, AlertCircle, Radio, X } from 'lucide-react';
 
 export default function App() {
@@ -756,6 +758,22 @@ export default function App() {
     }
   };
 
+  const scrobbleSongPlay = (song: Song, deviceName?: string) => {
+    if (!song) return;
+    const nowTime = Date.now();
+    setSongs(prevSongs => prevSongs.map(s => {
+      if (s.id === song.id || s.id.replace(/\.[^.]+$/, '') === song.id) {
+        return {
+          ...s,
+          playCount: (s.playCount || 0) + 1,
+          lastPlayedAt: nowTime
+        };
+      }
+      return s;
+    }));
+    recordSongPlay(song, deviceName).catch(() => {});
+  };
+
   const handlePlaySong = (song: Song, targetQueue?: Song[]) => {
     // Unlock Web Audio API context if present
     if ((window as any).__tinglanAudioCtx && (window as any).__tinglanAudioCtx.state === 'suspended') {
@@ -771,6 +789,9 @@ export default function App() {
       : (playQueue.length > 0 ? playQueue : songs);
 
     setPlayQueue(newQueue);
+
+    // Scrobble playback to dynamic playlist engine & update local stats
+    scrobbleSongPlay(song, isCasting ? (activeDevice?.name || '小米智能音箱') : '网页高保真播放器');
 
     if (isCasting) {
       // In Speaker Cast Mode: pause local audio completely and cast to Xiaomi Speaker with active queue context
@@ -908,6 +929,7 @@ export default function App() {
     setIsCasting(true);
     if (audioRef.current) audioRef.current.pause();
     const queueToUse = playQueue.length > 0 ? playQueue : songs;
+    scrobbleSongPlay(song, activeDevice.name || '小米智能音箱');
     castSongToDevice(song, activeDevice, queueToUse);
   };
 
@@ -2175,7 +2197,7 @@ export default function App() {
         />
 
         {/* Main Content Area */}
-        <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-6 relative z-10">
+        <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 pt-4 sm:pt-6 relative z-10 pb-36 md:pb-28">
           {activeTab === 'library' && (
             <MusicLibrary
               songs={songs}
@@ -2204,6 +2226,10 @@ export default function App() {
               onBatchAddToPlaylist={handleBatchAddToPlaylist}
               onBatchRemoveFromPlaylist={handleBatchRemoveFromPlaylist}
               onInspectSong={(song) => setInspectorSong(song)}
+              onClearRecentHistory={() => {
+                setSongs(prev => prev.map(s => ({ ...s, lastPlayedAt: undefined })));
+                showToast('已清空', '最近播放历史记录已成功清除', 'success');
+              }}
             />
           )}
 
@@ -2323,6 +2349,16 @@ export default function App() {
           }}
           abLoop={abLoop}
           onToggleABLoop={handleToggleABLoop}
+        />
+
+        {/* Mobile Fixed Bottom Navigation Bar (< 768px) */}
+        <MobileTabBar
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          songCount={songs.length}
+          isCasting={isCasting}
+          activeDevice={activeDevice}
+          securityAuthEnabled={Boolean(securityStatus?.globalRequireAuth ?? securityStatus?.authRequired)}
         />
 
         {/* Upload Song Modal */}

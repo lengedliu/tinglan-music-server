@@ -31,6 +31,13 @@ import { PlaylistTabs } from './library/PlaylistTabs';
 import { LibraryToolbar } from './library/LibraryToolbar';
 import { BatchActionBar } from './library/BatchActionBar';
 import { PlaylistHeaderBanner } from './library/PlaylistHeaderBanner';
+import { 
+  getTopPlayedSongs, 
+  getRecentlyPlayedSongs, 
+  getLosslessSongs, 
+  isDynamicPlaylistId, 
+  clearRecentHistory 
+} from '../utils/dynamicPlaylists';
 
 export interface MusicLibraryProps {
   songs: Song[];
@@ -59,6 +66,7 @@ export interface MusicLibraryProps {
   onBatchAddToPlaylist?: (songIds: string[], playlistId: string) => void;
   onBatchRemoveFromPlaylist?: (songIds: string[], playlistId: string) => void;
   onInspectSong?: (song: Song) => void;
+  onClearRecentHistory?: () => void;
 }
 
 const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
@@ -87,10 +95,23 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
   onBatchAddToQueue,
   onBatchAddToPlaylist,
   onBatchRemoveFromPlaylist,
-  onInspectSong
+  onInspectSong,
+  onClearRecentHistory
 }) => {
   const { themeConfig } = useTheme();
   const isLight = !!themeConfig?.isLight;
+
+  // Dynamic Playlists Calculation
+  const topPlayedSongs = useMemo(() => getTopPlayedSongs(songs), [songs]);
+  const recentlyPlayedSongs = useMemo(() => getRecentlyPlayedSongs(songs), [songs]);
+  const losslessSongs = useMemo(() => getLosslessSongs(songs), [songs]);
+
+  const handleClearRecentHistory = async () => {
+    await clearRecentHistory();
+    if (onClearRecentHistory) {
+      onClearRecentHistory();
+    }
+  };
 
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
@@ -154,6 +175,12 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
     // 1. Filter by playlist
     if (selectedPlaylistId === 'favorites') {
       result = result.filter(s => s.isFavorite);
+    } else if (selectedPlaylistId === 'dynamic:top_played') {
+      result = topPlayedSongs;
+    } else if (selectedPlaylistId === 'dynamic:recently_played') {
+      result = recentlyPlayedSongs;
+    } else if (selectedPlaylistId === 'dynamic:lossless') {
+      result = losslessSongs;
     } else if (selectedPlaylistId !== 'all') {
       const targetPl = playlists.find(p => p.id === selectedPlaylistId);
       if (targetPl) {
@@ -334,12 +361,12 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
   const currentPlaylist = playlists.find(p => p.id === selectedPlaylistId);
 
   return (
-    <div className="space-y-6 pb-28">
+    <div className="space-y-4 sm:space-y-6 pb-36 sm:pb-28">
       {/* 1. Top Bar: Title, Stats & Primary Action Buttons */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
         <div>
-          <h2 className={`text-2xl font-bold flex items-center gap-2.5 ${isLight ? 'text-zinc-900' : 'text-white'}`}>
-            <Music className="w-7 h-7 text-[#FF6700]" />
+          <h2 className={`text-xl sm:text-2xl font-bold flex items-center gap-2 sm:gap-2.5 ${isLight ? 'text-zinc-900' : 'text-white'}`}>
+            <Music className="w-6 h-6 sm:w-7 sm:h-7 text-[#FF6700]" />
             <span>音乐库</span>
             <span className={`text-xs px-2.5 py-0.5 rounded-full font-semibold ${
               isLight ? 'bg-orange-100 text-[#FF6700]' : 'bg-[#FF6700]/20 text-[#FF6700]'
@@ -347,26 +374,26 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
               {songs.length} 首歌曲
             </span>
           </h2>
-          <p className={`text-xs mt-1 ${isLight ? 'text-zinc-500' : 'text-zinc-400'}`}>
+          <p className={`text-xs mt-0.5 sm:mt-1 ${isLight ? 'text-zinc-500' : 'text-zinc-400'}`}>
             多格式高保真无损曲库 · 小米小爱音箱专属无缝推流
           </p>
         </div>
 
         {/* Global Action Toolbar */}
-        <div className="flex flex-wrap items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2.5">
           {/* Scan Music Folder */}
           <button
             id="btn-scan-music-dir"
             onClick={onScanMusicDir}
             disabled={isScanning}
-            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all duration-200 border disabled:opacity-50 ${
+            className={`flex items-center gap-1.5 px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs font-semibold transition-all duration-200 border disabled:opacity-50 ${
               isLight
                 ? 'bg-zinc-100/90 hover:bg-zinc-200/90 text-zinc-800 border-zinc-300 shadow-sm'
                 : 'bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-200 border-white/10 shadow-sm'
             }`}
             title="扫描挂载目录 /music 内的最新音频文件"
           >
-            <FolderSync className={`w-4 h-4 ${isScanning ? 'animate-spin text-[#FF6700]' : 'text-zinc-400'}`} />
+            <FolderSync className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${isScanning ? 'animate-spin text-[#FF6700]' : 'text-zinc-400'}`} />
             <span>{isScanning ? '正在扫描...' : '扫描挂载目录'}</span>
           </button>
 
@@ -375,14 +402,14 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
             <button
               id="btn-open-navidrome-modal"
               onClick={onOpenNavidromeModal}
-              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-semibold transition-all duration-200 border ${
+              className={`flex items-center gap-1.5 px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs font-semibold transition-all duration-200 border ${
                 isLight
                   ? 'bg-zinc-100/90 hover:bg-zinc-200/90 text-zinc-800 border-zinc-300 shadow-sm'
                   : 'bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-200 border-white/10 shadow-sm'
               }`}
               title="连接并同步 Navidrome / Subsonic 远程服务器曲库与歌单"
             >
-              <Server className="w-4 h-4 text-[#FF6700]" />
+              <Server className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#FF6700]" />
               <span>同步 Navidrome</span>
             </button>
           )}
@@ -391,9 +418,9 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
           <button
             id="btn-open-upload-modal"
             onClick={onOpenUploadModal}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-[#FF6700] hover:bg-[#e55c00] active:scale-95 text-white transition-all shadow-[0_4px_16px_rgba(255,103,0,0.35)]"
+            className="flex items-center gap-1.5 px-3 sm:px-4 py-1.5 sm:py-2 rounded-xl text-xs font-bold bg-[#FF6700] hover:bg-[#e55c00] active:scale-95 text-white transition-all shadow-[0_4px_16px_rgba(255,103,0,0.35)]"
           >
-            <UploadCloud className="w-4 h-4" />
+            <UploadCloud className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             <span>上传音乐</span>
           </button>
         </div>
@@ -408,10 +435,16 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
         isLight={isLight}
         totalSongCount={songs.length}
         favoriteSongCount={songs.filter(s => s.isFavorite).length}
+        topPlayedCount={topPlayedSongs.length}
+        recentlyPlayedCount={recentlyPlayedSongs.length}
+        losslessCount={losslessSongs.length}
       />
 
-      {/* 3. Selected Custom Playlist Header Information Banner */}
-      {selectedPlaylistId !== 'all' && selectedPlaylistId !== 'favorites' && currentPlaylist && (
+      {/* 3. Selected Custom or Dynamic Playlist Header Information Banner */}
+      {(
+        (selectedPlaylistId !== 'all' && selectedPlaylistId !== 'favorites' && currentPlaylist) ||
+        isDynamicPlaylistId(selectedPlaylistId)
+      ) && (
         <PlaylistHeaderBanner
           currentPlaylist={currentPlaylist}
           filteredSongs={filteredSongs}
@@ -431,6 +464,16 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
             if (onDeletePlaylist) onDeletePlaylist(id);
             setSelectedPlaylistId('all');
           }}
+          onClearRecentHistory={handleClearRecentHistory}
+          dynamicType={
+            selectedPlaylistId === 'dynamic:top_played'
+              ? 'top_played'
+              : selectedPlaylistId === 'dynamic:recently_played'
+              ? 'recently_played'
+              : selectedPlaylistId === 'dynamic:lossless'
+              ? 'lossless'
+              : null
+          }
           isLight={isLight}
         />
       )}
@@ -461,10 +504,10 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
         isLight ? 'bg-white border-zinc-200 shadow-sm' : 'bg-zinc-900/60 border-white/10'
       }`}>
         {/* Table Header */}
-        <div className={`grid grid-cols-[auto_1fr_auto] sm:grid-cols-[auto_1fr_auto] items-center px-6 py-3 border-b text-xs font-semibold ${
+        <div className={`grid grid-cols-[auto_1fr_auto] items-center px-3 sm:px-6 py-2.5 sm:py-3 border-b text-xs font-semibold ${
           isLight ? 'bg-zinc-50 border-zinc-200 text-zinc-500' : 'bg-zinc-950/40 border-white/5 text-zinc-400'
         }`}>
-          <div className="flex items-center gap-4 w-12">
+          <div className="flex items-center gap-2 sm:gap-4 w-10 sm:w-12">
             {isBatchMode ? (
               <button
                 type="button"
@@ -484,17 +527,17 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
           </div>
           <div className="flex items-center gap-2">
             <span>标题 / 歌手 / 专辑</span>
-            <span className={`text-[10px] font-normal ${isLight ? 'text-zinc-400' : 'text-zinc-500'}`}>
+            <span className={`hidden sm:inline text-[10px] font-normal ${isLight ? 'text-zinc-400' : 'text-zinc-500'}`}>
               {isBatchMode ? '(点击行或勾选框选择)' : '(单击选中 · 双击播放)'}
             </span>
           </div>
-          <div className="flex items-center gap-6 sm:gap-12 pr-2">
+          <div className="flex items-center gap-4 sm:gap-12 pr-1 sm:pr-2">
             <span className="hidden md:inline">规格</span>
             <span className="hidden sm:inline flex items-center gap-1">
               <Clock className="w-3.5 h-3.5" />
               <span>时长</span>
             </span>
-            <span>操作</span>
+            <span className="text-right">操作</span>
           </div>
         </div>
 
@@ -564,16 +607,18 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
               </div>
             </div>
           ) : (
-            paginatedSongs.map((song) => {
+            paginatedSongs.map((song, idx) => {
               const isCurrent = currentSong?.id === song.id;
               const isSelected = selectedSongId === song.id;
               const isSongCasting = isCurrent && isCasting;
               const isBatchChecked = selectedBatchSongIds.has(song.id);
+              const songIndex = (validCurrentPage - 1) * pageSize + idx;
 
               return (
                 <SongRow
                   key={song.id}
                   song={song}
+                  index={songIndex}
                   isCurrent={isCurrent}
                   isPlaying={isPlaying}
                   isSelected={isSelected}

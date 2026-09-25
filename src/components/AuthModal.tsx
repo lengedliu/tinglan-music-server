@@ -129,11 +129,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   return (
     <div 
       onClick={handleBackdropClick}
-      className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 pointer-events-auto select-auto"
+      className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 pointer-events-auto select-auto"
     >
       <div 
         onClick={(e) => e.stopPropagation()}
-        className="bg-[#18181b] border-2 border-zinc-700 rounded-3xl p-6 sm:p-8 w-full max-w-md shadow-[0_25px_60px_-15px_rgba(0,0,0,0.9)] relative overflow-hidden space-y-6 animate-in fade-in zoom-in-95 duration-200"
+        className="bg-[#18181b] border-2 border-zinc-700 rounded-2xl sm:rounded-3xl p-5 sm:p-8 w-full max-w-md max-h-[92vh] overflow-y-auto shadow-[0_25px_60px_-15px_rgba(0,0,0,0.9)] relative space-y-4 sm:space-y-6 animate-in fade-in zoom-in-95 duration-200 scrollbar-thin"
       >
         
         {/* Decorative Background glow */}
