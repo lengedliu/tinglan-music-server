@@ -50,8 +50,6 @@ import {
   deviceCustomizationRepository,
   fingerprintCacheRepository,
   playbackCheckpointRepository,
-  resumePointRepository,
-  deviceStrategyRepository,
   taskSchedulerEngine,
   appEventBus,
   lyricsService,
@@ -78,10 +76,6 @@ import { createNavidromeRouter } from './server/routes/navidromeRoutes.js';
 import { createStreamRouter } from './server/routes/streamRoutes.js';
 import { createTaskRouter } from './server/routes/taskRoutes.js';
 import { createGroupRouter } from './server/routes/groupRoutes.js';
-import { createRadioRouter } from './server/routes/radioRoutes.js';
-import { createAutomationRouter } from './server/routes/automationRoutes.js';
-import { createSystemBackupRouter } from './server/routes/systemBackupRoutes.js';
-import { automationService } from './server/services/automationService.js';
 
 const app = express();
 const PORT = 3000;
@@ -213,8 +207,6 @@ if (sqliteDb) {
   deviceCustomizationRepository.setSqliteDb(sqliteDb);
   fingerprintCacheRepository.setSqliteDb(sqliteDb);
   playbackCheckpointRepository.setSqliteDb(sqliteDb);
-  resumePointRepository.setSqliteDb(sqliteDb);
-  deviceStrategyRepository.setSqliteDb(sqliteDb);
 }
 
 // ---------------- TASK SCHEDULER ENGINE SETUP (P0) ----------------
@@ -565,90 +557,8 @@ const {
 });
 app.use(streamRouter);
 
-// 4. TTS Engine & Radio & Phase 3 Automation & System Backup
+// 4. TTS Engine
 app.use('/api/tts', createTtsRouter());
-app.use('/api/radio', createRadioRouter({
-  getMiotConfig: () => miotConfig,
-  setMiotConfig: (cfg) => {
-    miotConfig = cfg;
-    saveJson(CONFIG_FILE, miotConfig);
-  }
-}));
-app.use('/api/automation', createAutomationRouter());
-app.use('/api/system/cluster-backup', createSystemBackupRouter());
-
-// Register Phase 3 Automation Scene Action Handler
-automationService.registerActionHandler(async (scene) => {
-  const devices = deviceRepository.getAllDevices();
-  if (devices.length === 0) {
-    return { success: false, message: '未找到绑定的音箱设备' };
-  }
-
-  const targetDevices = scene.targetType === 'single_device' && scene.targetId
-    ? devices.filter((d: any) => d.did === scene.targetId)
-    : devices;
-
-  if (targetDevices.length === 0) {
-    return { success: false, message: '未找到目标音箱设备' };
-  }
-
-  const callCloudApi = (path: string, method: string, msg: any, tDid?: string, retry?: number) =>
-    callMinaCloudApi(path, method, msg, tDid, retry, miotConfig, (cfg) => {
-      miotConfig = cfg;
-      saveJson(CONFIG_FILE, miotConfig);
-    });
-
-  const sendLocalCommand = (ip: string, token: string, method: string, params: any, timeoutMs?: number) =>
-    sendMiioCommand(ip, token, method, params, timeoutMs || 2500);
-
-  // Action: TTS Announce
-  if (scene.actionType === 'tts_announce' && scene.payload.ttsText) {
-    for (const dev of targetDevices) {
-      try {
-        if (scene.payload.volume !== undefined) {
-          await xiaomiAdapter.setVolume(dev, scene.payload.volume, callCloudApi, sendLocalCommand, miotConfig);
-        }
-        await callCloudApi('text_to_speech', 'text_to_speech', { text: scene.payload.ttsText }, dev.did);
-      } catch (e) {}
-    }
-    return { success: true, message: `已向 ${targetDevices.length} 台音箱下发语音播报「${scene.payload.ttsText}」` };
-  }
-
-  // Action: Play Radio Stream
-  if (scene.actionType === 'play_radio' && scene.payload.radioUrl) {
-    let successCount = 0;
-    for (const dev of targetDevices) {
-      try {
-        if (scene.payload.volume !== undefined) {
-          await xiaomiAdapter.setVolume(dev, scene.payload.volume, callCloudApi, sendLocalCommand, miotConfig);
-        }
-        const castRes = await xiaomiAdapter.playUrl(
-          dev,
-          scene.payload.radioUrl,
-          scene.payload.radioTitle || scene.name,
-          callCloudApi,
-          sendLocalCommand,
-          miotConfig,
-          { songArtist: '定时早安电台', duration: 0 }
-        );
-        if (castRes.success) successCount++;
-      } catch (e) {}
-    }
-    return { success: true, message: `已成功向 ${successCount}/${targetDevices.length} 台音箱推送电台广播流` };
-  }
-
-  // Action: Stop Playback
-  if (scene.actionType === 'stop_playback') {
-    for (const dev of targetDevices) {
-      try {
-        await xiaomiAdapter.setPlaybackOperation(dev, 'pause', callCloudApi, sendLocalCommand, miotConfig);
-      } catch (e) {}
-    }
-    return { success: true, message: `已暂停 ${targetDevices.length} 台音箱播放` };
-  }
-
-  return { success: true, message: `定时自动化指令已执行: ${scene.actionType}` };
-});
 
 // 5. Songs & Playlists
 app.use('/api/songs', createSongsRouter({

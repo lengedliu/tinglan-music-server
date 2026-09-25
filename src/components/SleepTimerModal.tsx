@@ -22,39 +22,28 @@ import { apiFetch } from '../utils/api';
 interface SleepTimerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  sleepTimer?: SleepTimerConfig;
-  onStartTimer?: (minutes: number, stopAtEndOfSong: boolean, smoothFadeOut: boolean) => void;
-  onCancelTimer?: () => void;
-  onAddMinutes?: (additionalMinutes: number) => void;
+  sleepTimer: SleepTimerConfig;
+  onStartTimer: (minutes: number, stopAtEndOfSong: boolean, smoothFadeOut: boolean) => void;
+  onCancelTimer: () => void;
+  onAddMinutes: (additionalMinutes: number) => void;
   currentSongTitle?: string;
   activeDeviceId?: string;
   activeDeviceName?: string;
-  config?: SleepTimerConfig;
-  onSaveConfig?: (config: SleepTimerConfig) => void;
 }
 
 export const SleepTimerModal: React.FC<SleepTimerModalProps> = ({
   isOpen,
   onClose,
-  sleepTimer: propSleepTimer,
+  sleepTimer,
   onStartTimer,
   onCancelTimer,
   onAddMinutes,
   currentSongTitle,
   activeDeviceId = '',
-  activeDeviceName = '小爱音箱',
-  config,
-  onSaveConfig
+  activeDeviceName = '小爱音箱'
 }) => {
-  const { themeConfig, isLight } = useTheme();
-
-  const sleepTimer = propSleepTimer || config || {
-    enabled: false,
-    remainingSeconds: 0,
-    initialMinutes: 0,
-    stopAtEndOfSong: false,
-    smoothFadeOut: true,
-  };
+  const { themeConfig } = useTheme();
+  const isLight = !!themeConfig?.isLight;
 
   const [activeTab, setActiveTab] = useState<'quick' | 'tasks'>('quick');
 
@@ -174,32 +163,12 @@ export const SleepTimerModal: React.FC<SleepTimerModalProps> = ({
   const handleApplyPreset = (mins: number) => {
     setSelectedMinutes(mins);
     setStopAtEndOfSong(false);
-    if (onStartTimer) {
-      onStartTimer(mins, false, smoothFadeOut);
-    } else if (onSaveConfig) {
-      onSaveConfig({
-        enabled: true,
-        initialMinutes: mins,
-        remainingSeconds: mins * 60,
-        stopAtEndOfSong: false,
-        smoothFadeOut,
-      });
-    }
+    onStartTimer(mins, false, smoothFadeOut);
   };
 
   const handleApplyEndOfSong = () => {
     setStopAtEndOfSong(true);
-    if (onStartTimer) {
-      onStartTimer(0, true, smoothFadeOut);
-    } else if (onSaveConfig) {
-      onSaveConfig({
-        enabled: true,
-        initialMinutes: 0,
-        remainingSeconds: 0,
-        stopAtEndOfSong: true,
-        smoothFadeOut,
-      });
-    }
+    onStartTimer(0, true, smoothFadeOut);
   };
 
   const handleApplyCustom = (e: React.FormEvent) => {
@@ -208,17 +177,7 @@ export const SleepTimerModal: React.FC<SleepTimerModalProps> = ({
     if (!isNaN(val) && val > 0 && val <= 480) {
       setSelectedMinutes(val);
       setStopAtEndOfSong(false);
-      if (onStartTimer) {
-        onStartTimer(val, false, smoothFadeOut);
-      } else if (onSaveConfig) {
-        onSaveConfig({
-          enabled: true,
-          initialMinutes: val,
-          remainingSeconds: val * 60,
-          stopAtEndOfSong: false,
-          smoothFadeOut,
-        });
-      }
+      onStartTimer(val, false, smoothFadeOut);
       setCustomInput('');
     }
   };
@@ -337,16 +296,7 @@ export const SleepTimerModal: React.FC<SleepTimerModalProps> = ({
                   {!sleepTimer.stopAtEndOfSong && (
                     <button
                       id="btn-sleep-timer-add-5m"
-                      onClick={() => {
-                        if (onAddMinutes) onAddMinutes(5);
-                        else if (onSaveConfig) {
-                          onSaveConfig({
-                            ...sleepTimer,
-                            remainingSeconds: sleepTimer.remainingSeconds + 300,
-                            initialMinutes: sleepTimer.initialMinutes + 5,
-                          });
-                        }
-                      }}
+                      onClick={() => onAddMinutes(5)}
                       className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white text-xs font-semibold transition border border-white/10"
                     >
                       <Plus className="w-3.5 h-3.5 text-[#FF6700]" />
@@ -355,18 +305,7 @@ export const SleepTimerModal: React.FC<SleepTimerModalProps> = ({
                   )}
                   <button
                     id="btn-sleep-timer-cancel"
-                    onClick={() => {
-                      if (onCancelTimer) onCancelTimer();
-                      else if (onSaveConfig) {
-                        onSaveConfig({
-                          enabled: false,
-                          remainingSeconds: 0,
-                          initialMinutes: 0,
-                          stopAtEndOfSong: false,
-                          smoothFadeOut: true,
-                        });
-                      }
-                    }}
+                    onClick={onCancelTimer}
                     className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 hover:text-rose-200 text-xs font-semibold transition border border-rose-500/30"
                   >
                     <RotateCcw className="w-3.5 h-3.5" />

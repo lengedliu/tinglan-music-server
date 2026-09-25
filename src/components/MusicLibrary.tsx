@@ -31,7 +31,6 @@ import { PlaylistTabs } from './library/PlaylistTabs';
 import { LibraryToolbar } from './library/LibraryToolbar';
 import { BatchActionBar } from './library/BatchActionBar';
 import { PlaylistHeaderBanner } from './library/PlaylistHeaderBanner';
-import { ResumePointsShelf } from './library/ResumePointsShelf';
 import { 
   getTopPlayedSongs, 
   getRecentlyPlayedSongs, 
@@ -427,24 +426,7 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
         </div>
       </div>
 
-      {/* 2. Cross-Device Resume Points Shelf (Phase 1) */}
-      <ResumePointsShelf
-        onPlaySong={(s, pos) => {
-          onPlaySong(s);
-          if (pos && pos > 0) {
-            // seek on next tick
-            setTimeout(() => {
-              const audioEl = document.querySelector('audio');
-              if (audioEl) audioEl.currentTime = pos;
-            }, 100);
-          }
-        }}
-        onCastSongToXiaomi={(s) => onCastSongToXiaomi(s)}
-        activeDevice={activeDevice}
-        currentSongId={currentSong?.id}
-      />
-
-      {/* 3. Playlist Tabs Strip */}
+      {/* 2. Playlist Tabs Strip */}
       <PlaylistTabs
         playlists={playlists}
         selectedPlaylistId={selectedPlaylistId}

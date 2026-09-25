@@ -8,7 +8,6 @@ import { MiotCloudCastStrategy } from './miotCloudStrategy.js';
 import { MiioLanCastStrategy } from './miioLanStrategy.js';
 import { VoiceDirectiveCastStrategy } from './voiceDirectiveStrategy.js';
 import { JsonStore } from '../../storage/jsonStore.js';
-import { deviceStrategyRepository, DeviceStrategyProfile as RepoProfile } from '../../core/repositories/deviceStrategyRepository.js';
 
 export interface DeviceStrategyProfile {
   deviceId: string;
@@ -53,32 +52,10 @@ export class CastPipelineManager {
 
   private loadProfiles() {
     try {
-      // First load from repo
-      const repoProfiles = deviceStrategyRepository.getAllProfiles();
-      if (repoProfiles.length > 0) {
-        for (const rp of repoProfiles) {
-          this.deviceProfiles.set(rp.deviceDid, {
-            deviceId: rp.deviceDid,
-            deviceName: rp.deviceName,
-            model: rp.deviceModel,
-            preferredStrategy: rp.preferredProtocol,
-            lastSuccessTime: rp.lastSuccessAt ? new Date(rp.lastSuccessAt).getTime() : Date.now(),
-            failStreak: 0,
-            totalCalls: rp.totalCalls || 0,
-            successCount: rp.successCount || 0,
-            failCount: rp.failCount || 0,
-            lastLatencyMs: rp.lastLatencyMs,
-            avgLatencyMs: rp.avgLatencyMs,
-            healthScore: rp.healthScore ?? 100,
-            lastError: rp.lastError
-          });
-        }
-      }
-
       const list = JsonStore.readJson<DeviceStrategyProfile[]>(this.profilesFile, []);
       if (Array.isArray(list)) {
         for (const item of list) {
-          if (item && item.deviceId && !this.deviceProfiles.has(item.deviceId)) {
+          if (item && item.deviceId) {
             this.deviceProfiles.set(item.deviceId, {
               totalCalls: item.totalCalls || 0,
               successCount: item.successCount || (item.lastSuccessTime ? 1 : 0),
@@ -88,8 +65,8 @@ export class CastPipelineManager {
             });
           }
         }
+        console.log(`[CastPipelineManager] 📊 已成功从持久化快照装载 ${this.deviceProfiles.size} 个音箱投播自愈策略画像.`);
       }
-      console.log(`[CastPipelineManager] 📊 已成功装载 ${this.deviceProfiles.size} 个音箱投播自愈策略画像.`);
     } catch (err: any) {
       console.warn('[CastPipelineManager] Could not load device_strategy_cache:', err?.message);
     }
@@ -135,6 +112,7 @@ export class CastPipelineManager {
       existing.lastLatencyMs = latencyMs;
       existing.avgLatencyMs = existing.avgLatencyMs ? Math.round((existing.avgLatencyMs * 0.7) + (latencyMs * 0.3)) : latencyMs;
     }
+    // Calculate health score: 0 to 100
     const ratio = existing.totalCalls > 0 ? (existing.successCount / existing.totalCalls) : 1;
     existing.healthScore = Math.min(100, Math.max(10, Math.round(ratio * 100)));
 
@@ -142,15 +120,6 @@ export class CastPipelineManager {
     if (model) existing.model = model;
     this.deviceProfiles.set(deviceId, existing);
     this.persistProfiles();
-
-    // Sync with enterprise Repository
-    deviceStrategyRepository.recordSuccess({
-      deviceDid: deviceId,
-      deviceName: existing.deviceName,
-      deviceModel: existing.model,
-      protocol: strategyName,
-      latencyMs
-    });
   }
 
   public recordStrategyFailure(deviceId: string, strategyName: string, errorMsg?: string) {
@@ -161,35 +130,24 @@ export class CastPipelineManager {
     profile.failStreak = (profile.failStreak || 0) + 1;
     profile.lastError = errorMsg || 'Strategy execution failed';
     if (profile.failStreak >= 2) {
+      // Degrade fast-path for 5 minutes (300 seconds), then auto-probe heal
       profile.degradedUntil = Date.now() + 5 * 60 * 1000;
       console.warn(`[CastPipelineManager] ⚠️ Device [${deviceId}] fast-path [${strategyName}] degraded for 5m due to ${profile.failStreak} consecutive failures.`);
     }
     const ratio = profile.totalCalls > 0 ? (profile.successCount / profile.totalCalls) : 0.5;
     profile.healthScore = Math.min(100, Math.max(5, Math.round(ratio * 100 - profile.failStreak * 12)));
     this.persistProfiles();
-
-    // Sync with enterprise Repository
-    deviceStrategyRepository.recordFailure({
-      deviceDid: deviceId,
-      deviceName: profile.deviceName,
-      deviceModel: profile.model,
-      protocol: strategyName,
-      errorMsg,
-      isFallback: true
-    });
   }
 
   public clearProfile(deviceId: string) {
     if (this.deviceProfiles.delete(deviceId)) {
       this.persistProfiles();
-      deviceStrategyRepository.resetProfile(deviceId);
     }
   }
 
   public resetAllProfiles() {
     this.deviceProfiles.clear();
     this.persistProfiles();
-    deviceStrategyRepository.clearAll();
   }
 
   public async executePipeline(ctx: CastContext): Promise<CastResult> {

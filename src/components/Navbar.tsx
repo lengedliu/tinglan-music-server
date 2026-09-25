@@ -12,16 +12,15 @@ import {
   Moon,
   Heart,
   Speaker,
-  Laptop,
-  Rss
+  Laptop
 } from 'lucide-react';
 import { XiaomiDevice, MiotConfig, User } from '../types';
 import { UserHeader } from './UserHeader';
 import { useTheme } from '../context/ThemeContext';
 
 interface NavbarProps {
-  activeTab: 'library' | 'radio' | 'lyrics' | 'xiaomi' | 'subsonic' | 'settings' | 'sponsor';
-  setActiveTab: (tab: 'library' | 'radio' | 'lyrics' | 'xiaomi' | 'subsonic' | 'settings' | 'sponsor') => void;
+  activeTab: 'library' | 'lyrics' | 'xiaomi' | 'subsonic' | 'settings' | 'sponsor';
+  setActiveTab: (tab: 'library' | 'lyrics' | 'xiaomi' | 'subsonic' | 'settings' | 'sponsor') => void;
   activeDevice: XiaomiDevice | undefined;
   miotConfig: MiotConfig;
   isCasting: boolean;
@@ -220,20 +219,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                   />
                 </span>
               )}
-            </button>
-
-            <button
-              id="nav-tab-radio"
-              onClick={() => setActiveTab('radio')}
-              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-sm font-medium transition-all whitespace-nowrap ${
-                activeTab === 'radio'
-                  ? themeConfig.activeTabStyle
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-transparent'
-              }`}
-              title="广播电台直播流与播客 RSS 订阅"
-            >
-              <Rss className="w-4 h-4 text-amber-400" />
-              <span>广播与播客</span>
             </button>
 
             <button

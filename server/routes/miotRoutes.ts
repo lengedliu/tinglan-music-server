@@ -4,7 +4,6 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { deviceRepository } from '../core/repositories/deviceRepository.js';
 import { deviceCustomizationRepository, DeviceCustomization } from '../core/repositories/deviceCustomizationRepository.js';
-import { deviceStrategyRepository } from '../core/repositories/deviceStrategyRepository.js';
 import { musicRepository } from '../core/repositories/musicRepository.js';
 import { queueEngine } from '../core/queueEngine.js';
 import { castPipelineManager } from '../xiaomi/strategies/castPipelineManager.js';
@@ -1977,50 +1976,6 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
     }
   });
 
-  // --- Voice Slang Dictionary & Missed Analytics Endpoints ---
-  router.get('/voice/slang', (req: Request, res: Response) => {
-    res.json({ success: true, slangRules: voiceCommandService.getSlangRules() });
-  });
-
-  router.post('/voice/slang', (req: Request, res: Response) => {
-    if (!checkMiotControlPermission(req, res)) return;
-    try {
-      const { slangTerm, targetType, targetValue, notes, id } = req.body || {};
-      if (!slangTerm || !targetValue) {
-        return res.status(400).json({ success: false, error: '黑话词条和目标对应值不能为空' });
-      }
-      const rule = voiceCommandService.addOrUpdateSlangRule({
-        id,
-        slangTerm,
-        targetType: targetType || 'artist',
-        targetValue,
-        notes
-      });
-      res.json({ success: true, rule, message: `已成功保存黑话词条「${slangTerm}」` });
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  router.delete('/voice/slang/:id', (req: Request, res: Response) => {
-    if (!checkMiotControlPermission(req, res)) return;
-    try {
-      const deleted = voiceCommandService.deleteSlangRule(req.params.id);
-      res.json({ success: deleted, message: deleted ? '黑话词条已成功删除' : '词条不存在' });
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  router.get('/voice/missed-analytics', (req: Request, res: Response) => {
-    try {
-      const analytics = voiceCommandService.getMissedAnalytics();
-      res.json({ success: true, analytics });
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
   // P2: Get all device customizations (aliases, rooms, hotkeys, volume limits)
   router.get('/customizations', (req: Request, res: Response) => {
     try {
@@ -2058,47 +2013,6 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
         updatedAt: new Date().toISOString()
       });
       res.json({ success: true, message: '音箱个性化配置已保存', customization: saved });
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  // Phase 1: 获取所有音箱硬件自学习推流策略画像
-  router.get('/strategy-profiles', (req: Request, res: Response) => {
-    try {
-      const profiles = deviceStrategyRepository.getAllProfiles();
-      const devices = deviceRepository.getAllDevices();
-      
-      const enriched = profiles.map(p => {
-        const d = devices.find(dev => dev.did === p.deviceDid || (dev as any).deviceID === p.deviceDid);
-        return {
-          ...p,
-          deviceName: d?.name || p.deviceName || p.deviceDid,
-          deviceModel: d?.model || p.deviceModel || 'XiaoAi'
-        };
-      });
-
-      res.json({
-        success: true,
-        profiles: enriched,
-        total: enriched.length
-      });
-    } catch (err: any) {
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  // Phase 1: 重置音箱自适应推流画像 (清空试错历史，重新全量协商)
-  router.post('/strategy-profiles/reset', (req: Request, res: Response) => {
-    if (!checkMiotAdminPermission(req, res)) return;
-    try {
-      const { did } = req.body || {};
-      if (did) {
-        castPipelineManager.clearProfile(did);
-      } else {
-        castPipelineManager.resetAllProfiles();
-      }
-      res.json({ success: true, message: did ? `音箱 [${did}] 策略画像已重置` : '所有音箱策略画像已重置' });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
     }

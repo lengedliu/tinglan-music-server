@@ -235,50 +235,6 @@ export function initSqliteDatabase(sqliteFile: string, defaultAdminUser: any) {
             )
           `);
 
-          // Phase 1: 长音频与跨设备断点续播 (playback_resume_points)
-          sqliteDb?.run(`
-            CREATE TABLE IF NOT EXISTS playback_resume_points (
-              id TEXT PRIMARY KEY,
-              user_id TEXT NOT NULL,
-              song_id TEXT NOT NULL,
-              song_title TEXT,
-              song_artist TEXT,
-              song_cover_url TEXT,
-              device_did TEXT,
-              device_name TEXT,
-              resume_position_seconds REAL DEFAULT 0,
-              duration_seconds REAL DEFAULT 0,
-              progress_percent REAL DEFAULT 0,
-              is_completed INTEGER DEFAULT 0,
-              queue_context_json TEXT,
-              updated_at TEXT NOT NULL
-            )
-          `);
-
-          // Phase 1: 音箱硬件自学习策略画像 (device_strategy_profiles)
-          sqliteDb?.run(`
-            CREATE TABLE IF NOT EXISTS device_strategy_profiles (
-              device_did TEXT PRIMARY KEY,
-              device_name TEXT,
-              device_model TEXT NOT NULL,
-              preferred_protocol TEXT NOT NULL,
-              direct_stream_supported INTEGER DEFAULT 0,
-              best_mime_type TEXT DEFAULT 'audio/mp3',
-              transcode_profile TEXT,
-              avg_latency_ms INTEGER DEFAULT 0,
-              last_latency_ms INTEGER DEFAULT 0,
-              success_rate_percent REAL DEFAULT 100.0,
-              total_calls INTEGER DEFAULT 0,
-              success_count INTEGER DEFAULT 0,
-              fail_count INTEGER DEFAULT 0,
-              fallback_count INTEGER DEFAULT 0,
-              health_score INTEGER DEFAULT 100,
-              last_error TEXT,
-              last_success_at TEXT,
-              updated_at TEXT NOT NULL
-            )
-          `);
-
           if (defaultAdminUser) {
             sqliteDb?.run(`
               INSERT OR IGNORE INTO users (id, username, email, password_hash, role, avatar_url, created_at)
