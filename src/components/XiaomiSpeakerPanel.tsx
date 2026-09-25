@@ -61,6 +61,7 @@ import { apiFetch, getAuthToken } from '../utils/api';
 import { useAppEvents } from '../context/AppEventsContext';
 import { VoiceCommandSection } from './VoiceCommandSection';
 import { LogTerminalTab } from './speaker/LogTerminalTab';
+import { DeviceStrategyProfilesTab } from './speaker/DeviceStrategyProfilesTab';
 import { useTheme } from '../context/ThemeContext';
 import QRCode from 'qrcode';
 
@@ -121,7 +122,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
 }) => {
   const { isLight } = useTheme();
   const { subscribe: subscribeAppEvents } = useAppEvents();
-  const [activeSubTab, setActiveSubTab] = useState<'devices' | 'control' | 'tts' | 'voice' | 'rpc' | 'settings' | 'logs'>('devices');
+  const [activeSubTab, setActiveSubTab] = useState<'devices' | 'control' | 'tts' | 'voice' | 'rpc' | 'strategy' | 'settings' | 'logs'>('devices');
   const [ttsInput, setTtsInput] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isUnbinding, setIsUnbinding] = useState(false);
@@ -1512,6 +1513,23 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
           >
             <Code className={`w-4 h-4 ${activeSubTab === 'rpc' && isLight ? 'text-white' : 'text-purple-500'}`} />
             <span>MIoT RPC 控制台</span>
+          </button>
+
+          <button
+            id="subtab-strategy"
+            onClick={() => setActiveSubTab('strategy')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition whitespace-nowrap cursor-pointer ${
+              activeSubTab === 'strategy'
+                ? isLight 
+                  ? 'bg-[#FF6700] text-white font-bold shadow-[0_2px_10px_rgba(255,103,0,0.3)]' 
+                  : 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40 font-semibold shadow-[0_0_12px_rgba(255,103,0,0.2)]'
+                : isLight
+                  ? 'text-zinc-600 hover:text-zinc-950 hover:bg-zinc-100 border border-zinc-200'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-white/5'
+            }`}
+          >
+            <Zap className={`w-4 h-4 ${activeSubTab === 'strategy' && isLight ? 'text-white' : 'text-amber-400'}`} />
+            <span>推流自愈画像</span>
           </button>
 
           <button
@@ -3652,6 +3670,14 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
             )}
           </div>
         </div>
+      )}
+
+      {/* ---------------- Sub-tab: Hardware Strategy Profiles ---------------- */}
+      {activeSubTab === 'strategy' && (
+        <DeviceStrategyProfilesTab
+          devices={devices}
+          activeDevice={activeDevice}
+        />
       )}
 
       {/* ---------------- Sub-tab 4: Protocol & Settings ---------------- */}

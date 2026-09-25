@@ -50,6 +50,8 @@ import {
   deviceCustomizationRepository,
   fingerprintCacheRepository,
   playbackCheckpointRepository,
+  resumePointRepository,
+  deviceStrategyRepository,
   taskSchedulerEngine,
   appEventBus,
   lyricsService,
@@ -207,6 +209,8 @@ if (sqliteDb) {
   deviceCustomizationRepository.setSqliteDb(sqliteDb);
   fingerprintCacheRepository.setSqliteDb(sqliteDb);
   playbackCheckpointRepository.setSqliteDb(sqliteDb);
+  resumePointRepository.setSqliteDb(sqliteDb);
+  deviceStrategyRepository.setSqliteDb(sqliteDb);
 }
 
 // ---------------- TASK SCHEDULER ENGINE SETUP (P0) ----------------
