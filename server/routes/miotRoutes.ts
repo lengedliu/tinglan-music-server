@@ -1977,6 +1977,50 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
     }
   });
 
+  // --- Voice Slang Dictionary & Missed Analytics Endpoints ---
+  router.get('/voice/slang', (req: Request, res: Response) => {
+    res.json({ success: true, slangRules: voiceCommandService.getSlangRules() });
+  });
+
+  router.post('/voice/slang', (req: Request, res: Response) => {
+    if (!checkMiotControlPermission(req, res)) return;
+    try {
+      const { slangTerm, targetType, targetValue, notes, id } = req.body || {};
+      if (!slangTerm || !targetValue) {
+        return res.status(400).json({ success: false, error: '黑话词条和目标对应值不能为空' });
+      }
+      const rule = voiceCommandService.addOrUpdateSlangRule({
+        id,
+        slangTerm,
+        targetType: targetType || 'artist',
+        targetValue,
+        notes
+      });
+      res.json({ success: true, rule, message: `已成功保存黑话词条「${slangTerm}」` });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  router.delete('/voice/slang/:id', (req: Request, res: Response) => {
+    if (!checkMiotControlPermission(req, res)) return;
+    try {
+      const deleted = voiceCommandService.deleteSlangRule(req.params.id);
+      res.json({ success: deleted, message: deleted ? '黑话词条已成功删除' : '词条不存在' });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  router.get('/voice/missed-analytics', (req: Request, res: Response) => {
+    try {
+      const analytics = voiceCommandService.getMissedAnalytics();
+      res.json({ success: true, analytics });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // P2: Get all device customizations (aliases, rooms, hotkeys, volume limits)
   router.get('/customizations', (req: Request, res: Response) => {
     try {

@@ -16,6 +16,16 @@ export interface VoiceCommandRule {
   enabled: boolean;
 }
 
+export interface VoiceSlangRule {
+  id: string;
+  slangTerm: string;
+  targetType: 'song' | 'artist' | 'playlist' | 'command';
+  targetValue: string;
+  notes?: string;
+  hitCount: number;
+  createdAt: number;
+}
+
 export interface VoiceDialogueLog {
   id: string;
   timestamp: number;
@@ -27,6 +37,9 @@ export interface VoiceDialogueLog {
   source?: 'speaker_mina_poll' | 'speaker_mina_ws' | 'test_manual';
   deviceId?: string;
   deviceName?: string;
+  slangApplied?: boolean;
+  slangTerm?: string;
+  missedReason?: 'homophone_mismatch' | 'unknown_song' | 'slang_hotword' | 'no_rule_match' | 'low_confidence';
 }
 
 export interface VoiceListenerConfig {
@@ -40,6 +53,46 @@ export interface VoiceListenerConfig {
 }
 
 const VOICE_CONFIG_FILE = path.join(process.cwd(), 'data', 'voice-config.json');
+const VOICE_SLANG_FILE = path.join(process.cwd(), 'data', 'voice-slang.json');
+
+const DEFAULT_SLANG_RULES: VoiceSlangRule[] = [
+  {
+    id: 'slang_zhoujielun_1',
+    slangTerm: '周节轮',
+    targetType: 'artist',
+    targetValue: '周杰伦',
+    notes: '语音同音错别字矫正',
+    hitCount: 12,
+    createdAt: Date.now() - 86400000 * 3
+  },
+  {
+    id: 'slang_zhoujielun_2',
+    slangTerm: '周董',
+    targetType: 'artist',
+    targetValue: '周杰伦',
+    notes: '歌手常见江湖别称/黑话',
+    hitCount: 8,
+    createdAt: Date.now() - 86400000 * 2
+  },
+  {
+    id: 'slang_xuezhiqian',
+    slangTerm: '薛之潜',
+    targetType: 'artist',
+    targetValue: '薛之谦',
+    notes: '语音同音错别字矫正',
+    hitCount: 5,
+    createdAt: Date.now() - 86400000 * 2
+  },
+  {
+    id: 'slang_haige',
+    slangTerm: '嗨歌',
+    targetType: 'playlist',
+    targetValue: 'favorites',
+    notes: '曲风黑话自动定位收藏歌单',
+    hitCount: 15,
+    createdAt: Date.now() - 86400000
+  }
+];
 
 const DEFAULT_RULES: VoiceCommandRule[] = [
   // 1. Precise Playback Controls first
@@ -172,8 +225,11 @@ export class VoiceCommandService {
   private sendTtsFn: ((deviceId: string, text: string) => Promise<any>) | null = null;
   private getAuthInfoFn: (() => { userId?: string; serviceToken?: string; devices: any[] }) | null = null;
 
+  private slangRules: VoiceSlangRule[] = DEFAULT_SLANG_RULES;
+
   private constructor() {
     this.loadConfig();
+    this.loadSlangRules();
   }
 
   public static getInstance(): VoiceCommandService {
@@ -218,6 +274,137 @@ export class VoiceCommandService {
     } catch (err: any) {
       console.warn('[VoiceCommandService] Failed to save voice-config.json:', err.message);
     }
+  }
+
+  private loadSlangRules() {
+    try {
+      if (fs.existsSync(VOICE_SLANG_FILE)) {
+        const raw = fs.readFileSync(VOICE_SLANG_FILE, 'utf8');
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          this.slangRules = parsed;
+        }
+      }
+    } catch (err: any) {
+      console.warn('[VoiceCommandService] Failed to load voice-slang.json:', err.message);
+    }
+  }
+
+  private saveSlangRules() {
+    try {
+      const dir = path.dirname(VOICE_SLANG_FILE);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(VOICE_SLANG_FILE, JSON.stringify(this.slangRules, null, 2), 'utf8');
+    } catch (err: any) {
+      console.warn('[VoiceCommandService] Failed to save voice-slang.json:', err.message);
+    }
+  }
+
+  public getSlangRules(): VoiceSlangRule[] {
+    return [...this.slangRules];
+  }
+
+  public addOrUpdateSlangRule(rule: Partial<VoiceSlangRule> & { slangTerm: string; targetValue: string }): VoiceSlangRule {
+    const existingIndex = this.slangRules.findIndex(r => r.id === rule.id || r.slangTerm.toLowerCase() === rule.slangTerm.toLowerCase());
+    
+    if (existingIndex !== -1) {
+      const updated: VoiceSlangRule = {
+        ...this.slangRules[existingIndex],
+        ...rule,
+        id: this.slangRules[existingIndex].id
+      };
+      this.slangRules[existingIndex] = updated;
+      this.saveSlangRules();
+      return updated;
+    } else {
+      const newRule: VoiceSlangRule = {
+        id: rule.id || `slang_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        slangTerm: rule.slangTerm.trim(),
+        targetType: rule.targetType || 'artist',
+        targetValue: rule.targetValue.trim(),
+        notes: rule.notes || '',
+        hitCount: rule.hitCount || 0,
+        createdAt: Date.now()
+      };
+      this.slangRules.unshift(newRule);
+      this.saveSlangRules();
+      return newRule;
+    }
+  }
+
+  public deleteSlangRule(id: string): boolean {
+    const initialLen = this.slangRules.length;
+    this.slangRules = this.slangRules.filter(r => r.id !== id);
+    if (this.slangRules.length !== initialLen) {
+      this.saveSlangRules();
+      return true;
+    }
+    return false;
+  }
+
+  public getMissedAnalytics() {
+    const totalLogs = this.dialogueLogs.length;
+    const matchedCount = this.dialogueLogs.filter(l => l.status === 'matched').length;
+    const missedLogs = this.dialogueLogs.filter(l => l.status === 'ignored' || l.status === 'error');
+    const missedCount = missedLogs.length;
+
+    const hitRate = totalLogs > 0 ? Math.round((matchedCount / totalLogs) * 100) : 100;
+
+    // Aggregated top missed terms
+    const missedMap = new Map<string, { term: string; count: number; lastTime: number; devices: Set<string>; reason: string }>();
+
+    for (const log of missedLogs) {
+      const cleanTerm = log.queryText
+        .replace(/^(小爱同学|小爱|给我|帮我|我想听|听|放|播)/i, '')
+        .trim() || log.queryText;
+
+      if (!cleanTerm) continue;
+
+      const existing = missedMap.get(cleanTerm);
+      if (existing) {
+        existing.count += 1;
+        existing.lastTime = Math.max(existing.lastTime, log.timestamp);
+        if (log.deviceName) existing.devices.add(log.deviceName);
+      } else {
+        missedMap.set(cleanTerm, {
+          term: cleanTerm,
+          count: 1,
+          lastTime: log.timestamp,
+          devices: new Set(log.deviceName ? [log.deviceName] : []),
+          reason: log.missedReason || 'no_rule_match'
+        });
+      }
+    }
+
+    const topMissed = Array.from(missedMap.values())
+      .map(item => ({
+        term: item.term,
+        count: item.count,
+        lastTime: item.lastTime,
+        devices: Array.from(item.devices),
+        reason: item.reason
+      }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 20);
+
+    // Reason breakdown
+    const reasonBreakdown = {
+      homophone_mismatch: missedLogs.filter(l => l.missedReason === 'homophone_mismatch').length,
+      unknown_song: missedLogs.filter(l => l.missedReason === 'unknown_song').length,
+      slang_hotword: missedLogs.filter(l => l.missedReason === 'slang_hotword').length,
+      no_rule_match: missedLogs.filter(l => l.missedReason === 'no_rule_match' || !l.missedReason).length,
+      low_confidence: missedLogs.filter(l => l.missedReason === 'low_confidence').length
+    };
+
+    return {
+      totalLogs,
+      matchedCount,
+      missedCount,
+      hitRatePercent: hitRate,
+      topMissed,
+      reasonBreakdown,
+      recentMissedLogs: missedLogs.slice(0, 30)
+    };
   }
 
   public bindCallbacks(options: {
@@ -577,6 +764,29 @@ export class VoiceCommandService {
 
     if (!cleanQuery) cleanQuery = rawQuery;
 
+    // Check Voice Slang Dictionary (黑话/同音字/别名库) transformation
+    let slangApplied = false;
+    let matchedSlangTerm = '';
+    
+    for (const slangRule of this.slangRules) {
+      if (!slangRule.slangTerm) continue;
+      const termLower = slangRule.slangTerm.toLowerCase();
+      if (cleanQuery.toLowerCase().includes(termLower)) {
+        slangApplied = true;
+        matchedSlangTerm = slangRule.slangTerm;
+        slangRule.hitCount = (slangRule.hitCount || 0) + 1;
+        this.saveSlangRules();
+
+        // Perform replacement based on slang type
+        if (slangRule.targetType === 'artist' || slangRule.targetType === 'song') {
+          cleanQuery = cleanQuery.replace(new RegExp(slangRule.slangTerm, 'gi'), slangRule.targetValue);
+        } else if (slangRule.targetType === 'playlist') {
+          cleanQuery = `播放 ${slangRule.targetValue}`;
+        }
+        break; // apply highest priority matching slang
+      }
+    }
+
     // Idempotency de-duplication: prevent double execution from concurrent Mina WS and Mina cloud poll
     const dedupeKey = `${cleanQuery.toLowerCase()}_${deviceId || 'any'}`;
     const now = Date.now();
@@ -640,7 +850,9 @@ export class VoiceCommandService {
           status: 'matched',
           source,
           deviceId,
-          deviceName
+          deviceName,
+          slangApplied,
+          slangTerm: matchedSlangTerm
         });
 
         return { matched: true, summary: result.summary };
@@ -655,10 +867,19 @@ export class VoiceCommandService {
           status: 'error',
           source,
           deviceId,
-          deviceName
+          deviceName,
+          slangApplied,
+          slangTerm: matchedSlangTerm,
+          missedReason: err.message.includes('未检索到') ? 'unknown_song' : 'low_confidence'
         });
         return { matched: false, summary: err.message };
       }
+    }
+
+    // Determine missed reason for no rule matched
+    let missedReason: 'homophone_mismatch' | 'unknown_song' | 'slang_hotword' | 'no_rule_match' | 'low_confidence' = 'no_rule_match';
+    if (rawQuery.includes('唱') || rawQuery.includes('听') || rawQuery.includes('放') || rawQuery.includes('曲')) {
+      missedReason = 'slang_hotword';
     }
 
     // No rule matched
@@ -670,7 +891,10 @@ export class VoiceCommandService {
       actionSummary: '未命中私有音乐语音指令 (已由小爱系统原生处理)',
       source,
       deviceId,
-      deviceName
+      deviceName,
+      slangApplied,
+      slangTerm: matchedSlangTerm,
+      missedReason
     });
 
     return { matched: false, summary: '未命中私有音乐指令' };
