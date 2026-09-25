@@ -13,6 +13,7 @@ export interface SongsRouterOptions {
   setPlaylists: (playlists: any[]) => void;
   musicDir: string;
   dynamicPlaylistEngine?: DynamicPlaylistEngine;
+  hasAdminAccount?: () => boolean;
   audioTranscoder?: {
     ensureStandardMp3?: (filePath: string, songId: string) => any;
     ensureStandardMp3Async?: (filePath: string, songId: string, opts?: any) => Promise<any>;
@@ -161,6 +162,11 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
   // Scan /music folder asynchronously with concurrency control & zero event-loop stalls
   router.post('/scan', async (req: Request, res: Response) => {
     try {
+      const clientUser = (req as any).user;
+      if (clientUser && clientUser.role !== 'admin') {
+        return res.status(403).json({ success: false, error: '权限不足：普通用户无权触发物理曲库全盘重扫，仅管理员允许操作' });
+      }
+
       if (asyncMusicScanner.isBusy()) {
         return res.json({
           success: true,
@@ -231,6 +237,11 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
   // Upload song (with binary base64 file data and ID3 metadata parsing)
   router.post('/upload', async (req: Request, res: Response) => {
     try {
+      const clientUser = (req as any).user;
+      if (clientUser && clientUser.role !== 'admin') {
+        return res.status(403).json({ success: false, error: '权限不足：普通用户无权向曲库上传文件，仅管理员允许操作' });
+      }
+
       const { title, artist, album, genre, duration, lyrics, bitrate, fileBase64, fileName, coverUrl } = req.body;
 
       if (!fileBase64) {
@@ -347,16 +358,22 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
 
   // Delete song
   router.delete('/:id', (req: Request, res: Response) => {
+    const clientUser = (req as any).user;
+    if (clientUser && clientUser.role !== 'admin') {
+      return res.status(403).json({ success: false, error: '权限不足：普通用户无权删除物理曲目，仅管理员允许操作' });
+    }
+
     const { id } = req.params;
+    const safeId = path.basename(id);
     let storedSongs = getSongs();
     const initialLen = storedSongs.length;
-    storedSongs = storedSongs.filter(s => s.id !== id);
+    storedSongs = storedSongs.filter(s => s.id !== id && s.id !== safeId);
 
     if (storedSongs.length < initialLen) {
       setSongs(storedSongs);
-      // Remove disk file if exists
-      for (const ext of ['.wav', '.mp3', '.flac', '.m4a', '.ogg']) {
-        const p = path.join(musicDir, `${id}${ext}`);
+      // Remove disk file if exists using path.basename to prevent directory traversal
+      for (const ext of ['.wav', '.mp3', '.flac', '.m4a', '.aac', '.ogg', '.opus', '.ape', '.dsf', '.dff']) {
+        const p = path.join(musicDir, `${safeId}${ext}`);
         if (fs.existsSync(p)) {
           try { fs.unlinkSync(p); } catch {}
         }
@@ -368,6 +385,14 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
 
   // Clear all songs from library
   router.delete('/', (req: Request, res: Response) => {
+    const clientUser = (req as any).user;
+    if (clientUser && clientUser.role !== 'admin') {
+      return res.status(403).json({ success: false, error: '权限不足：普通用户无权清空曲库，仅系统管理员允许操作' });
+    }
+    if (!clientUser && options.hasAdminAccount && options.hasAdminAccount()) {
+      return res.status(403).json({ success: false, error: '安全拦截：清空全库属高危敏感操作，必须登录管理员账号方可执行' });
+    }
+
     const storedSongs = getSongs();
     const count = storedSongs.length;
     setSongs([]);

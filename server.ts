@@ -52,6 +52,7 @@ import {
 } from './server/index.js';
 import { createQueueRouter } from './server/routes/queueRoutes.js';
 import { createSongsRouter, createPlaylistsRouter } from './server/routes/musicRoutes.js';
+import { DynamicPlaylistEngine } from './server/core/dynamicPlaylistEngine.js';
 import { createAuthRouter, createSecurityRouter } from './server/routes/authRoutes.js';
 import { createDbRouter } from './server/routes/dbRoutes.js';
 import { createNavidromeRouter } from './server/routes/navidromeRoutes.js';
@@ -177,6 +178,9 @@ export const xiaomiAdapter = new XiaomiAdapter(deviceManager);
 export const adaptiveHeartbeatEngine = new AdaptiveHeartbeatEngine(deviceManager);
 
 const audioTranscoder = ffmpegTranscoder;
+
+// 8. dynamic-playlist-engine: Smart Top Played, Recently Played, and Lossless Dynamic Engine
+export const dynamicPlaylistEngine = new DynamicPlaylistEngine(DATA_DIR);
 
 // Cryptographically secure, persistent JWT secret
 const JWT_SECRET_FILE = path.join(DATA_DIR, '.jwt_secret');
@@ -2174,6 +2178,8 @@ app.use('/api/songs', createSongsRouter({
     saveJson(PLAYLISTS_FILE, storedPlaylists);
   },
   musicDir: MUSIC_DIR,
+  dynamicPlaylistEngine,
+  hasAdminAccount: () => storedUsers.some(u => u.role === 'admin'),
   audioTranscoder,
   logCastAction: (log) => {
     castLogs.unshift(log);
@@ -2187,7 +2193,9 @@ app.use('/api/playlists', createPlaylistsRouter({
   setPlaylists: (newPlaylists) => {
     storedPlaylists = newPlaylists;
     saveJson(PLAYLISTS_FILE, storedPlaylists);
-  }
+  },
+  getSongs: () => storedSongs,
+  dynamicPlaylistEngine
 }));
 
 // ---------------- MIOT & XIAOMI SPEAKER API ----------------

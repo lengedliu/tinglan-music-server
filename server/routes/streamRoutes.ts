@@ -252,6 +252,8 @@ export function createStreamRouter(options: StreamRouterOptions) {
     const navidromeConfig = options.getNavidromeConfig();
 
     const cleanSongId = rawCleanSongId;
+    const safeCleanSongId = path.basename(cleanSongId);
+    const safeSongId = path.basename(songId);
     let foundSong = storedSongs.find(s => s.id === cleanSongId || s.id === songId);
 
     // Resolve local file path
@@ -259,25 +261,28 @@ export function createStreamRouter(options: StreamRouterOptions) {
     let matchedExt = '.mp3';
 
     if (foundSong?.localFilename) {
+      const sanitizedFilename = path.normalize(foundSong.localFilename).replace(/^(\.\.[\/\\])+/, '');
       const candidatePath = path.isAbsolute(foundSong.localFilename)
         ? foundSong.localFilename
-        : path.join(options.musicDir, foundSong.localFilename);
-      if (fs.existsSync(candidatePath)) {
-        localFilePath = candidatePath;
-        matchedExt = path.extname(candidatePath).toLowerCase();
+        : path.join(options.musicDir, sanitizedFilename);
+      const resolvedMusicDir = path.resolve(options.musicDir);
+      const resolvedCandidate = path.resolve(candidatePath);
+      if (resolvedCandidate.startsWith(resolvedMusicDir) && fs.existsSync(resolvedCandidate)) {
+        localFilePath = resolvedCandidate;
+        matchedExt = path.extname(resolvedCandidate).toLowerCase();
       }
     }
 
     if (!localFilePath) {
       const supportedExtensions = ['.mp3', '.flac', '.wav', '.m4a', '.aac', '.ogg', '.opus', '.ape', '.dsf', '.dff'];
       for (const ext of supportedExtensions) {
-        const checkPath1 = path.join(options.musicDir, `${cleanSongId}${ext}`);
+        const checkPath1 = path.join(options.musicDir, `${safeCleanSongId}${ext}`);
         if (fs.existsSync(checkPath1)) {
           localFilePath = checkPath1;
           matchedExt = ext;
           break;
         }
-        const checkPath2 = path.join(options.musicDir, `${songId}${ext}`);
+        const checkPath2 = path.join(options.musicDir, `${safeSongId}${ext}`);
         if (fs.existsSync(checkPath2)) {
           localFilePath = checkPath2;
           matchedExt = ext;
@@ -709,6 +714,10 @@ export function createStreamRouter(options: StreamRouterOptions) {
   });
 
   router.post('/api/transcode/concurrency', (req: Request, res: Response) => {
+    const clientUser = (req as any).user;
+    if (!clientUser || clientUser.role !== 'admin') {
+      return res.status(403).json({ success: false, error: '权限不足：仅系统管理员允许调整全局转码并发数' });
+    }
     const { maxConcurrency } = req.body || {};
     const count = parseInt(maxConcurrency, 10);
     if (isNaN(count) || count < 1 || count > 16) {
@@ -726,6 +735,10 @@ export function createStreamRouter(options: StreamRouterOptions) {
   });
 
   router.post('/api/transcode/cache/clear', (req: Request, res: Response) => {
+    const clientUser = (req as any).user;
+    if (!clientUser || clientUser.role !== 'admin') {
+      return res.status(403).json({ success: false, error: '权限不足：仅系统管理员允许清空转码缓存' });
+    }
     const result = options.audioTranscoder.clearCache();
     res.json({
       success: true,
@@ -735,6 +748,10 @@ export function createStreamRouter(options: StreamRouterOptions) {
   });
 
   router.post('/api/transcode/cache/quota', (req: Request, res: Response) => {
+    const clientUser = (req as any).user;
+    if (!clientUser || clientUser.role !== 'admin') {
+      return res.status(403).json({ success: false, error: '权限不足：仅系统管理员允许修改转码缓存配额' });
+    }
     const { maxQuotaMb } = req.body || {};
     const quotaMb = parseInt(maxQuotaMb, 10);
     if (isNaN(quotaMb) || quotaMb < 100 || quotaMb > 50000) {
@@ -753,6 +770,10 @@ export function createStreamRouter(options: StreamRouterOptions) {
   });
 
   router.post('/api/transcode/cache/prune', (req: Request, res: Response) => {
+    const clientUser = (req as any).user;
+    if (!clientUser || clientUser.role !== 'admin') {
+      return res.status(403).json({ success: false, error: '权限不足：仅系统管理员允许执行转码缓存淘汰' });
+    }
     const result = options.audioTranscoder.quotaManager.enforceQuota();
     res.json({
       success: true,
