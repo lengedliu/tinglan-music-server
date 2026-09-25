@@ -1430,7 +1430,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
         )}
 
         {/* Sub-tabs with Immersive UI Pills */}
-        <div className={`relative z-10 flex items-center gap-2 pt-6 border-t mt-6 overflow-x-auto scrollbar-none ${
+        <div className={`relative z-10 flex flex-wrap items-center gap-2 pt-6 border-t mt-6 ${
           isLight ? 'border-zinc-200' : 'border-white/10'
         }`}>
           <button
