@@ -38,6 +38,7 @@ import {
   ChevronDown,
   ChevronUp,
   BookOpen,
+  Clock,
   HelpCircle,
   ExternalLink,
   QrCode,
@@ -61,6 +62,9 @@ import { apiFetch, getAuthToken } from '../utils/api';
 import { useAppEvents } from '../context/AppEventsContext';
 import { VoiceCommandSection } from './VoiceCommandSection';
 import { LogTerminalTab } from './speaker/LogTerminalTab';
+import { DeviceStrategyProfilesTab } from './speaker/DeviceStrategyProfilesTab';
+import { VoiceSlangDashboardTab } from './speaker/VoiceSlangDashboardTab';
+import { SmartAutomationTab } from './speaker/SmartAutomationTab';
 import { useTheme } from '../context/ThemeContext';
 import QRCode from 'qrcode';
 
@@ -121,7 +125,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
 }) => {
   const { isLight } = useTheme();
   const { subscribe: subscribeAppEvents } = useAppEvents();
-  const [activeSubTab, setActiveSubTab] = useState<'devices' | 'control' | 'tts' | 'voice' | 'rpc' | 'settings' | 'logs'>('devices');
+  const [activeSubTab, setActiveSubTab] = useState<'devices' | 'control' | 'tts' | 'voice' | 'slang' | 'automation' | 'rpc' | 'strategy' | 'settings' | 'logs'>('devices');
   const [ttsInput, setTtsInput] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isUnbinding, setIsUnbinding] = useState(false);
@@ -1498,6 +1502,40 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
           </button>
 
           <button
+            id="subtab-slang"
+            onClick={() => setActiveSubTab('slang')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition whitespace-nowrap cursor-pointer ${
+              activeSubTab === 'slang'
+                ? isLight 
+                  ? 'bg-[#FF6700] text-white font-bold shadow-[0_2px_10px_rgba(255,103,0,0.3)]' 
+                  : 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40 font-semibold shadow-[0_0_12px_rgba(255,103,0,0.2)]'
+                : isLight
+                  ? 'text-zinc-600 hover:text-zinc-950 hover:bg-zinc-100 border border-zinc-200'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-white/5'
+            }`}
+          >
+            <Zap className={`w-4 h-4 ${activeSubTab === 'slang' && isLight ? 'text-white' : 'text-amber-400'}`} />
+            <span>黑话未命中看板</span>
+          </button>
+
+          <button
+            id="subtab-automation"
+            onClick={() => setActiveSubTab('automation')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition whitespace-nowrap cursor-pointer ${
+              activeSubTab === 'automation'
+                ? isLight 
+                  ? 'bg-[#FF6700] text-white font-bold shadow-[0_2px_10px_rgba(255,103,0,0.3)]' 
+                  : 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40 font-semibold shadow-[0_0_12px_rgba(255,103,0,0.2)]'
+                : isLight
+                  ? 'text-zinc-600 hover:text-zinc-950 hover:bg-zinc-100 border border-zinc-200'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-white/5'
+            }`}
+          >
+            <Clock className={`w-4 h-4 ${activeSubTab === 'automation' && isLight ? 'text-white' : 'text-amber-500'}`} />
+            <span>自动化场景 (Phase 3)</span>
+          </button>
+
+          <button
             id="subtab-rpc"
             onClick={() => setActiveSubTab('rpc')}
             className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition whitespace-nowrap cursor-pointer ${
@@ -1512,6 +1550,23 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
           >
             <Code className={`w-4 h-4 ${activeSubTab === 'rpc' && isLight ? 'text-white' : 'text-purple-500'}`} />
             <span>MIoT RPC 控制台</span>
+          </button>
+
+          <button
+            id="subtab-strategy"
+            onClick={() => setActiveSubTab('strategy')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition whitespace-nowrap cursor-pointer ${
+              activeSubTab === 'strategy'
+                ? isLight 
+                  ? 'bg-[#FF6700] text-white font-bold shadow-[0_2px_10px_rgba(255,103,0,0.3)]' 
+                  : 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40 font-semibold shadow-[0_0_12px_rgba(255,103,0,0.2)]'
+                : isLight
+                  ? 'text-zinc-600 hover:text-zinc-950 hover:bg-zinc-100 border border-zinc-200'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-white/5'
+            }`}
+          >
+            <Zap className={`w-4 h-4 ${activeSubTab === 'strategy' && isLight ? 'text-white' : 'text-amber-400'}`} />
+            <span>推流自愈画像</span>
           </button>
 
           <button
@@ -3229,6 +3284,33 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
         </div>
       )}
 
+      {/* ---------------- Sub-tab: Voice Command & Capture ---------------- */}
+      {activeSubTab === 'voice' && (
+        <VoiceCommandSection
+          devices={devices}
+          activeDevice={activeDevice}
+          onSelectDevice={onSelectDevice}
+          playlists={playlists}
+        />
+      )}
+
+      {/* ---------------- Sub-tab: Voice Slang Dashboard ---------------- */}
+      {activeSubTab === 'slang' && (
+        <VoiceSlangDashboardTab
+          devices={devices}
+          activeDevice={activeDevice}
+          playlists={playlists}
+        />
+      )}
+
+      {/* ---------------- Sub-tab: Smart Automation Engine (Phase 3) ---------------- */}
+      {activeSubTab === 'automation' && (
+        <SmartAutomationTab
+          devices={devices}
+          playlists={playlists}
+        />
+      )}
+
       {/* ---------------- Sub-tab: MIoT Spec RPC Console ---------------- */}
       {activeSubTab === 'rpc' && (
         <div className="space-y-6">
@@ -3652,6 +3734,14 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
             )}
           </div>
         </div>
+      )}
+
+      {/* ---------------- Sub-tab: Hardware Strategy Profiles ---------------- */}
+      {activeSubTab === 'strategy' && (
+        <DeviceStrategyProfilesTab
+          devices={devices}
+          activeDevice={activeDevice}
+        />
       )}
 
       {/* ---------------- Sub-tab 4: Protocol & Settings ---------------- */}

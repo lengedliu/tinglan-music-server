@@ -65,7 +65,9 @@ export function createDbRouter(options: DbRouterOptions): Router {
       'smart_playlist_rules',
       'device_customizations',
       'audio_fingerprint_cache',
-      'playback_checkpoints'
+      'playback_checkpoints',
+      'playback_resume_points',
+      'device_strategy_profiles'
     ];
 
     return res.json({

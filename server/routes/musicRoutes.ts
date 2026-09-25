@@ -8,6 +8,7 @@ import { interactionRepository } from '../core/repositories/interactionRepositor
 import { DynamicPlaylistEngine } from '../core/dynamicPlaylistEngine.js';
 import { smartPlaylistRepository, SmartPlaylistRule } from '../core/repositories/smartPlaylistRepository.js';
 import { fingerprintCacheRepository } from '../core/repositories/fingerprintCacheRepository.js';
+import { resumePointRepository } from '../core/repositories/resumePointRepository.js';
 
 export interface SongsRouterOptions {
   getSongs: () => any[];
@@ -590,6 +591,99 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
       matchedAt: new Date().toISOString()
     });
     return res.json({ success: true, message: '音频指纹元数据缓存已更新', fingerprint: saved });
+  });
+
+  // Phase 1: 获取当前用户/全站的断点续播记录列表 (支持长音频过滤与推荐)
+  router.get('/resume-points/list', (req: Request, res: Response) => {
+    try {
+      const clientUser = (req as any).user;
+      const limit = parseInt(String(req.query.limit || '20'), 10);
+      const includeCompleted = req.query.includeCompleted === 'true';
+      const points = resumePointRepository.getResumePoints(clientUser?.id, limit, includeCompleted);
+      
+      // Enrich with latest catalog song info if available
+      const allSongs = getSongs();
+      const enriched = points.map(p => {
+        const matchedSong = allSongs.find(s => s.id === p.songId || s.id.replace(/\.[^.]+$/, '') === p.songId);
+        return {
+          ...p,
+          song: matchedSong || {
+            id: p.songId,
+            title: p.songTitle || '未知曲目',
+            artist: p.songArtist || '未知艺术家',
+            coverUrl: p.songCoverUrl,
+            duration: p.durationSeconds
+          }
+        };
+      });
+
+      return res.json({ success: true, points: enriched });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Phase 1: 获取单首歌曲的续播断点
+  router.get('/:id/resume', (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const clientUser = (req as any).user;
+      const point = resumePointRepository.getResumePoint(id, clientUser?.id);
+      return res.json({ success: true, point: point || null });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Phase 1: 心跳/主动上报断点续播进度
+  router.post('/:id/resume', (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const clientUser = (req as any).user;
+      const {
+        positionSeconds,
+        durationSeconds,
+        deviceDid,
+        deviceName,
+        songTitle,
+        songArtist,
+        songCoverUrl,
+        queueContext,
+        isCompleted
+      } = req.body || {};
+
+      const song = getSongs().find(s => s.id === id || s.id.replace(/\.[^.]+$/, '') === id);
+
+      const saved = resumePointRepository.saveResumePoint({
+        userId: clientUser?.id || 'anon',
+        songId: id,
+        songTitle: songTitle || song?.title || '未知曲目',
+        songArtist: songArtist || song?.artist || '未知艺术家',
+        songCoverUrl: songCoverUrl || song?.coverUrl,
+        deviceDid,
+        deviceName: deviceName || (deviceDid ? '小爱音箱' : '网页端'),
+        resumePositionSeconds: Number(positionSeconds || 0),
+        durationSeconds: Number(durationSeconds || song?.duration || 0),
+        queueContext,
+        isCompleted
+      });
+
+      return res.json({ success: true, resumePoint: saved });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // Phase 1: 删除/标记已听完断点
+  router.delete('/:id/resume', (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const clientUser = (req as any).user;
+      const deleted = resumePointRepository.deleteResumePoint(id, clientUser?.id);
+      return res.json({ success: true, deleted });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
   });
 
   return router;

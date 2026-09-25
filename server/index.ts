@@ -26,6 +26,8 @@ export { SmartPlaylistRepository, smartPlaylistRepository, type SmartPlaylistRul
 export { DeviceCustomizationRepository, deviceCustomizationRepository, type DeviceCustomization } from './core/repositories/deviceCustomizationRepository.js';
 export { FingerprintCacheRepository, fingerprintCacheRepository, type FingerprintCacheItem } from './core/repositories/fingerprintCacheRepository.js';
 export { PlaybackCheckpointRepository, playbackCheckpointRepository, type PlaybackCheckpoint } from './core/repositories/playbackCheckpointRepository.js';
+export { ResumePointRepository, resumePointRepository, type PlaybackResumePoint } from './core/repositories/resumePointRepository.js';
+export { DeviceStrategyRepository, deviceStrategyRepository, type DeviceStrategyProfile as EnterpriseDeviceStrategyProfile } from './core/repositories/deviceStrategyRepository.js';
 export { TaskSchedulerEngine, taskSchedulerEngine } from './core/taskSchedulerEngine.js';
 export * from './xiaomi/miotService.js';
 export * from './routes/miotRoutes.js';

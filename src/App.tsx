@@ -4,6 +4,7 @@ import { PlayerBar } from './components/PlayerBar';
 import { MobileTabBar } from './components/MobileTabBar';
 import { MusicLibrary } from './components/MusicLibrary';
 import { LyricsView } from './components/LyricsView';
+import { RadioPodcastTab } from './components/RadioPodcastTab';
 import { XiaomiSpeakerPanel } from './components/XiaomiSpeakerPanel';
 import { UploadSongModal } from './components/UploadSongModal';
 import { AudioEqualizerModal } from './components/AudioEqualizerModal';
@@ -49,11 +50,11 @@ export default function App() {
   const [isForcePasswordModalOpen, setIsForcePasswordModalOpen] = useState(false);
   const [dismissedDefaultPasswordAlert, setDismissedDefaultPasswordAlert] = useState(false);
 
-  // Navigation: 音乐曲库, 歌词播放, 智能音箱, Subsonic API, 设置, 赞助
-  const [activeTab, setActiveTab] = useState<'library' | 'lyrics' | 'xiaomi' | 'subsonic' | 'settings' | 'sponsor'>(() => {
+  // Navigation: 音乐曲库, 广播与播客, 歌词播放, 智能音箱, Subsonic API, 设置, 赞助
+  const [activeTab, setActiveTab] = useState<'library' | 'radio' | 'lyrics' | 'xiaomi' | 'subsonic' | 'settings' | 'sponsor'>(() => {
     try {
       const saved = localStorage.getItem('tinglan_active_tab');
-      return (saved === 'library' || saved === 'lyrics' || saved === 'xiaomi' || saved === 'subsonic' || saved === 'settings' || saved === 'sponsor') ? saved : 'library';
+      return (saved === 'library' || saved === 'radio' || saved === 'lyrics' || saved === 'xiaomi' || saved === 'subsonic' || saved === 'settings' || saved === 'sponsor') ? saved : 'library';
     } catch {
       return 'library';
     }
@@ -2233,6 +2234,30 @@ export default function App() {
             />
           )}
 
+          {activeTab === 'radio' && (
+            <RadioPodcastTab
+              devices={devices}
+              activeDevice={activeDevice}
+              onPlaySongInBrowser={(song) => {
+                handlePlaySong(song);
+                showToast('播放在线广播/播客', `正在播放: ${song.title}`, 'info');
+              }}
+              onCastToSpeaker={(deviceId, title, artist, audioUrl, coverUrl) => {
+                const payload: any = {
+                  id: `radio_${Date.now()}`,
+                  title,
+                  artist,
+                  album: '网络广播/播客',
+                  duration: 0,
+                  url: audioUrl,
+                  filePath: audioUrl,
+                  coverUrl
+                };
+                castSongToDevice(payload, devices.find(d => d.did === deviceId) || activeDevice);
+              }}
+            />
+          )}
+
           {activeTab === 'lyrics' && (
             <LyricsView
               currentSong={currentSong}
@@ -2454,7 +2479,38 @@ export default function App() {
         <SleepTimerModal
           isOpen={isSleepTimerModalOpen}
           onClose={() => setIsSleepTimerModalOpen(false)}
+          sleepTimer={sleepTimer}
           config={sleepTimer}
+          onStartTimer={(minutes, stopAtEndOfSong, smoothFadeOut) => {
+            setSleepTimer({
+              enabled: true,
+              initialMinutes: minutes,
+              remainingSeconds: minutes * 60,
+              stopAtEndOfSong,
+              smoothFadeOut,
+            });
+            if (stopAtEndOfSong) {
+              showToast('睡眠定时器已设定', '播放完当前歌曲后将自动暂停', 'success');
+            } else {
+              showToast('睡眠定时器已开启', `设定为 ${minutes} 分钟后停止播放`, 'success');
+            }
+          }}
+          onCancelTimer={() => {
+            setSleepTimer(prev => ({
+              ...prev,
+              enabled: false,
+              remainingSeconds: 0,
+            }));
+            showToast('睡眠定时器已关闭', '已取消自动停止播放设定', 'info');
+          }}
+          onAddMinutes={(additionalMinutes) => {
+            setSleepTimer(prev => ({
+              ...prev,
+              remainingSeconds: prev.remainingSeconds + additionalMinutes * 60,
+              initialMinutes: prev.initialMinutes + additionalMinutes,
+            }));
+            showToast('已增加时长', `已追加 ${additionalMinutes} 分钟`, 'success');
+          }}
           onSaveConfig={(newConfig) => {
             setSleepTimer(newConfig);
             if (newConfig.enabled) {
@@ -2467,6 +2523,9 @@ export default function App() {
               showToast('睡眠定时器已关闭', '已取消自动停止播放设定', 'info');
             }
           }}
+          currentSongTitle={currentSong?.title}
+          activeDeviceId={activeDevice?.did}
+          activeDeviceName={activeDevice?.name}
         />
 
         {/* Keyboard Shortcuts Cheatsheet Modal */}
