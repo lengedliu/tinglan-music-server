@@ -1902,7 +1902,27 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
     res.json({
       success: true,
       status: voiceCommandService.getStatus(),
-      recentLogs: voiceCommandService.getDialogueLogs().slice(0, 15)
+      config: voiceCommandService.getConfig(),
+      logs: voiceCommandService.getDialogueLogs().slice(0, 30),
+      recentLogs: voiceCommandService.getDialogueLogs().slice(0, 30)
+    });
+  });
+
+  router.get('/voice/config', (req: Request, res: Response) => {
+    res.json({
+      success: true,
+      config: voiceCommandService.getConfig()
+    });
+  });
+
+  router.post('/voice/rules/restore-defaults', (req: Request, res: Response) => {
+    if (!checkMiotControlPermission(req, res)) return;
+    const restored = voiceCommandService.restoreDefaultRules();
+    res.json({
+      success: true,
+      rules: restored,
+      config: voiceCommandService.getConfig(),
+      message: '已成功恢复全部官方默认语音口令与点歌触发规则'
     });
   });
 

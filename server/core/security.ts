@@ -124,26 +124,21 @@ export function verifyStreamToken(songId: string, token: string, jwtSecret: stri
 
 export function isSafeRemoteStreamUrl(urlString: string, navidromeServerUrl?: string): boolean {
   try {
-    const parsed = new URL(urlString);
+    if (!urlString || typeof urlString !== 'string') return false;
+    const parsed = new URL(urlString.trim());
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
     const hostname = parsed.hostname.toLowerCase();
+    
+    // Prohibit AWS / GCP / Cloud metadata endpoint SSRF attacks
     if (
-      hostname === 'localhost' ||
-      hostname === '127.0.0.1' ||
-      hostname === '0.0.0.0' ||
-      hostname === '::1' ||
       hostname === '169.254.169.254' ||
-      hostname.endsWith('.internal') ||
-      hostname.endsWith('.local')
+      hostname === 'metadata.google.internal' ||
+      hostname === 'metadata'
     ) {
-      if (navidromeServerUrl) {
-        try {
-          const naviHost = new URL(navidromeServerUrl).hostname.toLowerCase();
-          if (hostname === naviHost) return true;
-        } catch {}
-      }
       return false;
     }
+    
+    // Allow local LAN IPs, localhost, .local, and user-configured remote servers
     return true;
   } catch {
     return false;

@@ -436,6 +436,12 @@ export class VoiceCommandService {
     return { ...this.config };
   }
 
+  public restoreDefaultRules(): VoiceCommandRule[] {
+    this.config.rules = JSON.parse(JSON.stringify(DEFAULT_RULES));
+    this.saveConfig();
+    return [...this.config.rules];
+  }
+
   public updateConfig(partial: Partial<VoiceListenerConfig>) {
     this.config = { ...this.config, ...partial };
     this.saveConfig();

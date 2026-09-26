@@ -207,6 +207,27 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
     setIsRuleModalOpen(false);
   };
 
+  const [isRestoringDefaults, setIsRestoringDefaults] = useState(false);
+  const handleRestoreDefaultRules = async () => {
+    if (!window.confirm('确定要恢复全部官方默认语音口令与触发规则吗？')) return;
+    setIsRestoringDefaults(true);
+    try {
+      const res = await apiFetch('/api/miot/voice/rules/restore-defaults', {
+        method: 'POST'
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.config) {
+          setConfig(data.config);
+        }
+      }
+    } catch (err: any) {
+      console.warn('Failed to restore default rules:', err);
+    } finally {
+      setIsRestoringDefaults(false);
+    }
+  };
+
   const executeTestQuery = async (queryText: string) => {
     const clean = queryText.trim();
     if (!clean) return;
@@ -631,6 +652,16 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleRestoreDefaultRules}
+              disabled={isRestoringDefaults}
+              className="px-3.5 py-2 rounded-2xl bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-300 border border-white/10 text-xs font-medium transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              title="一键恢复系统内置的 10 条官方默认语音口令与播控规则"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isRestoringDefaults ? 'animate-spin' : ''}`} />
+              <span>恢复默认规则</span>
+            </button>
             <button
               type="button"
               onClick={() => handleOpenEditRule()}

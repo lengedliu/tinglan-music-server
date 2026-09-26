@@ -309,8 +309,21 @@ export function createStreamRouter(options: StreamRouterOptions) {
             : options.getSubsonicAuthQuery(navidromeConfig.username, navidromeConfig.password);
           remoteStreamUrl = `${navidromeConfig.serverUrl.replace(/\/+$/, '')}/rest/stream?id=${encodeURIComponent(rawNaviId)}&${authQuery}`;
         }
-      } else {
-        return res.status(403).json({ error: 'Unsafe Navidrome server address is forbidden' });
+      }
+
+      // Fallback: Check if foundSong.url has a valid streamable remote link
+      if (!remoteStreamUrl && foundSong?.url && /^https?:\/\//i.test(foundSong.url) && !foundSong.url.includes('/api/stream/')) {
+        if (options.isSafeRemoteStreamUrl(foundSong.url)) {
+          remoteStreamUrl = foundSong.url;
+        }
+      }
+
+      if (!remoteStreamUrl && !foundLocalFile) {
+        if (!navidromeConfig.serverUrl) {
+          return res.status(400).json({ error: '未配置 Navidrome 服务器地址，请在曲库中设置 Navidrome 连接' });
+        } else if (!options.isSafeRemoteStreamUrl(navidromeConfig.serverUrl)) {
+          return res.status(403).json({ error: 'Navidrome 服务器地址格式不合法' });
+        }
       }
     }
 
