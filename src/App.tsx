@@ -2478,6 +2478,9 @@ export default function App() {
             <RadioPodcastTab
               devices={devices}
               activeDevice={activeDevice}
+              currentSong={currentSong}
+              isPlaying={isPlaying}
+              isCasting={isCasting}
               onPlaySongInBrowser={(song) => {
                 setIsCasting(false);
                 if (audioRef.current) audioRef.current.pause();

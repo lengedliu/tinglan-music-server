@@ -60,6 +60,9 @@ interface PodcastSubscription {
 interface RadioPodcastTabProps {
   devices: XiaomiDevice[];
   activeDevice: XiaomiDevice | undefined;
+  currentSong?: Song | null;
+  isPlaying?: boolean;
+  isCasting?: boolean;
   onPlaySongInBrowser: (song: Song) => void;
   onCastToSpeaker: (deviceId: string, title: string, artist: string, audioUrl: string, coverUrl?: string) => void;
 }
@@ -67,6 +70,9 @@ interface RadioPodcastTabProps {
 export const RadioPodcastTab: React.FC<RadioPodcastTabProps> = ({
   devices,
   activeDevice,
+  currentSong,
+  isPlaying,
+  isCasting,
   onPlaySongInBrowser,
   onCastToSpeaker
 }) => {
@@ -527,86 +533,124 @@ export const RadioPodcastTab: React.FC<RadioPodcastTabProps> = ({
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {filteredStations.map(st => (
-                <div
-                  key={st.id}
-                  className={`group p-4 rounded-xl transition-all shadow-md flex flex-col justify-between space-y-3 ${
-                    isLight
-                      ? 'bg-white hover:bg-zinc-50/90 border border-zinc-200/80 hover:border-amber-500/50 hover:shadow-lg'
-                      : 'bg-zinc-900/80 hover:bg-zinc-800/90 border border-white/5 hover:border-amber-500/30'
-                  }`}
-                >
-                  <div className="flex items-start gap-3">
-                    <img
-                      src={st.logoUrl || 'https://images.unsplash.com/photo-1590602847861-f357a9332bbc?w=150&auto=format&fit=crop&q=80'}
-                      alt={st.name}
-                      className={`w-12 h-12 rounded-lg object-cover shrink-0 group-hover:scale-105 transition ${
-                        isLight ? 'bg-zinc-100 border border-zinc-200' : 'bg-zinc-950 border border-white/10'
-                      }`}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between gap-1">
-                        <h3 className={`text-sm font-bold truncate transition ${
-                          isLight ? 'text-zinc-900 group-hover:text-amber-600' : 'text-white group-hover:text-amber-400'
-                        }`}>
-                          {st.name}
-                        </h3>
-                        {st.isCustom && (
-                          <button
-                            onClick={() => handleDeleteStation(st.id, st.name)}
-                            className="p-1 text-zinc-400 hover:text-rose-500 transition cursor-pointer"
-                            title="删除自定义电台"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+              {filteredStations.map(st => {
+                const isActive = (currentSong?.id === st.id) || (currentSong?.title === st.name);
+
+                return (
+                  <div
+                    key={st.id}
+                    onClick={() => {
+                      if (isCasting && activeDevice) {
+                        handleCastStationToSpeaker(st);
+                      } else {
+                        handlePlayStationInBrowser(st);
+                      }
+                    }}
+                    className={`group p-4 rounded-xl transition-all shadow-md flex flex-col justify-between space-y-3 cursor-pointer relative ${
+                      isActive
+                        ? isLight
+                          ? 'bg-amber-50/80 border-2 border-amber-500 shadow-amber-500/10 shadow-lg'
+                          : 'bg-amber-500/10 border-2 border-amber-500/60 shadow-amber-500/10 shadow-lg'
+                        : isLight
+                          ? 'bg-white hover:bg-zinc-50/90 border border-zinc-200/80 hover:border-amber-500/50 hover:shadow-lg'
+                          : 'bg-zinc-900/80 hover:bg-zinc-800/90 border border-white/5 hover:border-amber-500/30'
+                    }`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="relative shrink-0">
+                        <img
+                          src={st.logoUrl || 'https://images.unsplash.com/photo-1590602847861-f357a9332bbc?w=150&auto=format&fit=crop&q=80'}
+                          alt={st.name}
+                          className={`w-12 h-12 rounded-lg object-cover group-hover:scale-105 transition ${
+                            isLight ? 'bg-zinc-100 border border-zinc-200' : 'bg-zinc-950 border border-white/10'
+                          }`}
+                        />
+                        {isActive && isPlaying && (
+                          <div className="absolute inset-0 bg-black/40 rounded-lg flex items-center justify-center">
+                            <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping" />
+                          </div>
                         )}
                       </div>
-                      <p className={`text-[11px] line-clamp-2 mt-0.5 ${
-                        isLight ? 'text-zinc-500' : 'text-zinc-400'
-                      }`}>
-                        {st.description || '24/7 高清在线广播流'}
-                      </p>
-                    </div>
-                  </div>
 
-                  <div className={`pt-2 border-t flex items-center justify-between gap-2 ${
-                    isLight ? 'border-zinc-100' : 'border-white/5'
-                  }`}>
-                    <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
-                      isLight ? 'bg-zinc-100 text-zinc-600 border-zinc-200' : 'bg-zinc-950 text-zinc-500 border-white/5'
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-1">
+                          <h3 className={`text-sm font-bold truncate transition flex items-center gap-1.5 ${
+                            isActive
+                              ? 'text-amber-500 font-extrabold'
+                              : isLight ? 'text-zinc-900 group-hover:text-amber-600' : 'text-white group-hover:text-amber-400'
+                          }`}>
+                            <span className="truncate">{st.name}</span>
+                            {isActive && (
+                              <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-amber-500 text-zinc-950 font-bold shrink-0">
+                                播放中
+                              </span>
+                            )}
+                          </h3>
+                          {st.isCustom && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteStation(st.id, st.name);
+                              }}
+                              className="p-1 text-zinc-400 hover:text-rose-500 transition cursor-pointer"
+                              title="删除自定义电台"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                        <p className={`text-[11px] line-clamp-2 mt-0.5 ${
+                          isLight ? 'text-zinc-500' : 'text-zinc-400'
+                        }`}>
+                          {st.description || '24/7 高清在线广播流'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className={`pt-2 border-t flex items-center justify-between gap-2 ${
+                      isLight ? 'border-zinc-100' : 'border-white/5'
                     }`}>
-                      {st.bitrate || '128kbps AAC'}
-                    </span>
+                      <span className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+                        isLight ? 'bg-zinc-100 text-zinc-600 border-zinc-200' : 'bg-zinc-950 text-zinc-500 border-white/5'
+                      }`}>
+                        {st.bitrate || '128kbps AAC'}
+                      </span>
 
-                    <div className="flex items-center gap-1.5">
-                      {/* Web Play */}
-                      <button
-                        onClick={() => handlePlayStationInBrowser(st)}
-                        className={`p-1.5 rounded-lg transition cursor-pointer ${
-                          isLight ? 'bg-zinc-100 hover:bg-zinc-200 text-zinc-800' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200'
-                        }`}
-                        title="在网页浏览器播放"
-                      >
-                        <Play className="w-3.5 h-3.5 fill-current" />
-                      </button>
+                      <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
+                        {/* Web Play */}
+                        <button
+                          onClick={() => handlePlayStationInBrowser(st)}
+                          className={`p-1.5 rounded-lg transition cursor-pointer flex items-center gap-1 text-xs ${
+                            isActive && !isCasting
+                              ? 'bg-amber-500 text-zinc-950 font-bold'
+                              : isLight ? 'bg-zinc-100 hover:bg-zinc-200 text-zinc-800' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200'
+                          }`}
+                          title="在网页浏览器播放"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-current" />
+                          <span className="hidden sm:inline text-[11px]">网页播</span>
+                        </button>
 
-                      {/* Cast to Speaker */}
-                      <button
-                        onClick={() => handleCastStationToSpeaker(st)}
-                        className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg transition text-xs font-semibold cursor-pointer ${
-                          isLight
-                            ? 'bg-amber-500 text-zinc-950 shadow-sm hover:bg-amber-400'
-                            : 'bg-amber-500/10 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20'
-                        }`}
-                        title={`一键投播至 ${activeDevice?.name || '小爱音箱'}`}
-                      >
-                        <Cast className="w-3.5 h-3.5" />
-                        <span>投播音箱</span>
-                      </button>
+                        {/* Cast to Speaker */}
+                        <button
+                          onClick={() => handleCastStationToSpeaker(st)}
+                          className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg transition text-xs font-semibold cursor-pointer ${
+                            isActive && isCasting
+                              ? 'bg-amber-500 text-zinc-950 font-bold shadow-md'
+                              : isLight
+                                ? 'bg-amber-500 text-zinc-950 shadow-sm hover:bg-amber-400'
+                                : 'bg-amber-500/10 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20'
+                          }`}
+                          title={`一键投播至 ${activeDevice?.name || '小爱音箱'}`}
+                        >
+                          <Cast className="w-3.5 h-3.5" />
+                          <span>投播音箱</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
