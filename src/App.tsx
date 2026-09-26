@@ -248,6 +248,13 @@ export default function App() {
     const audio = audioRef.current;
     if (!audio) return;
 
+    if (isCasting) {
+      if (!audio.paused) {
+        audio.pause();
+      }
+      return;
+    }
+
     const playSrc = currentSong?.url || (currentSong ? `/api/stream/${encodeURIComponent(currentSong.id)}` : '');
     if (!playSrc) return;
 
@@ -268,7 +275,7 @@ export default function App() {
       hls.attachMedia(audio);
 
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
-        if (isPlaying) {
+        if (isPlaying && !isCasting) {
           audio.play().catch(() => {});
         }
       });
@@ -287,7 +294,7 @@ export default function App() {
               hlsRef.current = null;
               if (!audio.src || !audio.src.endsWith(playSrc)) {
                 audio.src = playSrc;
-                if (isPlaying) audio.play().catch(() => {});
+                if (isPlaying && !isCasting) audio.play().catch(() => {});
               }
               break;
           }
@@ -301,7 +308,7 @@ export default function App() {
       if (!audio.src || !audio.src.endsWith(playSrc)) {
         audio.src = playSrc;
       }
-      if (isPlaying && audio.paused) {
+      if (isPlaying && !isCasting && audio.paused) {
         audio.play().catch(() => {});
       }
     }
@@ -312,7 +319,7 @@ export default function App() {
         hlsRef.current = null;
       }
     };
-  }, [currentSong?.id, currentSong?.url, isPlaying]);
+  }, [currentSong?.id, currentSong?.url, isPlaying, isCasting]);
 
   const activeDevice = devices.find(d => d.did === activeDeviceId) || devices[0];
 
