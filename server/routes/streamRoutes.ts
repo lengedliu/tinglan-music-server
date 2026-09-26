@@ -433,8 +433,10 @@ export function createStreamRouter(options: StreamRouterOptions) {
 
     if (remoteStreamUrl) {
       const userAgent = String(req.headers['user-agent'] || '');
-      const isBrowserClient = /Mozilla|Chrome|Safari|Firefox|Edg|AppleWebKit/i.test(userAgent) && !/stagefright|Lavf|gstreamer|xm_player|mico|xiaomi|vlc/i.test(userAgent);
       const clientIp = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1').replace('::ffff:', '');
+      const isKnownSpeaker = xiaomiDevices.some((d: any) => d.ip && (clientIp === d.ip || clientIp.includes(d.ip) || d.ip.includes(clientIp)));
+      const isSpeakerUa = /stagefright|Lavf|gstreamer|xm_player|mico|xiaomi|vlc|Dalvik|okhttp|DLNA|UPnP|Apache-HttpClient|Android/i.test(userAgent);
+      const isBrowserClient = !isKnownSpeaker && !isSpeakerUa && /Mozilla|Chrome|Safari|Firefox|Edg|AppleWebKit/i.test(userAgent);
       const nowStr = new Date().toLocaleTimeString();
       const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
       const host = (req.headers['x-forwarded-host'] as string) || req.headers.host || req.get('host') || `localhost:${options.port}`;
@@ -563,8 +565,10 @@ export function createStreamRouter(options: StreamRouterOptions) {
     }
 
     const userAgent = String(req.headers['user-agent'] || '');
-    const isBrowserClient = /Mozilla|Chrome|Safari|Firefox|Edg|AppleWebKit/i.test(userAgent) && !/stagefright|Lavf|gstreamer|xm_player|mico|xiaomi|vlc/i.test(userAgent);
     const clientIp = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1').replace('::ffff:', '');
+    const isKnownSpeaker = xiaomiDevices.some((d: any) => d.ip && (clientIp === d.ip || clientIp.includes(d.ip) || d.ip.includes(clientIp)));
+    const isSpeakerUa = /stagefright|Lavf|gstreamer|xm_player|mico|xiaomi|vlc|Dalvik|okhttp|DLNA|UPnP|Apache-HttpClient|Android/i.test(userAgent);
+    const isBrowserClient = !isKnownSpeaker && !isSpeakerUa && /Mozilla|Chrome|Safari|Firefox|Edg|AppleWebKit/i.test(userAgent);
     const matchedDev = xiaomiDevices.find((d: any) => d.ip && clientIp.includes(d.ip)) ||
       (miotConfig.activeDeviceId ? xiaomiDevices.find((d: any) => d.did === miotConfig.activeDeviceId) : null);
     const resolvedModel = matchedDev?.model || 'wifispeaker';

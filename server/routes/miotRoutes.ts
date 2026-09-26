@@ -1461,8 +1461,17 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
     const currentServerHost = miotConfig.serverHost || (primaryLanIp ? `http://${primaryLanIp}:${serverPort}` : '');
     const isLoopback = currentServerHost.includes('localhost') || currentServerHost.includes('127.0.0.1');
 
-    const speakerStreams = recentStreamEvents.filter(e => !e.isBrowser);
-    const lastSpeakerStream = speakerStreams[0] || null;
+    const devices = deviceRepository.getAllDevices();
+    const activeDev = devices.find((d: any) => d.did === miotConfig.activeDeviceId) || devices[0];
+    const targetIp = activeDev?.ip;
+
+    const speakerStreams = recentStreamEvents.filter(e => {
+      if (!e.isBrowser) return true;
+      if (targetIp && (e.clientIp === targetIp || e.clientIp.includes(targetIp) || targetIp.includes(e.clientIp))) return true;
+      if (devices.some((d: any) => d.ip && (e.clientIp === d.ip || e.clientIp.includes(d.ip) || d.ip.includes(e.clientIp)))) return true;
+      return false;
+    });
+    const lastSpeakerStream = speakerStreams[0] || (recentStreamEvents[0] && !recentStreamEvents[0].isBrowser ? recentStreamEvents[0] : null);
 
     res.json({
       success: true,
@@ -1472,8 +1481,15 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
       primaryLanIp,
       lastSpeakerStream,
       speakerStreamCount: speakerStreams.length,
-      recentStreamEvents: recentStreamEvents.slice(0, 10),
-      activeIps: Array.from(activeStreamIps)
+      recentStreamEvents: recentStreamEvents.slice(0, 15),
+      activeIps: Array.from(activeStreamIps),
+      activeDevice: activeDev ? {
+        did: activeDev.did,
+        name: activeDev.name,
+        ip: activeDev.ip,
+        isPlaying: Boolean(activeDev.status?.playing || activeDev.isPlaying),
+        currentSongId: activeDev.status?.currentSongId
+      } : null
     });
   });
 

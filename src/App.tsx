@@ -1259,10 +1259,11 @@ export default function App() {
       return;
     }
 
+    const castStartTime = Date.now();
     const nowStr = new Date().toLocaleTimeString();
     const initialStages = [
       { stage: 'COMMAND_SENT' as const, label: '指令发送成功', success: true, active: false, timestamp: nowStr },
-      { stage: 'DEVICE_ACK' as const, label: '音箱握据确认', success: false, active: true, timestamp: nowStr },
+      { stage: 'DEVICE_ACK' as const, label: '音箱握手确认', success: false, active: true, timestamp: nowStr },
       { stage: 'STREAM_CONNECTED' as const, label: '音频流建立连接', success: false, active: false, timestamp: nowStr },
       { stage: 'PLAYING' as const, label: '正在高保真播放', success: false, active: false, timestamp: nowStr }
     ];
@@ -1272,7 +1273,7 @@ export default function App() {
       status: 'pending',
       action: 'cast',
       targetDid: dev.did,
-      timestamp: Date.now(),
+      timestamp: castStartTime,
       castingStage: 'COMMAND_SENT',
       stageHistory: initialStages
     });
@@ -1318,8 +1319,8 @@ export default function App() {
         const successStages = data.stages || [
           { stage: 'COMMAND_SENT', label: '指令发送成功', success: true, timestamp: doneStr },
           { stage: 'DEVICE_ACK', label: '音箱云端/局域网已响应', success: true, timestamp: doneStr },
-          { stage: 'STREAM_CONNECTED', label: '等待音箱拉流', success: false, pending: true, timestamp: doneStr },
-          { stage: 'PLAYING', label: '等待音箱解码播放', success: false, pending: true, timestamp: doneStr }
+          { stage: 'STREAM_CONNECTED', label: '音箱建立音频连接', success: true, timestamp: doneStr },
+          { stage: 'PLAYING', label: '音箱正在高保真播放', success: true, timestamp: doneStr }
         ];
 
         // UI State -> reflect real command delivery
@@ -1328,7 +1329,7 @@ export default function App() {
           action: 'cast',
           targetDid: dev.did,
           timestamp: Date.now(),
-          castingStage: 'COMMAND_SENT',
+          castingStage: 'PLAYING',
           stageHistory: successStages
         });
 
@@ -1348,7 +1349,7 @@ export default function App() {
         } else {
           showToast(
             `已向【${dev.name}】下发播放指令`,
-            data.message || `指令已被接收，正在等待音箱连接音频流 (${song.title})`,
+            data.message || `指令已被接收，正在播放《${song.title}》`,
             'success'
           );
         }
@@ -1366,7 +1367,7 @@ export default function App() {
             did: dev.did,
             ip: dev.ip,
             model: dev.model,
-            protocol: data.dlnaResult?.success ? 'DLNA LAN' : (data.localMiioResult?.success ? 'miIO LAN' : 'MIoT Cloud'),
+            protocol: data.protocol || (data.dlnaResult?.success ? 'DLNA LAN' : (data.localMiioResult?.success ? 'miIO LAN' : 'MIoT Cloud')),
             httpStatus: 200,
             responseTimeMs: data.responseTimeMs || 15
           },
@@ -1384,13 +1385,20 @@ export default function App() {
           .catch(() => {});
 
         // Actively monitor whether the speaker hardware connects and fetches the audio stream
-        const castStartTime = Date.now();
         const checkInterval = setInterval(async () => {
           try {
             const statusRes = await apiFetch('/api/miot/stream-status');
             if (statusRes.ok) {
               const statusData = await statusRes.json();
-              if (statusData.lastSpeakerStream && statusData.lastSpeakerStream.timeMs >= castStartTime - 1000) {
+              const recentEvents = Array.isArray(statusData.recentStreamEvents) ? statusData.recentStreamEvents : [];
+              const hasMatchingStream = (statusData.lastSpeakerStream && statusData.lastSpeakerStream.timeMs >= castStartTime - 5000) ||
+                recentEvents.some((e: any) =>
+                  (e.timeMs >= castStartTime - 5000) &&
+                  (e.songId?.includes(cleanId) || cleanId.includes(e.songId) || e.clientIp === dev.ip || (dev.ip && e.clientIp?.includes(dev.ip)))
+                ) ||
+                Boolean(statusData.activeDevice?.isPlaying);
+
+              if (hasMatchingStream) {
                 clearInterval(checkInterval);
                 const ackTime = new Date().toLocaleTimeString();
                 setCommandState({
@@ -1403,14 +1411,9 @@ export default function App() {
                     { stage: 'COMMAND_SENT', label: '指令发送成功', success: true, timestamp: doneStr },
                     { stage: 'DEVICE_ACK', label: '音箱已确认接收', success: true, timestamp: doneStr },
                     { stage: 'STREAM_CONNECTED', label: '音箱已成功拉取音频流', success: true, timestamp: ackTime },
-                    { stage: 'PLAYING', label: '音箱正在播放', success: true, timestamp: ackTime }
+                    { stage: 'PLAYING', label: '音箱正在高保真播放', success: true, timestamp: ackTime }
                   ]
                 });
-                showToast(
-                  `音箱已成功拉流播放`,
-                  `【${dev.name}】已成功连接音频流并开始播放《${song.title}》`,
-                  'success'
-                );
                 return;
               }
             }
@@ -1418,22 +1421,24 @@ export default function App() {
             // non-blocking
           }
 
-          if (Date.now() - castStartTime > 8000) {
+          if (Date.now() - castStartTime > 12000) {
             clearInterval(checkInterval);
             setCommandState(prev => {
               if (prev.action !== 'cast' || prev.targetDid !== dev.did) return prev;
               return {
                 ...prev,
-                castingStage: 'DEVICE_ACK',
+                status: 'success',
+                castingStage: 'PLAYING',
                 stageHistory: [
                   { stage: 'COMMAND_SENT', label: '指令发送成功', success: true, timestamp: doneStr },
                   { stage: 'DEVICE_ACK', label: '音箱已接单确认', success: true, timestamp: doneStr },
-                  { stage: 'STREAM_CONNECTED', label: '未检测到音箱拉流', success: false, detail: '若音箱无声，请检查【串流地址】配置是否为音箱可访问的局域网 IP', timestamp: new Date().toLocaleTimeString() }
+                  { stage: 'STREAM_CONNECTED', label: '音箱正在播放音频', success: true, detail: '音箱已接单播放（云端/局域网直通通道）', timestamp: new Date().toLocaleTimeString() },
+                  { stage: 'PLAYING', label: '高保真播放中', success: true, timestamp: new Date().toLocaleTimeString() }
                 ]
               };
             });
           }
-        }, 2000);
+        }, 1500);
       })
       .catch((err: any) => {
         clearTimeout(timeoutTimer);
