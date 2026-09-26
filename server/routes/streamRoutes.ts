@@ -8,6 +8,7 @@ import { StreamServer } from '../streaming/streamServer.js';
 import { transcodeSemaphorePool } from '../streaming/transcodeSemaphore.js';
 import { queueEngine } from '../core/queueEngine.js';
 import { ttsEngine, POPULAR_TTS_VOICES } from '../ttsEngine.js';
+import { radioService } from '../services/radioService.js';
 
 export interface StreamEventInfo {
   timestamp: string;
@@ -254,6 +255,101 @@ export function createStreamRouter(options: StreamRouterOptions) {
     const cleanSongId = rawCleanSongId;
     const safeCleanSongId = path.basename(cleanSongId);
     const safeSongId = path.basename(songId);
+
+    // 0. Check if requested stream is a Network Radio Station (XiaoAi & global stream player support)
+    const radioStation = radioService.getStationById(cleanSongId) || 
+      (cleanSongId.startsWith('station_') ? radioService.getAllStations().find(s => s.id === cleanSongId || s.id === songId) : undefined);
+    
+    if (radioStation) {
+      const abortController = new AbortController();
+      req.on('close', () => {
+        try { abortController.abort(); } catch {}
+      });
+
+      const forwardHeaders: Record<string, string> = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 TingLan-RadioRelay',
+        'Accept': '*/*'
+      };
+      if (req.headers.range) {
+        forwardHeaders['Range'] = String(req.headers.range);
+      }
+
+      const streamCandidates = [radioStation.url, ...(radioStation.backupUrls || [])];
+      for (const targetUrl of streamCandidates) {
+        try {
+          const upstreamRes = await fetch(targetUrl, {
+            headers: forwardHeaders,
+            signal: abortController.signal
+          });
+
+          if (!upstreamRes.ok && upstreamRes.status !== 206) {
+            continue;
+          }
+
+          const rawContentType = upstreamRes.headers.get('content-type') || '';
+          const isHlsPlaylist = /mpegurl|\.m3u8/i.test(rawContentType) || /\.m3u8($|\?)/i.test(targetUrl);
+
+          if (isHlsPlaylist) {
+            const playlistText = await upstreamRes.text();
+            const baseUrl = new URL(targetUrl);
+            const rewrittenPlaylist = playlistText.split('\n').map(line => {
+              const trimmed = line.trim();
+              if (!trimmed || trimmed.startsWith('#')) return line;
+              try {
+                const fullSegmentUrl = new URL(trimmed, baseUrl).toString();
+                return `/api/radio/proxy?url=${encodeURIComponent(fullSegmentUrl)}`;
+              } catch {
+                return line;
+              }
+            }).join('\n');
+
+            res.setHeader('Content-Type', 'application/vnd.apple.mpegurl; charset=utf-8');
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+            res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type, Accept-Ranges');
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+            return res.send(rewrittenPlaylist);
+          }
+
+          const contentType = rawContentType || 'audio/mpeg';
+          const contentLength = upstreamRes.headers.get('content-length');
+          const contentRange = upstreamRes.headers.get('content-range');
+          const acceptRanges = upstreamRes.headers.get('accept-ranges') || 'bytes';
+
+          res.status(upstreamRes.status);
+          res.setHeader('Content-Type', contentType);
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+          res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type, Accept-Ranges');
+          res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+          res.setHeader('Accept-Ranges', acceptRanges);
+
+          if (contentLength) res.setHeader('Content-Length', contentLength);
+          if (contentRange) res.setHeader('Content-Range', contentRange);
+
+          if (req.method === 'HEAD') {
+            return res.end();
+          }
+
+          if (upstreamRes.body) {
+            const nodeStream = Readable.fromWeb(upstreamRes.body as any);
+            nodeStream.on('error', () => {
+              if (!res.headersSent) {
+                try { res.status(502).end(); } catch {}
+              }
+            });
+            return nodeStream.pipe(res);
+          } else {
+            return res.end();
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      return res.status(502).json({ error: 'Radio station upstream unavailable', message: `无法连接网络电台直播源 (${radioStation.name})` });
+    }
+
     let foundSong = storedSongs.find(s => s.id === cleanSongId || s.id === songId);
 
     // Resolve local file path
