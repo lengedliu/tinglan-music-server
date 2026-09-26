@@ -206,6 +206,7 @@ let activeDbConfig = loadJson(DB_CONFIG_FILE, {
 });
 const sqliteDb = initSqliteDatabase(SQLITE_FILE, defaultAdminUser);
 if (sqliteDb) {
+  musicRepository.setSqliteDb(sqliteDb);
   interactionRepository.setSqliteDb(sqliteDb);
   scheduledTaskRepository.setSqliteDb(sqliteDb);
   speakerGroupRepository.setSqliteDb(sqliteDb);
@@ -290,6 +291,18 @@ taskSchedulerEngine.setHandlers({
   }
 });
 taskSchedulerEngine.start();
+taskSchedulerEngine.on('taskExecuted', (task) => {
+  appEventBus.broadcast('task:executed', task);
+});
+
+adaptiveHeartbeatEngine.setRpcHandlers(
+  (path, method, msg, tDid) => callMinaCloudApi(path, method, msg, tDid, 0, miotConfig, (cfg) => saveJson(CONFIG_FILE, cfg)),
+  (ip, token, method, params, timeoutMs) => sendMiioCommand(ip, token, method, params, timeoutMs)
+);
+adaptiveHeartbeatEngine.onStateSync((did, status) => {
+  appEventBus.broadcast('device:status', { did, ...status });
+});
+adaptiveHeartbeatEngine.start();
 
 // Security Settings
 const defaultSecuritySettings: SecuritySettings = {

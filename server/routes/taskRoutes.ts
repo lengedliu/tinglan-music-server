@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { scheduledTaskRepository, ScheduledTask } from '../core/repositories/scheduledTaskRepository.js';
 import { taskSchedulerEngine } from '../core/taskSchedulerEngine.js';
+import { appEventBus } from '../core/eventBus.js';
 
 export function createTaskRouter(): Router {
   const router = Router();
@@ -50,6 +51,7 @@ export function createTaskRouter(): Router {
       };
 
       const saved = scheduledTaskRepository.upsertTask(task);
+      appEventBus.broadcast('task:change', { action: 'upsert', task: saved });
       return res.json({
         success: true,
         message: '定时任务已成功保存',
@@ -70,6 +72,7 @@ export function createTaskRouter(): Router {
       }
       task.isEnabled = !task.isEnabled;
       scheduledTaskRepository.upsertTask(task);
+      appEventBus.broadcast('task:change', { action: 'toggle', task });
       return res.json({
         success: true,
         message: `任务已${task.isEnabled ? '启用' : '停用'}`,
@@ -88,6 +91,7 @@ export function createTaskRouter(): Router {
       if (!ok) {
         return res.status(404).json({ success: false, error: '任务不存在或已删除' });
       }
+      appEventBus.broadcast('task:change', { action: 'delete', taskId: id });
       return res.json({
         success: true,
         message: '定时任务已成功删除'

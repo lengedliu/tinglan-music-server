@@ -23,6 +23,56 @@ export interface PlaybackTickEvent {
   isPlaying: boolean;
 }
 
+export interface ScanProgressEvent {
+  status: 'idle' | 'scanning' | 'completed' | 'failed';
+  totalFound: number;
+  processed: number;
+  newAdded: number;
+  updated: number;
+  currentFile?: string;
+  error?: string;
+  durationMs?: number;
+  isScanning?: boolean;
+}
+
+export interface ScanCompleteEvent {
+  added: number;
+  updated: number;
+  total: number;
+  durationMs: number;
+  progress: ScanProgressEvent;
+  songs?: any[];
+}
+
+export interface ResumeChangeEvent {
+  action: 'save' | 'delete';
+  songId: string;
+  resumePoint?: any;
+}
+
+export interface TaskChangeEvent {
+  action: 'upsert' | 'toggle' | 'delete' | 'executed';
+  task?: any;
+  taskId?: string;
+}
+
+export interface DeviceStatusEvent {
+  did: string;
+  isOnline?: boolean;
+  isPlaying?: boolean;
+  volume?: number;
+  [key: string]: any;
+}
+
+export interface LibraryChangeEvent {
+  action: 'scan' | 'add' | 'delete' | 'update';
+  song?: any;
+  songId?: string;
+  total?: number;
+  added?: number;
+  updated?: number;
+}
+
 type EventListener<T = any> = (data: T) => void;
 
 interface AppEventsContextType {
@@ -38,6 +88,7 @@ export const AppEventsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [lastQueueStatus, setLastQueueStatus] = useState<QueueStatusEvent | null>(null);
   const listenersRef = useRef<Map<string, Set<EventListener>>>(new Map());
   const eventSourceRef = useRef<EventSource | null>(null);
+  const attachedEventsRef = useRef<Set<string>>(new Set());
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const dispatchEvent = useCallback((type: string, data: any) => {
@@ -69,45 +120,43 @@ export const AppEventsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         setIsConnected(true);
       };
 
-      es.addEventListener('connected', (e: MessageEvent) => {
-        setIsConnected(true);
-        try {
-          const payload = JSON.parse(e.data);
-          if (payload?.queue) {
-            setLastQueueStatus(payload.queue);
-            dispatchEvent('queue:change', payload.queue);
+      attachedEventsRef.current.clear();
+      const attachListener = (eventType: string) => {
+        if (attachedEventsRef.current.has(eventType)) return;
+        attachedEventsRef.current.add(eventType);
+        es.addEventListener(eventType, (e: MessageEvent) => {
+          try {
+            const payload = JSON.parse(e.data);
+            if (eventType === 'queue:change' || (eventType === 'connected' && payload?.queue)) {
+              setLastQueueStatus(payload?.queue || payload);
+            }
+            dispatchEvent(eventType, payload);
+          } catch {
+            dispatchEvent(eventType, e.data);
           }
-        } catch {}
-      });
+        });
+      };
 
-      es.addEventListener('queue:change', (e: MessageEvent) => {
-        try {
-          const payload = JSON.parse(e.data);
-          setLastQueueStatus(payload);
-          dispatchEvent('queue:change', payload);
-        } catch {}
-      });
+      [
+        'connected',
+        'queue:change',
+        'playback:tick',
+        'mina:event',
+        'device:change',
+        'device:status',
+        'scan:progress',
+        'scan:complete',
+        'scan:error',
+        'resume:change',
+        'task:executed',
+        'task:change',
+        'library:change'
+      ].forEach(attachListener);
 
-      es.addEventListener('playback:tick', (e: MessageEvent) => {
-        try {
-          const payload = JSON.parse(e.data);
-          dispatchEvent('playback:tick', payload);
-        } catch {}
-      });
-
-      es.addEventListener('mina:event', (e: MessageEvent) => {
-        try {
-          const payload = JSON.parse(e.data);
-          dispatchEvent('mina:event', payload);
-        } catch {}
-      });
-
-      es.addEventListener('device:change', (e: MessageEvent) => {
-        try {
-          const payload = JSON.parse(e.data);
-          dispatchEvent('device:change', payload);
-        } catch {}
-      });
+      // Also attach any already subscribed custom event types
+      for (const eventType of listenersRef.current.keys()) {
+        attachListener(eventType);
+      }
 
       es.onerror = () => {
         setIsConnected(false);
@@ -161,6 +210,18 @@ export const AppEventsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       listenersRef.current.set(eventType, new Set());
     }
     listenersRef.current.get(eventType)!.add(listener as EventListener);
+
+    if (eventSourceRef.current && !attachedEventsRef.current.has(eventType)) {
+      attachedEventsRef.current.add(eventType);
+      eventSourceRef.current.addEventListener(eventType, (e: MessageEvent) => {
+        try {
+          const payload = JSON.parse(e.data);
+          dispatchEvent(eventType, payload);
+        } catch {
+          dispatchEvent(eventType, e.data);
+        }
+      });
+    }
 
     return () => {
       const set = listenersRef.current.get(eventType);

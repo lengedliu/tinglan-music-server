@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Navbar } from './components/Navbar';
 import { PlayerBar } from './components/PlayerBar';
 import { MobileTabBar } from './components/MobileTabBar';
@@ -237,8 +237,9 @@ export default function App() {
       .catch(() => {});
   };
 
-  // Audio Reference
+  // Audio Reference & Next Track Preload Reference
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const preloadAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const activeDevice = devices.find(d => d.did === activeDeviceId) || devices[0];
 
@@ -646,11 +647,147 @@ export default function App() {
       }
     });
 
+    const unsubScanProgress = subscribe('scan:progress', (data: any) => {
+      if (data?.isScanning) {
+        setIsScanning(true);
+      }
+    });
+
+    const unsubScanComplete = subscribe('scan:complete', (data: any) => {
+      setIsScanning(false);
+      if (data.songs && Array.isArray(data.songs)) {
+        setSongs(data.songs);
+      } else {
+        apiFetch('/api/songs').then(r => r.json()).then(s => {
+          if (Array.isArray(s)) setSongs(s);
+        }).catch(() => {});
+      }
+      showToast('曲库扫描完成', `新增 ${data.added || 0} 首，更新 ${data.updated || 0} 首，总计 ${data.total || 0} 首`, 'success');
+    });
+
+    const unsubScanError = subscribe('scan:error', (data: any) => {
+      setIsScanning(false);
+      showToast('曲库扫描遇到异常', data.error || '扫描中断', 'error');
+    });
+
+    const unsubLibraryChange = subscribe('library:change', (event: any) => {
+      if (event.action === 'add' && event.song) {
+        setSongs(prev => [event.song, ...prev.filter(s => s.id !== event.song.id)]);
+      } else if (event.action === 'delete' && event.songId) {
+        setSongs(prev => prev.filter(s => s.id !== event.songId));
+      }
+    });
+
+    const unsubTaskExecuted = subscribe('task:executed', (task: any) => {
+      showToast('定时任务已触发', `任务 [${task.title || '计划任务'}] 已自动执行`, 'info');
+    });
+
+    // Phase 3: Bi-directional sync with physical Xiaomi Speaker (voice/button state & volume)
+    const unsubDeviceStatus = subscribe('device:status', (data: any) => {
+      if (!data) return;
+      const isTarget = data.did === activeDeviceId || (activeDevice && data.did === activeDevice.did);
+      if (isTarget) {
+        if (typeof data.volume === 'number' && data.volume >= 0) {
+          const normalizedVol = data.volume > 1 ? data.volume / 100 : data.volume;
+          setVolume(normalizedVol);
+          if (audioRef.current) audioRef.current.volume = normalizedVol;
+        }
+        if (isCasting && typeof data.isPlaying === 'boolean') {
+          setIsPlaying(data.isPlaying);
+        }
+        if (data.isOnline !== undefined) {
+          setDevices(prev => prev.map(d => d.did === data.did ? { ...d, isOnline: data.isOnline } : d));
+        }
+      }
+    });
+
     return () => {
       unsubQueue();
       unsubTick();
+      unsubScanProgress();
+      unsubScanComplete();
+      unsubScanError();
+      unsubLibraryChange();
+      unsubTaskExecuted();
+      unsubDeviceStatus();
     };
-  }, [subscribe, isCasting, currentSong?.id]);
+  }, [subscribe, isCasting, currentSong?.id, activeDeviceId, activeDevice]);
+
+  // Phase 3: Mobile Lock-Screen Wake-up & Network Reconnection Self-Healing
+  const reconcilePlaybackState = useCallback(() => {
+    apiFetch('/api/queue')
+      .then(res => res.ok ? res.json() : null)
+      .then(resData => {
+        if (!resData) return;
+        const status = resData.data || resData;
+        if (status) {
+          if (isCasting) {
+            if (status.isPlaying !== undefined && !status.isTransitioning) {
+              setIsPlaying(Boolean(status.isPlaying));
+            }
+            if (status.currentSong && status.currentSong.id !== currentSong?.id) {
+              setCurrentSong(status.currentSong);
+              timeActions.setDuration(status.currentSong.duration || 200);
+            }
+            if (typeof status.elapsedSeconds === 'number' && status.elapsedSeconds >= 0) {
+              timeActions.setCurrentTime(status.elapsedSeconds);
+            }
+          }
+          if (status.queue && Array.isArray(status.queue) && status.queue.length > 0) {
+            setPlayQueue(status.queue);
+          }
+        }
+      })
+      .catch(() => {});
+
+    fetchDevices();
+  }, [isCasting, currentSong?.id, timeActions]);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && !document.hidden) {
+        reconcilePlaybackState();
+      }
+    };
+    const handleOnline = () => {
+      reconcilePlaybackState();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('online', handleOnline);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [reconcilePlaybackState]);
+
+  // Phase 3: Zero-Latency Next Track Preload for local browser audio
+  useEffect(() => {
+    if (isCasting || !currentSong || !isPlaying) return;
+    const queue = playQueue.length > 0 ? playQueue : songs;
+    if (queue.length <= 1) return;
+    const currentIndex = queue.findIndex(s => s.id === currentSong.id);
+    if (currentIndex === -1) return;
+    let nextIdx = (currentIndex + 1) % queue.length;
+    if (isShuffle) {
+      nextIdx = Math.floor(Math.random() * queue.length);
+    }
+    const nextSong = queue[nextIdx];
+    if (!nextSong) return;
+
+    const isNavi = Boolean((nextSong.id && nextSong.id.startsWith('navidrome-')) || (nextSong.url && nextSong.url.includes('/rest/stream')));
+    const nextSrc = (nextSong.url && !nextSong.url.includes('pixabay') && !isNavi) 
+      ? nextSong.url 
+      : `/api/stream/${encodeURIComponent(nextSong.id)}`;
+
+    if (preloadAudioRef.current) {
+      if (!preloadAudioRef.current.src || !preloadAudioRef.current.src.includes(encodeURIComponent(nextSong.id))) {
+        preloadAudioRef.current.src = nextSrc;
+        preloadAudioRef.current.load();
+      }
+    }
+  }, [currentSong?.id, isPlaying, isCasting, isShuffle, playQueue, songs]);
 
   // Fallback sync ONLY when SSE connection is offline (Zero polling while SSE is active!)
   useEffect(() => {
@@ -1605,11 +1742,13 @@ export default function App() {
       const data = await res.json();
       if (data.songs && data.songs.length > 0) {
         setSongs(data.songs);
+        setIsScanning(false);
+        showToast('挂载目录 /music 扫描完成', `本次新增 ${data.added || 0} 首，曲库总计 ${data.total || songs.length} 首`, 'success');
+      } else {
+        showToast('曲库扫描已在后台启动', '实时分析音频元数据中，完成后将通过实时总线自动刷新曲库...', 'info');
       }
-      showToast('挂载目录 /music 扫描完成', `本次新增 ${data.added || 0} 首，曲库总计 ${data.total || songs.length} 首`, 'success');
     } catch (e) {
-      showToast('扫描目录完成', `曲库现有 ${songs.length} 首高保真音频`, 'info');
-    } finally {
+      showToast('扫描目录请求失败', '请检查服务端与音频目录状态', 'error');
       setIsScanning(false);
     }
   };
@@ -2158,6 +2297,15 @@ export default function App() {
               handleNextSong();
             }
           }}
+        />
+
+        {/* Phase 3: Zero-Latency Next Track Preload Audio Engine */}
+        <audio
+          ref={preloadAudioRef}
+          preload="auto"
+          className="hidden"
+          muted
+          aria-hidden="true"
         />
 
         {/* Top Warning Ribbon for Default Admin Password */}

@@ -3,6 +3,7 @@ import { Play, Sparkles, Clock, Smartphone, Radio, X, RotateCcw, ArrowRight } fr
 import { Song, XiaomiDevice } from '../../types';
 import { apiFetch } from '../../utils/api';
 import { useTheme } from '../../context/ThemeContext';
+import { useAppEvents } from '../../context/AppEventsContext';
 
 export interface ResumePointItem {
   id: string;
@@ -36,6 +37,7 @@ export const ResumePointsShelf: React.FC<ResumePointsShelfProps> = ({
   currentSongId
 }) => {
   const { theme } = useTheme();
+  const { isConnected, subscribe } = useAppEvents();
   const [resumePoints, setResumePoints] = useState<ResumePointItem[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -56,11 +58,21 @@ export const ResumePointsShelf: React.FC<ResumePointsShelfProps> = ({
     }
   }, []);
 
+  // Real-time instant sync via SSE event bus (zero latency on save/delete/finish)
   useEffect(() => {
     fetchResumePoints();
-    const interval = setInterval(fetchResumePoints, 15000);
+    const unsub = subscribe('resume:change', () => {
+      fetchResumePoints();
+    });
+    return () => unsub();
+  }, [fetchResumePoints, subscribe]);
+
+  // Fallback sync ONLY when offline (Zero continuous polling while SSE stream is active)
+  useEffect(() => {
+    if (isConnected) return;
+    const interval = setInterval(fetchResumePoints, 30000);
     return () => clearInterval(interval);
-  }, [fetchResumePoints]);
+  }, [isConnected, fetchResumePoints]);
 
   const handleDelete = async (e: React.MouseEvent, songId: string) => {
     e.stopPropagation();

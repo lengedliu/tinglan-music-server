@@ -5,6 +5,7 @@ import { Song } from './musicEngine.js';
 import { musicRepository } from './repositories/musicRepository.js';
 import { musicSearchIndex } from './searchIndex.js';
 import { parseCueSheet } from './cueParser.js';
+import { appEventBus } from './eventBus.js';
 
 export interface ScanProgress {
   status: 'idle' | 'scanning' | 'completed' | 'failed';
@@ -56,12 +57,14 @@ export class AsyncMusicScanner {
       newAdded: 0,
       updated: 0
     };
+    appEventBus.broadcast('scan:progress', { ...this.progress, isScanning: true });
 
     try {
       console.log(`[AsyncMusicScanner] Starting non-blocking scan in: ${musicDir}`);
       const audioFiles = await this.collectAudioFilesAsync(musicDir);
       this.progress.totalFound = audioFiles.length;
       console.log(`[AsyncMusicScanner] Discovered ${audioFiles.length} audio candidates.`);
+      appEventBus.broadcast('scan:progress', { ...this.progress, isScanning: true });
 
       const existingSongs = musicRepository.getAllSongs();
       const existingMap = new Map<string, Song>();
@@ -71,6 +74,7 @@ export class AsyncMusicScanner {
 
       let added = 0;
       let updated = 0;
+      let lastBroadcastTime = Date.now();
 
       // Enable batch mode in repository to suspend intermediate disk writes
       musicRepository.beginBatch();
@@ -110,6 +114,16 @@ export class AsyncMusicScanner {
             }
           })
         );
+
+        this.progress.newAdded = added;
+        this.progress.updated = updated;
+
+        // Throttle SSE broadcasts to avoid flooding event loop while giving responsive progress
+        const now = Date.now();
+        if (now - lastBroadcastTime > 200 || this.progress.processed >= this.progress.totalFound) {
+          lastBroadcastTime = now;
+          appEventBus.broadcast('scan:progress', { ...this.progress, isScanning: true });
+        }
 
         // Yield to event loop to allow concurrent HTTP / Cast requests
         await new Promise((r) => setImmediate(r));
@@ -172,12 +186,32 @@ export class AsyncMusicScanner {
       this.progress.updated = updated;
       this.progress.durationMs = durationMs;
 
-      console.log(`✨ [AsyncMusicScanner] Scan completed in ${durationMs}ms: +${added} added, ~${updated} updated, total ${musicRepository.getAllSongs().length} tracks.`);
-      return { added, updated, total: musicRepository.getAllSongs().length, durationMs };
+      const totalTracks = musicRepository.getAllSongs().length;
+      appEventBus.broadcast('scan:complete', {
+        added,
+        updated,
+        total: totalTracks,
+        durationMs,
+        progress: this.progress,
+        songs: musicRepository.getAllSongs()
+      });
+      appEventBus.broadcast('library:change', {
+        action: 'scan',
+        total: totalTracks,
+        added,
+        updated
+      });
+
+      console.log(`✨ [AsyncMusicScanner] Scan completed in ${durationMs}ms: +${added} added, ~${updated} updated, total ${totalTracks} tracks.`);
+      return { added, updated, total: totalTracks, durationMs };
     } catch (err: any) {
       console.error('[AsyncMusicScanner] Scan failed:', err);
       this.progress.status = 'failed';
       this.progress.error = err.message;
+      appEventBus.broadcast('scan:error', {
+        error: err.message,
+        progress: this.progress
+      });
       return { added: 0, updated: 0, total: 0, durationMs: Date.now() - startTime };
     } finally {
       this.isScanning = false;

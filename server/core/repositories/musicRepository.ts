@@ -25,6 +25,7 @@ export class MusicRepository {
   private playlistsPersistTimer: NodeJS.Timeout | null = null;
   private isPersistingSongs: boolean = false;
   private isPersistingPlaylists: boolean = false;
+  private sqliteDb: any = null;
 
   constructor(dataDir: string = path.join(process.cwd(), 'data')) {
     this.dataDir = dataDir;
@@ -34,6 +35,119 @@ export class MusicRepository {
     this.ensureDirectory();
     this.loadSongs();
     this.loadPlaylists();
+  }
+
+  public setSqliteDb(db: any) {
+    this.sqliteDb = db;
+    this.syncFromSqlite();
+  }
+
+  private syncFromSqlite() {
+    if (!this.sqliteDb) return;
+    try {
+      this.sqliteDb.all('SELECT * FROM songs', (err: any, rows: any[]) => {
+        if (!err && Array.isArray(rows) && rows.length > 0) {
+          const loadedSongs: Song[] = rows.map((r) => ({
+            id: r.id,
+            title: r.title,
+            artist: r.artist || '',
+            album: r.album || '',
+            duration: r.duration || 0,
+            url: r.url || '',
+            coverUrl: r.cover_url || '',
+            lyrics: r.lyrics || '',
+            genre: r.genre || '',
+            year: r.year || undefined,
+            bitrate: r.bitrate || '',
+            fileSize: r.file_size || '',
+            isFavorite: Boolean(r.is_favorite || 0),
+            source: (r.source as any) || 'local'
+          }));
+          this.setSongs(loadedSongs, false);
+          console.log(`[MusicRepository] Synchronized ${loadedSongs.length} tracks from SQLite SSOT.`);
+        } else if (this.songs.length > 0) {
+          this.syncSongsToSqlite();
+        }
+      });
+
+      this.sqliteDb.all('SELECT * FROM playlists', (err: any, rows: any[]) => {
+        if (!err && Array.isArray(rows) && rows.length > 0) {
+          const loadedPlaylists: Playlist[] = rows.map((r) => ({
+            id: r.id,
+            name: r.name,
+            description: r.description || '',
+            coverUrl: r.cover_url || '',
+            songIds: r.song_ids ? (typeof r.song_ids === 'string' ? JSON.parse(r.song_ids) : r.song_ids) : [],
+            createdAt: r.created_at || new Date().toISOString()
+          }));
+          this.playlists = loadedPlaylists;
+          console.log(`[MusicRepository] Synchronized ${loadedPlaylists.length} playlists from SQLite SSOT.`);
+        } else if (this.playlists.length > 0) {
+          this.syncPlaylistsToSqlite();
+        }
+      });
+    } catch (e) {
+      console.warn('[MusicRepository] Failed to sync with SQLite DB:', e);
+    }
+  }
+
+  private syncSongsToSqlite() {
+    if (!this.sqliteDb) return;
+    try {
+      this.sqliteDb.serialize(() => {
+        const stmt = this.sqliteDb.prepare(`
+          INSERT OR REPLACE INTO songs (id, title, artist, album, duration, url, cover_url, lyrics, genre, year, bitrate, file_size, source, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        for (const s of this.songs) {
+          stmt.run(
+            s.id,
+            s.title || 'Unknown Title',
+            s.artist || '',
+            s.album || '',
+            s.duration || 0,
+            s.url || '',
+            s.coverUrl || '',
+            s.lyrics || '',
+            s.genre || '',
+            s.year || null,
+            s.bitrate || '',
+            s.fileSize || '',
+            s.source || 'local',
+            new Date().toISOString()
+          );
+        }
+        stmt.finalize();
+      });
+    } catch (err) {
+      console.warn('[MusicRepository] Failed to sync songs to SQLite:', err);
+    }
+  }
+
+  private syncPlaylistsToSqlite() {
+    if (!this.sqliteDb) return;
+    try {
+      this.sqliteDb.serialize(() => {
+        const stmt = this.sqliteDb.prepare(`
+          INSERT OR REPLACE INTO playlists (id, user_id, name, description, cover_url, song_ids, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `);
+        for (const p of this.playlists) {
+          stmt.run(
+            p.id,
+            (p as any).userId || 'usr-admin-001',
+            p.name,
+            p.description || '',
+            p.coverUrl || '',
+            JSON.stringify(p.songIds || []),
+            p.createdAt || new Date().toISOString()
+          );
+        }
+        stmt.finalize();
+      });
+    } catch (err) {
+      console.warn('[MusicRepository] Failed to sync playlists to SQLite:', err);
+    }
   }
 
   private ensureDirectory() {
@@ -115,6 +229,7 @@ export class MusicRepository {
       const data = JSON.stringify(this.songs, null, 2);
       await fs.promises.writeFile(tmpFile, data, 'utf-8');
       await fs.promises.rename(tmpFile, this.songsFile);
+      this.syncSongsToSqlite();
     } catch (err) {
       console.error('[MusicRepository] Async persistSongs failed:', err);
       try {
@@ -133,6 +248,7 @@ export class MusicRepository {
       const data = JSON.stringify(this.playlists, null, 2);
       await fs.promises.writeFile(tmpFile, data, 'utf-8');
       await fs.promises.rename(tmpFile, this.playlistsFile);
+      this.syncPlaylistsToSqlite();
     } catch (err) {
       console.error('[MusicRepository] Async persistPlaylists failed:', err);
       try {
@@ -228,6 +344,13 @@ export class MusicRepository {
       this.songs.splice(idx, 1);
       this.songsMap.delete(id);
       musicSearchIndex.removeSong(id);
+      if (this.sqliteDb) {
+        try {
+          this.sqliteDb.run('DELETE FROM songs WHERE id = ?', [id]);
+        } catch (e) {
+          console.warn('[MusicRepository] Failed to delete song from SQLite:', e);
+        }
+      }
       this.schedulePersistSongs(300);
       return true;
     }
@@ -275,6 +398,13 @@ export class MusicRepository {
     const idx = this.playlists.findIndex((p) => p.id === id);
     if (idx >= 0) {
       this.playlists.splice(idx, 1);
+      if (this.sqliteDb) {
+        try {
+          this.sqliteDb.run('DELETE FROM playlists WHERE id = ?', [id]);
+        } catch (e) {
+          console.warn('[MusicRepository] Failed to delete playlist from SQLite:', e);
+        }
+      }
       this.schedulePersistPlaylists(300);
       return true;
     }

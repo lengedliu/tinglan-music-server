@@ -9,6 +9,7 @@ import { DynamicPlaylistEngine } from '../core/dynamicPlaylistEngine.js';
 import { smartPlaylistRepository, SmartPlaylistRule } from '../core/repositories/smartPlaylistRepository.js';
 import { fingerprintCacheRepository } from '../core/repositories/fingerprintCacheRepository.js';
 import { resumePointRepository } from '../core/repositories/resumePointRepository.js';
+import { appEventBus } from '../core/eventBus.js';
 
 export interface SongsRouterOptions {
   getSongs: () => any[];
@@ -353,6 +354,12 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
         });
       }
 
+      appEventBus.broadcast('library:change', {
+        action: 'add',
+        song: newSong,
+        total: getSongs().length
+      });
+
       res.json({ success: true, song: newSong });
     } catch (err: any) {
       console.error('Upload handler error:', err);
@@ -375,6 +382,11 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
 
     if (storedSongs.length < initialLen) {
       setSongs(storedSongs);
+      appEventBus.broadcast('library:change', {
+        action: 'delete',
+        songId: id,
+        total: storedSongs.length
+      });
       // Remove disk file if exists using path.basename to prevent directory traversal
       for (const ext of ['.wav', '.mp3', '.flac', '.m4a', '.aac', '.ogg', '.opus', '.ape', '.dsf', '.dff']) {
         const p = path.join(musicDir, `${safeId}${ext}`);
@@ -668,6 +680,12 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
         isCompleted
       });
 
+      appEventBus.broadcast('resume:change', {
+        action: 'save',
+        songId: id,
+        resumePoint: saved
+      });
+
       return res.json({ success: true, resumePoint: saved });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
@@ -680,6 +698,14 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
       const { id } = req.params;
       const clientUser = (req as any).user;
       const deleted = resumePointRepository.deleteResumePoint(id, clientUser?.id);
+      
+      if (deleted) {
+        appEventBus.broadcast('resume:change', {
+          action: 'delete',
+          songId: id
+        });
+      }
+
       return res.json({ success: true, deleted });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message });
