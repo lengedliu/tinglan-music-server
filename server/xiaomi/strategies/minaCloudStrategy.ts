@@ -21,14 +21,15 @@ export class MinaCloudCastStrategy implements ICastStrategy {
     const isTouchscreen = targetDevice.hardwareProfile?.isTouchscreen || false;
     const resolvedHw = resolveDeviceHardware(targetDevice);
     const needsPlayMusic = isNeedUsePlayMusicApi(resolvedHw, targetDevice.model);
+    const targetMinaId = (targetDevice as any).deviceID || (targetDevice as any).hardwareDeviceId || (targetDevice as any).uuid || targetDevice.did;
 
     try {
-      console.log(`[CastStrategy][Mina] Dispatching to "${targetDevice.model || ''}" (${resolvedHw}), mode: ${needsPlayMusic ? 'XiaoWei CP' : 'player_play_url'}...`);
+      console.log(`[CastStrategy][Mina] Dispatching to "${targetDevice.model || ''}" (${resolvedHw}), targetId: ${targetMinaId}, mode: ${needsPlayMusic ? 'XiaoWei CP' : 'player_play_url'}...`);
 
       if (needsPlayMusic) {
         // XiaoWei CP Method: player_play_music
         const musicMsg = buildXiaoWeiMusicMessage(streamUrl, { keepLight: true });
-        let ubusRes = await callMinaCloudApiFn('mediaplayer', 'player_play_music', musicMsg, targetDevice.did);
+        let ubusRes = await callMinaCloudApiFn('mediaplayer', 'player_play_music', musicMsg, targetMinaId);
 
         if (ubusRes?.success) {
           steps.push({
@@ -50,7 +51,7 @@ export class MinaCloudCastStrategy implements ICastStrategy {
         }
 
         // Sub-fallback: player_play_url type 1
-        ubusRes = await callMinaCloudApiFn('mediaplayer', 'player_play_url', { url: streamUrl, type: 1, media: 'app_ios' }, targetDevice.did);
+        ubusRes = await callMinaCloudApiFn('mediaplayer', 'player_play_url', { url: streamUrl, type: 1, media: 'app_ios' }, targetMinaId);
         if (ubusRes?.success) {
           steps.push({
             timestamp: nowStr(),
@@ -72,7 +73,7 @@ export class MinaCloudCastStrategy implements ICastStrategy {
       } else {
         // Standard Method: player_play_url
         const primaryPlayType = isTouchscreen ? 0 : 1;
-        let ubusRes = await callMinaCloudApiFn('mediaplayer', 'player_play_url', { url: streamUrl, type: primaryPlayType, media: 'app_ios' }, targetDevice.did);
+        let ubusRes = await callMinaCloudApiFn('mediaplayer', 'player_play_url', { url: streamUrl, type: primaryPlayType, media: 'app_ios' }, targetMinaId);
 
         if (ubusRes?.success) {
           steps.push({

@@ -428,13 +428,19 @@ async function doCallMinaCloudApi(
     return { success: false, error: '缺少有效的 micoapi serviceToken 或 userId' };
   }
 
+  const devices = deviceRepository.getAllDevices();
+  const resolvedDev = devices.find((d: any) => 
+    d.did === targetDid || 
+    (d as any).deviceID === targetDid || 
+    (d as any).cloudDid === targetDid ||
+    (d as any).hardwareDeviceId === targetDid
+  );
+
   let finalDeviceId = targetDid;
-  if (!finalDeviceId || finalDeviceId.startsWith('did-') || finalDeviceId.startsWith('manual_')) {
-    const devices = deviceRepository.getAllDevices();
-    const resolvedDev = devices.find((d: any) => d.did === targetDid || (d as any).deviceID === targetDid);
-    if (resolvedDev) {
-      finalDeviceId = (resolvedDev as any).deviceID || (resolvedDev as any).uuid || (resolvedDev as any).cloudDid || resolvedDev.did;
-    }
+  if (resolvedDev) {
+    // Mina Cloud UBUS (api2.mina.mi.com/remote/ubus) strictly requires the genuine hardware deviceID/uuid from Mina device_list,
+    // NOT the numerical MIoT DID (e.g. 2181380715).
+    finalDeviceId = (resolvedDev as any).deviceID || (resolvedDev as any).hardwareDeviceId || (resolvedDev as any).uuid || (resolvedDev as any).cloudDid || targetDid;
   }
 
   const endpoint = 'https://api2.mina.mi.com/remote/ubus';

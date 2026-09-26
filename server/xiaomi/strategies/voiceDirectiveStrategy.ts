@@ -37,16 +37,24 @@ export class VoiceDirectiveCastStrategy implements ICastStrategy {
 
     try {
       console.log(`[CastStrategy][Voice] Sending Cloud Voice Directive (siid=7, aiid=4): "播放 ${songQuery}"`);
-      let textDirectiveRes = await miotRpcEngine.executeAction(targetDevice, 7, 4, [`播放 ${songQuery}`], miotAuth);
+      // Standard OH2P MIoT Spec Service 7 Action 4 requires [text, silentExecution(0)]
+      let textDirectiveRes = await miotRpcEngine.executeAction(targetDevice, 7, 4, [`播放 ${songQuery}`, 0], miotAuth);
 
       if (!this.isMiotActionSuccess(textDirectiveRes) && (textDirectiveRes.code === -704083036 || textDirectiveRes.code !== 0)) {
-        const retryRes = await miotRpcEngine.executeAction(targetDevice, 7, 4, [songQuery], miotAuth);
+        // Try single param fallback
+        const retryRes = await miotRpcEngine.executeAction(targetDevice, 7, 4, [`播放 ${songQuery}`], miotAuth);
         if (this.isMiotActionSuccess(retryRes)) {
           textDirectiveRes = retryRes;
+        } else {
+          const directRes = await miotRpcEngine.executeAction(targetDevice, 7, 4, [songQuery, 0], miotAuth);
+          if (this.isMiotActionSuccess(directRes)) {
+            textDirectiveRes = directRes;
+          }
         }
       }
 
       if (!this.isMiotActionSuccess(textDirectiveRes)) {
+        // Fallback to Action 3 (Play Text / TTS): [text]
         const ttsRes = await miotRpcEngine.executeAction(targetDevice, 7, 3, [`为您播放：${songQuery}`], miotAuth);
         if (this.isMiotActionSuccess(ttsRes)) {
           textDirectiveRes = ttsRes;

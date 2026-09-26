@@ -627,7 +627,12 @@ export class MiotRpcEngine {
 
     // 2. Fallback to Cloud MIoT
     if (cloudAuth?.userId && cloudAuth?.serviceToken) {
-      const targetDid = (device as any).cloudDid || (device as any).deviceID || device.did;
+      const isNumericDid = (val?: string) => val && /^\d{5,15}$/.test(String(val).trim());
+      const targetDid = isNumericDid(device.did)
+        ? String(device.did).trim()
+        : (isNumericDid((device as any).cloudDid)
+          ? String((device as any).cloudDid).trim()
+          : ((device as any).cloudDid || (device as any).deviceID || device.did));
       return this.executeCloudMiot('miotspec/prop/get', { params: [{ did: targetDid, siid, piid }] }, cloudAuth.userId, cloudAuth.serviceToken, cloudAuth.ssecurity);
     }
 
@@ -653,7 +658,12 @@ export class MiotRpcEngine {
 
     // 2. Fallback to Cloud MIoT
     if (cloudAuth?.userId && cloudAuth?.serviceToken) {
-      const targetDid = (device as any).cloudDid || (device as any).deviceID || device.did;
+      const isNumericDid = (val?: string) => val && /^\d{5,15}$/.test(String(val).trim());
+      const targetDid = isNumericDid(device.did)
+        ? String(device.did).trim()
+        : (isNumericDid((device as any).cloudDid)
+          ? String((device as any).cloudDid).trim()
+          : ((device as any).cloudDid || (device as any).deviceID || device.did));
       return this.executeCloudMiot('miotspec/prop/set', { params: [{ did: targetDid, siid, piid, value }] }, cloudAuth.userId, cloudAuth.serviceToken, cloudAuth.ssecurity);
     }
 
@@ -681,7 +691,12 @@ export class MiotRpcEngine {
 
     // 2. Fallback to Cloud MIoT
     if (cloudAuth?.userId && cloudAuth?.serviceToken) {
-      const targetDid = (device as any).cloudDid || (device as any).deviceID || device.did;
+      const isNumericDid = (val?: string) => val && /^\d{5,15}$/.test(String(val).trim());
+      const targetDid = isNumericDid(device.did)
+        ? String(device.did).trim()
+        : (isNumericDid((device as any).cloudDid)
+          ? String((device as any).cloudDid).trim()
+          : ((device as any).cloudDid || (device as any).deviceID || device.did));
       return this.executeCloudMiot('miotspec/action', { params: { did: targetDid, siid, aiid, in: inParams } }, cloudAuth.userId, cloudAuth.serviceToken, cloudAuth.ssecurity);
     }
 

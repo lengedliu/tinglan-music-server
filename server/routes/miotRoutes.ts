@@ -1059,10 +1059,26 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
     res.json({ success: true, profiles });
   });
 
+  router.post('/strategy-profiles/reset', (req: Request, res: Response) => {
+    const { did } = req.body || {};
+    if (did) {
+      castPipelineManager.clearProfile(String(did));
+      res.json({ success: true, message: `已重置设备 ${did} 的投播策略记忆缓存` });
+    } else {
+      castPipelineManager.resetAllProfiles();
+      res.json({ success: true, message: '已全量重置所有设备的投播降级与策略记忆缓存' });
+    }
+  });
+
   router.post('/strategy-profiles/:did/reset', (req: Request, res: Response) => {
     const { did } = req.params;
     castPipelineManager.clearProfile(did);
     res.json({ success: true, message: `已重置设备 ${did} 的投播策略记忆缓存` });
+  });
+
+  router.post('/strategy-profiles/reset-all', (_req: Request, res: Response) => {
+    castPipelineManager.resetAllProfiles();
+    res.json({ success: true, message: '已全量重置所有设备的投播降级与策略记忆缓存' });
   });
 
   router.post('/devices/resolve', async (req: Request, res: Response) => {
