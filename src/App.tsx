@@ -1010,48 +1010,56 @@ export default function App() {
       const playSrc = (song.url && !song.url.includes('pixabay') && !isNavi) 
         ? song.url 
         : `/api/stream/${encodeURIComponent(song.id)}`;
+
+      const isHlsStream = /\.m3u8($|\?)/i.test(playSrc) || playSrc.includes('/api/radio/stream/') || playSrc.includes('/api/radio/proxy');
+
       if (audioRef.current) {
         if (audioSettings.crossfadeDuration > 0) {
           audioRef.current.volume = 0;
         } else {
           audioRef.current.volume = volume;
         }
-        // Check if src needs update without triggering redundant reload
-        if (!audioRef.current.src || !audioRef.current.src.includes(encodeURIComponent(song.id))) {
-          audioRef.current.src = playSrc;
-        }
-        audioRef.current.currentTime = 0;
-        const playPromise = audioRef.current.play();
-        if (playPromise !== undefined) {
-          playPromise
-            .then(() => {
-              setIsPlaying(true);
-              isCrossfadingRef.current = false;
-              if (audioSettings.crossfadeDuration > 0) {
-                fadeAudioIn(volume, Math.min(audioSettings.crossfadeDuration * 1000, 3000));
-              }
-            })
-            .catch((e: any) => {
-              isCrossfadingRef.current = false;
-              if (e && e.name === 'AbortError') {
-                // Recover immediately once buffer is ready
-                const handleCanPlay = () => {
-                  audioRef.current?.play().then(() => {
-                    setIsPlaying(true);
-                    if (audioSettings.crossfadeDuration > 0) {
-                      fadeAudioIn(volume, Math.min(audioSettings.crossfadeDuration * 1000, 3000));
-                    }
-                  }).catch(() => {});
-                  audioRef.current?.removeEventListener('canplay', handleCanPlay);
-                };
-                audioRef.current?.addEventListener('canplay', handleCanPlay);
-              } else {
-                console.warn('Audio play request error:', e);
-              }
-            });
+
+        if (!isHlsStream) {
+          // Check if src needs update without triggering redundant reload
+          if (!audioRef.current.src || !audioRef.current.src.includes(encodeURIComponent(song.id))) {
+            audioRef.current.src = playSrc;
+          }
+          audioRef.current.currentTime = 0;
+          const playPromise = audioRef.current.play();
+          if (playPromise !== undefined) {
+            playPromise
+              .then(() => {
+                setIsPlaying(true);
+                isCrossfadingRef.current = false;
+                if (audioSettings.crossfadeDuration > 0) {
+                  fadeAudioIn(volume, Math.min(audioSettings.crossfadeDuration * 1000, 3000));
+                }
+              })
+              .catch((e: any) => {
+                isCrossfadingRef.current = false;
+                if (e && e.name === 'AbortError') {
+                  // Recover immediately once buffer is ready
+                  const handleCanPlay = () => {
+                    audioRef.current?.play().then(() => {
+                      setIsPlaying(true);
+                      if (audioSettings.crossfadeDuration > 0) {
+                        fadeAudioIn(volume, Math.min(audioSettings.crossfadeDuration * 1000, 3000));
+                      }
+                    }).catch(() => {});
+                    audioRef.current?.removeEventListener('canplay', handleCanPlay);
+                  };
+                  audioRef.current?.addEventListener('canplay', handleCanPlay);
+                } else {
+                  console.warn('Audio play request error:', e);
+                }
+              });
+          }
+        } else {
+          // For HLS & radio streams, Hls.js in dual-engine useEffect handles loading and playback
+          setIsPlaying(true);
         }
       }
-      setIsPlaying(true);
     }
   };
 
@@ -1268,6 +1276,13 @@ export default function App() {
       { stage: 'PLAYING' as const, label: '正在高保真播放', success: false, active: false, timestamp: nowStr }
     ];
 
+    // Synchronize currentSong state immediately so playerbar & lyrics show track info
+    setCurrentSong(song);
+    timeActions.setCurrentTime(0);
+    timeActions.setDuration(song.duration || 0);
+    setIsPlaying(true);
+    setIsCasting(true);
+
     // UI State: Command is now pending, awaiting speaker hardware confirmation
     setCommandState({
       status: 'pending',
@@ -1278,11 +1293,17 @@ export default function App() {
       stageHistory: initialStages
     });
 
-    const cleanId = song.id.replace(/\.(mp3|flac|wav|m4a|aac|ogg|opus|ape)$/i, '');
     const streamBase = miotConfig.serverHost && miotConfig.serverHost.startsWith('http')
       ? miotConfig.serverHost.replace(/\/$/, '')
       : window.location.origin;
-    const streamUrl = `${streamBase}/api/stream/${encodeURIComponent(cleanId)}.mp3`;
+    
+    let streamUrl = song.url || '';
+    if (streamUrl && streamUrl.startsWith('/api/')) {
+      streamUrl = `${streamBase}${streamUrl}`;
+    } else if (!streamUrl || !streamUrl.startsWith('http')) {
+      const cleanId = song.id.replace(/\.(mp3|flac|wav|m4a|aac|ogg|opus|ape)$/i, '');
+      streamUrl = `${streamBase}/api/stream/${encodeURIComponent(cleanId)}.mp3`;
+    }
 
     const queueToSend = (customQueue && customQueue.length > 0) ? customQueue : (playQueue.length > 0 ? playQueue : songs);
     const queueMode = isShuffle ? 'shuffle' : repeatMode === 'one' ? 'one' : 'all';
@@ -2458,21 +2479,34 @@ export default function App() {
               devices={devices}
               activeDevice={activeDevice}
               onPlaySongInBrowser={(song) => {
+                setIsCasting(false);
+                if (audioRef.current) audioRef.current.pause();
                 handlePlaySong(song);
-                showToast('播放在线广播/播客', `正在播放: ${song.title}`, 'info');
+                showToast('播放在线广播/播客', `正在网页播放: ${song.title}`, 'info');
               }}
               onCastToSpeaker={(deviceId, title, artist, audioUrl, coverUrl) => {
-                const payload: any = {
+                const targetDev = devices.find(d => d.did === deviceId) || activeDevice;
+                if (!targetDev) {
+                  showToast('未选择音箱', '请先在上方选中一台小米音箱设备', 'error');
+                  return;
+                }
+                const streamBase = miotConfig.serverHost && miotConfig.serverHost.startsWith('http')
+                  ? miotConfig.serverHost.replace(/\/$/, '')
+                  : window.location.origin;
+                const fullAudioUrl = audioUrl.startsWith('http') ? audioUrl : `${streamBase}${audioUrl}`;
+
+                const payload: Song = {
                   id: `radio_${Date.now()}`,
                   title,
                   artist,
                   album: '网络广播/播客',
                   duration: 0,
-                  url: audioUrl,
-                  filePath: audioUrl,
+                  url: fullAudioUrl,
+                  filePath: fullAudioUrl,
                   coverUrl
                 };
-                castSongToDevice(payload, devices.find(d => d.did === deviceId) || activeDevice);
+                if (audioRef.current) audioRef.current.pause();
+                castSongToDevice(payload, targetDev);
               }}
             />
           )}

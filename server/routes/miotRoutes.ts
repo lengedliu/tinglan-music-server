@@ -1318,8 +1318,8 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
     const streamToken = generateStreamToken(cleanSongId);
     let resolvedStreamUrl = `${baseHost}/api/stream/${encodeURIComponent(cleanSongId)}.mp3?token=${streamToken}`;
     const isNavidromeOrRawStream = streamUrl && (streamUrl.includes('/rest/stream.view') || streamUrl.includes(':4533') || streamUrl.includes('subsonic'));
-    if (streamUrl && streamUrl.startsWith('http') && !streamUrl.includes('localhost') && !streamUrl.includes('127.0.0.1') && !isNavidromeOrRawStream) {
-      resolvedStreamUrl = streamUrl;
+    if (streamUrl && (streamUrl.includes('/api/radio/') || (streamUrl.startsWith('http') && !streamUrl.includes('localhost') && !streamUrl.includes('127.0.0.1') && !isNavidromeOrRawStream))) {
+      resolvedStreamUrl = streamUrl.startsWith('/api/') ? `${baseHost}${streamUrl}` : streamUrl;
     }
 
     if (miotConfig.ttsAnnouncement) {
