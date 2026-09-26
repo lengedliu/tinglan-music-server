@@ -93,7 +93,20 @@ export class QueueEngine extends EventEmitter {
   }
 
   /**
+   * Determine if a track is an infinite 24h Live Stream / Radio Station
+   */
+  public isLiveStream(song?: Song | null): boolean {
+    if (!song) return false;
+    if (song.isLiveStream) return true;
+    if (typeof song.id === 'string' && (song.id.startsWith('station_') || song.id.includes('station_'))) return true;
+    if (song.genre === '网络电台' || song.genre === 'Live Radio' || song.album === '网络电台') return true;
+    if (typeof song.url === 'string' && (song.url.includes('.m3u8') || song.url.includes('/api/radio/stream/'))) return true;
+    return false;
+  }
+
+  /**
    * Load and seamlessly resume state from persisted KV snapshot
+   * Optimization P0-3: Silent standby on boot — restores queue & index, but NEVER auto-triggers audio output to speakers on restart!
    */
   public loadPersistedState() {
     try {
@@ -108,32 +121,13 @@ export class QueueEngine extends EventEmitter {
       this.targetDid = saved.targetDid || '';
       this.targetDeviceName = saved.targetDeviceName || '';
 
-      const now = Date.now();
-      const duration = saved.currentDuration || 180;
-      this.currentDuration = duration;
-
-      if (saved.isPlaying && saved.songStartTime > 0) {
-        const elapsed = Math.floor((now - saved.songStartTime) / 1000);
-        if (elapsed < duration && elapsed >= 0) {
-          // Song is still actively playing on speaker during hot restart!
-          const remaining = duration - elapsed;
-          this.isPlaying = true;
-          this.currentSongStarted = true;
-          this.songStartTime = saved.songStartTime;
-          console.log(`[QueueEngine] 🔄 成功从快照无缝恢复热重启前播放态: 第 ${this.currentIndex + 1}/${this.queue.length} 首《${this.queue[this.currentIndex]?.title}》, 已播 ${elapsed}s, 剩余 ${remaining}s`);
-          this.scheduleAutoAdvance(remaining);
-          this.startHeartbeat();
-        } else {
-          // Track finished while server was restarting: keep position ready
-          this.isPlaying = false;
-          this.currentSongStarted = false;
-          this.songStartTime = 0;
-          console.log(`[QueueEngine] 📂 已加载持久化播放队列快照: 共 ${this.queue.length} 首, 停留在第 ${this.currentIndex + 1} 首《${this.queue[this.currentIndex]?.title}》`);
-        }
-      } else {
-        this.isPlaying = false;
-        this.currentSongStarted = false;
-      }
+      this.currentDuration = saved.currentDuration || 180;
+      this.isPlaying = false;
+      this.currentSongStarted = false;
+      this.songStartTime = 0;
+      this.clearTimer();
+      this.stopHeartbeat();
+      console.log(`[QueueEngine] 📂 已加载持久化播放队列快照 (静默待命): 共 ${this.queue.length} 首, 停留在第 ${this.currentIndex + 1} 首《${this.queue[this.currentIndex]?.title}》`);
     } catch (err: any) {
       console.warn('[QueueEngine] Failed to restore queue snapshot:', err?.message);
     }
@@ -212,17 +206,47 @@ export class QueueEngine extends EventEmitter {
       this.currentIndex = 0;
     }
 
+    const isLive = this.isLiveStream(song);
     this.isPlaying = true;
     this.currentSongStarted = false;
     this.songStartTime = Date.now();
-    this.currentDuration = (song.duration && song.duration > 5) ? song.duration : 180;
+    this.currentDuration = isLive ? 0 : ((song.duration && song.duration > 5) ? song.duration : 180);
 
-    console.log(`[QueueEngine] 🔄 同步当前曲目: 第 ${this.currentIndex + 1}/${this.queue.length} 首《${this.queue[this.currentIndex]?.title}》, 模式: ${this.loopMode}, 时长: ${this.currentDuration}s`);
+    console.log(`[QueueEngine] 🔄 同步当前曲目: 第 ${this.currentIndex + 1}/${this.queue.length} 首《${this.queue[this.currentIndex]?.title}》, 模式: ${this.loopMode}, 时长: ${isLive ? '24h无限电台直播' : `${this.currentDuration}s`}`);
 
-    this.scheduleAutoAdvance(this.currentDuration);
-    this.startHeartbeat();
-    this.triggerNextTrackPreheat();
+    if (!isLive) {
+      this.scheduleAutoAdvance(this.currentDuration);
+      this.startHeartbeat();
+      this.triggerNextTrackPreheat();
+    } else {
+      console.log(`[QueueEngine] 📻 当前曲目为网络电台直播流《${song.title}》，已禁用切歌计时器`);
+      this.clearTimer();
+      this.stopHeartbeat();
+    }
     this.emit('change', this.getStatus());
+  }
+
+  /**
+   * Bi-directional Reverse Status Sensing:
+   * Called when background adaptive heartbeat discovers hardware physical play state changes
+   */
+  public onHardwareStateChange(did: string, hardwareIsPlaying: boolean, volume?: number) {
+    if (this.targetDid && this.targetDid !== did) return;
+    if (this.isTransitioning) return;
+
+    const now = Date.now();
+    // Within 4s of song initiation, give speaker firmware time to buffer and establish playback
+    if (this.songStartTime > 0 && (now - this.songStartTime < 4000)) {
+      return;
+    }
+
+    if (this.isPlaying && !hardwareIsPlaying) {
+      console.log(`[QueueEngine] 🎛️ 感知到小爱音箱 (${did}) 硬件已停止/暂停播放 (物理按键或语音交互)，自动同步服务端状态并销毁计时器`);
+      this.pause();
+    } else if (!this.isPlaying && hardwareIsPlaying) {
+      console.log(`[QueueEngine] 🎛️ 感知到小爱音箱 (${did}) 硬件已恢复播放，自动同步服务端状态`);
+      this.resume();
+    }
   }
 
   /**
@@ -317,12 +341,13 @@ export class QueueEngine extends EventEmitter {
     }
 
     const song = this.queue[this.currentIndex];
+    const isLive = this.isLiveStream(song);
     this.isPlaying = true;
     this.currentSongStarted = false;
     this.songStartTime = Date.now();
-    this.currentDuration = (song.duration && song.duration > 5) ? song.duration : 180;
+    this.currentDuration = isLive ? 0 : ((song.duration && song.duration > 5) ? song.duration : 180);
 
-    console.log(`[QueueEngine] ▶️ 启动全歌单连续投播: 共 ${this.queue.length} 首, 起始首:《${song.title}》, 模式: ${this.loopMode}, 时长: ${this.currentDuration}s`);
+    console.log(`[QueueEngine] ▶️ 启动全歌单连续投播: 共 ${this.queue.length} 首, 起始首:《${song.title}》, 模式: ${this.loopMode}, 时长: ${isLive ? '24h无限电台直播' : `${this.currentDuration}s`}`);
 
     // Dispatch cast command to the target speaker
     let dispatchRes: { success: boolean; message?: string; error?: string } = { success: true, message: '已下发投播指令' };
@@ -334,10 +359,16 @@ export class QueueEngine extends EventEmitter {
       }
     }
 
-    // Schedule auto advance based on duration + safety buffer
-    this.scheduleAutoAdvance(this.currentDuration);
-    this.startHeartbeat();
-    this.triggerNextTrackPreheat();
+    if (!isLive) {
+      // Schedule auto advance based on duration + safety buffer
+      this.scheduleAutoAdvance(this.currentDuration);
+      this.startHeartbeat();
+      this.triggerNextTrackPreheat();
+    } else {
+      console.log(`[QueueEngine] 📻 当前曲目为网络电台直播流《${song.title}》，已完全禁用自动切歌计时器`);
+      this.clearTimer();
+      this.stopHeartbeat();
+    }
     this.emit('change', this.getStatus());
 
     return {
@@ -406,6 +437,21 @@ export class QueueEngine extends EventEmitter {
 
     const activeSong = this.queue[this.currentIndex];
     const now = Date.now();
+    const isLive = this.isLiveStream(activeSong);
+
+    // If current track is a 24h live stream or radio station, disable all timers & anti-loop guards!
+    if (isLive) {
+      this.currentDuration = 0;
+      this.clearTimer();
+      this.stopHeartbeat();
+      if (!this.currentSongStarted) {
+        this.currentSongStarted = true;
+        this.songStartTime = now;
+        console.log(`[QueueEngine] 📻 音箱硬件已连接网络电台直播流《${activeSong?.title}》，已完全豁免切歌计时器`);
+        this.emit('change', this.getStatus());
+      }
+      return;
+    }
 
     // 1. First time speaker pulls stream for this song
     if (!this.currentSongStarted) {
@@ -431,19 +477,24 @@ export class QueueEngine extends EventEmitter {
     const elapsed = Math.floor((now - this.songStartTime) / 1000);
     const startByte = options?.startByte ?? (options?.range ? parseInt(options.range.replace(/^bytes=/, '').split('-')[0], 10) : undefined);
 
-    // ANTI-LOOP GUARD: If the speaker re-requests byte 0 of the current song after playing for > 10s or 35% of song duration,
-    // it means the speaker's internal media player finished playback and is trying to repeat the same URL!
-    const minElapsedThreshold = Math.min(10, Math.max(5, this.currentDuration * 0.35));
-    if (startByte === 0 && elapsed >= minElapsedThreshold) {
-      if (this.loopMode === 'one') {
-        console.log(`[QueueEngine] 🔂 单曲循环模式：音箱重新从头播放《${activeSong?.title}》`);
-        this.songStartTime = now;
-        this.scheduleAutoAdvance(this.currentDuration);
-      } else if (!this.isTransitioning) {
-        console.log(`[QueueEngine] 🔄 监测到音箱硬件尝试单曲循环回绕 (已播放 ${elapsed}s / 总时长 ${this.currentDuration}s)，立即拦截单曲循环，自动切播队列下一首！`);
-        this.next(false).catch(err => console.warn('[QueueEngine] 循环拦截切歌异常:', err));
+    // ANTI-LOOP GUARD & RECONNECT DEBOUNCING:
+    // Only intercept when >= 75% of song duration has elapsed AND byte 0 is re-requested.
+    // If byte 0 is re-requested early in the track (< 75% duration), treat it as WiFi jitter/reconnection without skipping!
+    const minElapsedThreshold = Math.max(15, this.currentDuration * 0.75);
+    if (startByte === 0) {
+      if (elapsed >= minElapsedThreshold) {
+        if (this.loopMode === 'one') {
+          console.log(`[QueueEngine] 🔂 单曲循环模式：音箱重新从头播放《${activeSong?.title}》`);
+          this.songStartTime = now;
+          this.scheduleAutoAdvance(this.currentDuration);
+        } else if (!this.isTransitioning) {
+          console.log(`[QueueEngine] 🔄 监测到音箱硬件已播完曲目并尝试单曲循环回绕 (已播放 ${elapsed}s / 总时长 ${this.currentDuration}s)，立即拦截单曲循环，自动切播队列下一首！`);
+          this.next(false).catch(err => console.warn('[QueueEngine] 循环拦截切歌异常:', err));
+        }
+        return;
+      } else {
+        console.log(`[QueueEngine] 📶 捕获到音箱弱网/网络抖动重新握手请求 (已播 ${elapsed}s / 总时长 ${this.currentDuration}s)，判定为网络重连，保持当前曲目平稳播放`);
       }
-      return;
     }
 
     // Normal intermediate range requests (buffering bytes): DO NOT reset songStartTime or autoAdvanceTimer!
@@ -636,12 +687,13 @@ export class QueueEngine extends EventEmitter {
 
     this.currentIndex = Math.max(0, Math.min(index, this.queue.length - 1));
     const song = this.queue[this.currentIndex];
+    const isLive = this.isLiveStream(song);
     this.isPlaying = true;
     this.currentSongStarted = false;
     this.songStartTime = Date.now();
-    this.currentDuration = (song.duration && song.duration > 5) ? song.duration : 180;
+    this.currentDuration = isLive ? 0 : ((song.duration && song.duration > 5) ? song.duration : 180);
 
-    console.log(`[QueueEngine] ⏭️ 切换至第 ${this.currentIndex + 1}/${this.queue.length} 首:《${song.title}》 (时长: ${this.currentDuration}s)`);
+    console.log(`[QueueEngine] ⏭️ 切换至第 ${this.currentIndex + 1}/${this.queue.length} 首:《${song.title}》 (时长: ${isLive ? '24h无限电台直播' : `${this.currentDuration}s`})`);
 
     let dispatchRes: { success: boolean; message?: string; error?: string } = { success: true, message: '已切歌并下发投播' };
     if (this.castDispatcher && this.targetDid) {
@@ -652,8 +704,14 @@ export class QueueEngine extends EventEmitter {
       }
     }
 
-    this.scheduleAutoAdvance(this.currentDuration);
-    this.startHeartbeat();
+    if (!isLive) {
+      this.scheduleAutoAdvance(this.currentDuration);
+      this.startHeartbeat();
+    } else {
+      console.log(`[QueueEngine] 📻 切换至网络电台《${song.title}》，已禁用切歌计时器`);
+      this.clearTimer();
+      this.stopHeartbeat();
+    }
     this.emit('change', this.getStatus());
 
     setTimeout(() => {
@@ -807,6 +865,13 @@ export class QueueEngine extends EventEmitter {
   public resume() {
     if (this.queue.length === 0) return;
     this.isPlaying = true;
+    const currentSong = this.queue[this.currentIndex];
+    if (this.isLiveStream(currentSong)) {
+      this.clearTimer();
+      this.stopHeartbeat();
+      this.emit('change', this.getStatus());
+      return;
+    }
     const remaining = Math.max(5, this.currentDuration - Math.floor((Date.now() - this.songStartTime) / 1000));
     this.scheduleAutoAdvance(remaining);
     this.startHeartbeat();
@@ -816,6 +881,13 @@ export class QueueEngine extends EventEmitter {
   private scheduleAutoAdvance(durationSeconds: number) {
     this.clearTimer();
     if (!this.isPlaying) return;
+
+    const currentSong = this.queue[this.currentIndex];
+    if (this.isLiveStream(currentSong)) {
+      this.clearTimer();
+      this.stopHeartbeat();
+      return;
+    }
 
     // Smart Ring Buffer Tail Flush: XiaoAi hardware buffers ~128KB-256KB (~2.5-3.5s of audio)
     // Adding 2.5s tail grace buffer completely eliminates end-of-track clipping/swallowing
@@ -838,6 +910,10 @@ export class QueueEngine extends EventEmitter {
     this.stopHeartbeat();
     this.heartbeatTimer = setInterval(() => {
       if (!this.isPlaying || this.queue.length === 0 || this.songStartTime <= 0 || this.isTransitioning) return;
+      const currentSong = this.queue[this.currentIndex];
+      if (this.isLiveStream(currentSong)) {
+        return; // Network radio streams never trigger watchdog force advance
+      }
       const elapsed = Math.floor((Date.now() - this.songStartTime) / 1000);
       const remaining = Math.max(0, this.currentDuration - elapsed);
 

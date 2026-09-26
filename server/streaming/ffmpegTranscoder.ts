@@ -88,20 +88,32 @@ export class FfmpegTranscoder {
   }
 
   /**
-   * Fast-lookup for existing fresh cached MP3 file on disk
+   * Fast-lookup for existing fresh cached MP3 file on disk (Static Cache Hit)
    */
   public getCachedMp3(sourcePath: string, songId: string): string | null {
     if (!fs.existsSync(sourcePath)) return null;
     const sanitizedId = songId.replace(/[^a-zA-Z0-9_-]/g, '_');
-    const cachedMp3Path = path.join(this.cacheDir, `${sanitizedId}_standard.mp3`);
+    const cleanId = songId.replace(/\.(mp3|flac|wav|m4a|aac|ogg|opus|ape|dsf|dff)$/i, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const hashId = crypto.createHash('md5').update(sourcePath).digest('hex');
+
+    const candidates = [
+      path.join(this.cacheDir, `${sanitizedId}_standard.mp3`),
+      path.join(this.cacheDir, `${cleanId}_standard.mp3`),
+      path.join(this.cacheDir, `${hashId}_standard.mp3`),
+      path.join(this.cacheDir, `${sanitizedId}.mp3`),
+      path.join(this.cacheDir, `${cleanId}.mp3`)
+    ];
+
     try {
-      if (fs.existsSync(cachedMp3Path)) {
-        const cacheStat = fs.statSync(cachedMp3Path);
-        const sourceStat = fs.statSync(sourcePath);
-        if (cacheStat.size > 1024 && cacheStat.mtimeMs >= sourceStat.mtimeMs) {
-          // Touch cache for LRU/LFU frequency tracking
-          this.quotaManager.touchCache(path.basename(cachedMp3Path), cachedMp3Path, sourcePath);
-          return cachedMp3Path;
+      const sourceStat = fs.statSync(sourcePath);
+      for (const cachedMp3Path of candidates) {
+        if (fs.existsSync(cachedMp3Path)) {
+          const cacheStat = fs.statSync(cachedMp3Path);
+          if (cacheStat.size > 4096 && cacheStat.mtimeMs >= sourceStat.mtimeMs - 1000) {
+            // Touch cache for LRU/LFU frequency tracking
+            this.quotaManager.touchCache(path.basename(cachedMp3Path), cachedMp3Path, sourcePath);
+            return cachedMp3Path;
+          }
         }
       }
     } catch {}

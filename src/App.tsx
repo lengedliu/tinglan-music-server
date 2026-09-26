@@ -916,8 +916,8 @@ export default function App() {
       // Clean Speaker Output Logic: route pause/play strictly to Xiaomi Speaker, KEEP casting mode active!
       if (isPlaying) {
         setIsPlaying(false);
+        apiFetch('/api/queue/pause', { method: 'POST' }).catch(() => {});
         if (activeDevice) {
-          apiFetch('/api/queue/pause', { method: 'POST' }).catch(() => {});
           apiFetch('/api/miot/control', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -940,6 +940,7 @@ export default function App() {
       if (isPlaying) {
         audioRef.current?.pause();
         setIsPlaying(false);
+        apiFetch('/api/queue/pause', { method: 'POST' }).catch(() => {});
       } else {
         if (audioRef.current) {
           audioRef.current.volume = volume;

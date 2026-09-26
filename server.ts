@@ -301,6 +301,9 @@ adaptiveHeartbeatEngine.setRpcHandlers(
 );
 adaptiveHeartbeatEngine.onStateSync((did, status) => {
   appEventBus.broadcast('device:status', { did, ...status });
+  if (status.isPlaying !== undefined) {
+    queueEngine.onHardwareStateChange(did, status.isPlaying, status.currentVolume);
+  }
 });
 adaptiveHeartbeatEngine.start();
 

@@ -91,8 +91,9 @@ export class AsyncMusicScanner {
               const fileStats = await fs.promises.stat(filePath);
               const existing = existingMap.get(relPath);
 
-              // If already exists and size matches, skip heavy metadata re-parse
-              if (existing && existing.fileSize === `${(fileStats.size / (1024 * 1024)).toFixed(1)} MB`) {
+              // Fast Incremental Scan: If already exists in repository with valid metadata, skip heavy buffer parse
+              const sizeMbStr = `${(fileStats.size / (1024 * 1024)).toFixed(1)} MB`;
+              if (existing && existing.title && (existing.duration ?? 0) > 0 && (existing.fileSize === sizeMbStr || existing.fileSize)) {
                 this.progress.processed++;
                 return;
               }
