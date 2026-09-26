@@ -309,14 +309,15 @@ export const RadioPodcastTab: React.FC<RadioPodcastTabProps> = ({
   };
 
   const handlePlayStationInBrowser = (st: RadioStation) => {
+    const streamUrl = `/api/radio/stream/${encodeURIComponent(st.id)}`;
     const virtualSong: Song = {
       id: st.id,
       title: st.name,
       artist: st.description || '网络广播电台直播流',
       album: st.category.toUpperCase(),
       duration: 0,
-      url: st.url,
-      filePath: st.url,
+      url: streamUrl,
+      filePath: streamUrl,
       coverUrl: st.logoUrl || 'https://images.unsplash.com/photo-1590602847861-f357a9332bbc?w=300&auto=format&fit=crop&q=80'
     };
     onPlaySongInBrowser(virtualSong);
@@ -329,19 +330,21 @@ export const RadioPodcastTab: React.FC<RadioPodcastTabProps> = ({
       setActionMessage({ text: '请先在顶部音箱选择面板选中一台小爱音箱设备', type: 'error' });
       return;
     }
-    onCastToSpeaker(targetDid, st.name, st.description || '网络电台直播流', st.url, st.logoUrl);
+    const streamUrl = `/api/radio/stream/${encodeURIComponent(st.id)}`;
+    onCastToSpeaker(targetDid, st.name, st.description || '网络电台直播流', streamUrl, st.logoUrl);
     setActionMessage({ text: `已向【${activeDevice.name}】发送投播网络电台指令: ${st.name}`, type: 'success' });
   };
 
   const handlePlayEpisodeInBrowser = (ep: PodcastEpisode, podTitle: string) => {
+    const streamUrl = `/api/radio/proxy?url=${encodeURIComponent(ep.audioUrl)}`;
     const virtualSong: Song = {
       id: ep.id,
       title: ep.title,
       artist: podTitle,
       album: ep.pubDate || '播客单集',
       duration: 0,
-      url: ep.audioUrl,
-      filePath: ep.audioUrl,
+      url: streamUrl,
+      filePath: streamUrl,
       coverUrl: ep.coverUrl || 'https://images.unsplash.com/photo-1590602847861-f357a9332bbc?w=300&auto=format&fit=crop&q=80'
     };
     onPlaySongInBrowser(virtualSong);
@@ -354,7 +357,8 @@ export const RadioPodcastTab: React.FC<RadioPodcastTabProps> = ({
       setActionMessage({ text: '请先在顶部音箱选择面板选中一台小爱音箱设备', type: 'error' });
       return;
     }
-    onCastToSpeaker(targetDid, ep.title, podTitle, ep.audioUrl, ep.coverUrl);
+    const streamUrl = `/api/radio/proxy?url=${encodeURIComponent(ep.audioUrl)}`;
+    onCastToSpeaker(targetDid, ep.title, podTitle, streamUrl, ep.coverUrl);
     setActionMessage({ text: `已向【${activeDevice.name}】投播播客单集: ${ep.title}`, type: 'success' });
   };
 

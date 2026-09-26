@@ -5,6 +5,7 @@ export interface RadioStation {
   id: string;
   name: string;
   url: string;
+  backupUrls?: string[];
   category: 'national' | 'music' | 'lofi' | 'news' | 'classical' | 'custom';
   logoUrl?: string;
   description?: string;
@@ -44,80 +45,74 @@ const PRESET_STATIONS: RadioStation[] = [
     id: 'station_cnr_voice',
     name: 'CNR 中国之声',
     url: 'http://ngcdn001.cnr.cn/live/zgzs/index.m3u8',
+    backupUrls: ['http://ngcdn002.cnr.cn/live/zgzs/index.m3u8'],
     category: 'national',
     logoUrl: 'https://images.unsplash.com/photo-1590602847861-f357a9332bbc?w=150&auto=format&fit=crop&q=80',
     description: '中央人民广播电台中国之声 - 权威国家新闻与专题广播',
-    bitrate: '128kbps AAC',
+    bitrate: '128kbps AAC (HLS)',
     isCustom: false
   },
   {
-    id: 'station_hitfm',
-    name: 'HIT FM 88.7',
-    url: 'http://cdn.hitfm.cn/live/hitfm.m3u8',
-    category: 'music',
-    logoUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=150&auto=format&fit=crop&q=80',
-    description: 'CRI Hit FM - 全球流行音乐与欧美热门金曲电台',
-    bitrate: '128kbps MP3',
+    id: 'station_cnr_economy',
+    name: 'CNR 经济之声',
+    url: 'http://ngcdn002.cnr.cn/live/jjzs/index.m3u8',
+    category: 'national',
+    logoUrl: 'https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?w=150&auto=format&fit=crop&q=80',
+    description: '中央人民广播电台经济之声 - 财富、商业与民生经济观察',
+    bitrate: '128kbps AAC (HLS)',
     isCustom: false
   },
   {
-    id: 'station_gd_music',
-    name: '广东音乐之声 (FM99.3)',
-    url: 'http://stream.grtn.cn/yyzs/sd/live.m3u8',
-    category: 'music',
-    logoUrl: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=150&auto=format&fit=crop&q=80',
-    description: '华南流行音乐风向标 - 粤语金曲与流行乐评',
-    bitrate: '192kbps MP3',
-    isCustom: false
-  },
-  {
-    id: 'station_lofi_hiphop',
-    name: 'Lofi Chill Hip Hop Radio',
-    url: 'https://stream.zeno.fm/f3wvbbqmdg8uv',
+    id: 'station_groove_salad',
+    name: 'SomaFM Groove Salad (Lofi/Chill)',
+    url: 'https://ice1.somafm.com/groovesalad-128-mp3',
+    backupUrls: ['https://ice2.somafm.com/groovesalad-128-mp3', 'https://ice4.somafm.com/groovesalad-128-mp3'],
     category: 'lofi',
     logoUrl: 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?w=150&auto=format&fit=crop&q=80',
-    description: '24/7 舒适 Low-Fi 节拍 - 适合工作、学习与深夜放松',
+    description: '24/7 经典 Low-Fi / Ambient 节拍 - 适合工作、专注、编程与深夜放松',
+    bitrate: '128kbps MP3 直连',
+    isCustom: false
+  },
+  {
+    id: 'station_linn_jazz',
+    name: 'Linn Jazz 发烧爵士台',
+    url: 'http://radio.linn.co.uk:8000/stream',
+    category: 'music',
+    logoUrl: 'https://images.unsplash.com/photo-1511192336575-5a79af67a629?w=150&auto=format&fit=crop&q=80',
+    description: '英国 Linn Hi-Fi 顶级发烧爵士乐典藏 - 柔和醇厚咖啡馆氛围',
+    bitrate: '320kbps MP3 高清',
+    isCustom: false
+  },
+  {
+    id: 'station_linn_classical',
+    name: 'Linn Classical 顶级古典交响',
+    url: 'http://radio.linn.co.uk:8004/stream',
+    category: 'classical',
+    logoUrl: 'https://images.unsplash.com/photo-1507838153414-b4b713384a76?w=150&auto=format&fit=crop&q=80',
+    description: '莫扎特、贝多芬与肖邦 - 英国顶级古典交响乐发烧现场',
+    bitrate: '320kbps MP3 高清',
+    isCustom: false
+  },
+  {
+    id: 'station_secret_agent',
+    name: 'SomaFM Secret Agent (复古爵士)',
+    url: 'https://ice1.somafm.com/secretagent-128-mp3',
+    backupUrls: ['https://ice2.somafm.com/secretagent-128-mp3'],
+    category: 'music',
+    logoUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=150&auto=format&fit=crop&q=80',
+    description: '谍战与复古黑胶金曲 - 充满神秘感与律动的经典 Spy Jazz',
     bitrate: '128kbps MP3',
     isCustom: false
   },
   {
-    id: 'station_jazz_fm',
-    name: 'Smooth Jazz Radio',
-    url: 'https://stream.zeno.fm/0r22582064zuv',
-    category: 'music',
-    logoUrl: 'https://images.unsplash.com/photo-1511192336575-5a79af67a629?w=150&auto=format&fit=crop&q=80',
-    description: '柔和爵士乐与蓝调典藏 - 优雅咖啡厅氛感电台',
-    bitrate: '192kbps MP3',
-    isCustom: false
-  },
-  {
-    id: 'station_classic_fm',
-    name: 'Classic Classical FM',
-    url: 'https://stream.zeno.fm/43yda31778zuv',
-    category: 'classical',
-    logoUrl: 'https://images.unsplash.com/photo-1507838153414-b4b713384a76?w=150&auto=format&fit=crop&q=80',
-    description: '莫扎特、巴赫与贝多芬 - 优雅古典交响全天播送',
-    bitrate: '256kbps MP3',
-    isCustom: false
-  },
-  {
-    id: 'station_bbc_world',
-    name: 'BBC World Service',
-    url: 'https://stream.live.vc.bbcmedia.co.uk/bbc_world_service',
-    category: 'news',
-    logoUrl: 'https://images.unsplash.com/photo-1585829365295-ab7cd400c167?w=150&auto=format&fit=crop&q=80',
-    description: 'BBC 环球新闻 - 英语地道发音与全球时事看点',
-    bitrate: '96kbps AAC',
-    isCustom: false
-  },
-  {
-    id: 'station_bj_music',
-    name: '北京音乐广播 (FM97.4)',
-    url: 'http://live.bjradio.com.cn/fm974/sd/live.m3u8',
-    category: 'music',
-    logoUrl: 'https://images.unsplash.com/photo-1498038432885-c6f3f1b912ee?w=150&auto=format&fit=crop&q=80',
-    description: '经典音乐台 - 经典华语流行曲与音乐讲座',
-    bitrate: '128kbps AAC',
+    id: 'station_deep_space',
+    name: 'Deep Space One (深空冥想)',
+    url: 'https://ice1.somafm.com/deepspaceone-128-mp3',
+    backupUrls: ['https://ice2.somafm.com/deepspaceone-128-mp3'],
+    category: 'lofi',
+    logoUrl: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=150&auto=format&fit=crop&q=80',
+    description: '深空氛围电子与纯净白噪音 - 助眠、冥想与深层专注',
+    bitrate: '128kbps MP3',
     isCustom: false
   }
 ];
@@ -178,6 +173,10 @@ export class RadioService {
 
   public getAllStations(): RadioStation[] {
     return [...PRESET_STATIONS, ...this.customStations];
+  }
+
+  public getStationById(id: string): RadioStation | undefined {
+    return this.getAllStations().find(s => s.id === id);
   }
 
   public addCustomStation(station: Omit<RadioStation, 'id' | 'isCustom' | 'createdAt'>): RadioStation {

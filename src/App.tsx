@@ -31,6 +31,7 @@ import { apiFetch, setStoredAuthToken, getAuthToken } from './utils/api';
 import { formatTime } from './utils/lyricParser';
 import { recordSongPlay } from './utils/dynamicPlaylists';
 import { CheckCircle2, AlertCircle, Radio, X } from 'lucide-react';
+import Hls from 'hls.js';
 
 export default function App() {
   const { themeConfig, isThemeModalOpen, setIsThemeModalOpen } = useTheme();
@@ -240,6 +241,70 @@ export default function App() {
   // Audio Reference & Next Track Preload Reference
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const preloadAudioRef = useRef<HTMLAudioElement | null>(null);
+  const hlsRef = useRef<Hls | null>(null);
+
+  // Seamless HLS (.m3u8) + Standard Audio Dual-Engine Controller
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const playSrc = currentSong?.url || (currentSong ? `/api/stream/${encodeURIComponent(currentSong.id)}` : '');
+    if (!playSrc) return;
+
+    const isHlsStream = /\.m3u8($|\?)/i.test(playSrc) || playSrc.includes('/api/radio/stream/') || playSrc.includes('/api/radio/proxy');
+
+    if (isHlsStream && Hls.isSupported()) {
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: true,
+        backBufferLength: 30
+      });
+      hlsRef.current = hls;
+      hls.loadSource(playSrc);
+      hls.attachMedia(audio);
+
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        if (isPlaying) {
+          audio.play().catch(() => {});
+        }
+      });
+
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) {
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              hls.startLoad();
+              break;
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              hls.recoverMediaError();
+              break;
+            default:
+              hls.destroy();
+              break;
+          }
+        }
+      });
+    } else {
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+      if (audio.src !== playSrc) {
+        audio.src = playSrc;
+      }
+    }
+
+    return () => {
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+    };
+  }, [currentSong?.id, currentSong?.url]);
 
   const activeDevice = devices.find(d => d.did === activeDeviceId) || devices[0];
 

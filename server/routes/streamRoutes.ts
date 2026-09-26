@@ -318,7 +318,7 @@ export function createStreamRouter(options: StreamRouterOptions) {
         }
       }
 
-      if (!remoteStreamUrl && !foundLocalFile) {
+      if (!remoteStreamUrl && !localFilePath) {
         if (!navidromeConfig.serverUrl) {
           return res.status(400).json({ error: '未配置 Navidrome 服务器地址，请在曲库中设置 Navidrome 连接' });
         } else if (!options.isSafeRemoteStreamUrl(navidromeConfig.serverUrl)) {
