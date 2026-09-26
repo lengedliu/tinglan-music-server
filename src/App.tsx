@@ -1045,16 +1045,27 @@ export default function App() {
               isCrossfadingRef.current = false;
               if (audioSettings.crossfadeDuration > 0 && !isHlsStream) {
                 fadeAudioIn(volume, Math.min(audioSettings.crossfadeDuration * 1000, 3000));
+              } else if (audioRef.current) {
+                audioRef.current.volume = volume;
               }
             })
             .catch((e: any) => {
               isCrossfadingRef.current = false;
               setIsPlaying(true);
+              if (audioRef.current) {
+                audioRef.current.volume = volume;
+              }
               if (e && e.name === 'AbortError') {
                 const handleCanPlay = () => {
-                  audioRef.current?.play().then(() => {
-                    setIsPlaying(true);
-                  }).catch(() => {});
+                  if (audioRef.current) {
+                    audioRef.current.volume = volume;
+                    audioRef.current.play().then(() => {
+                      setIsPlaying(true);
+                      if (audioSettings.crossfadeDuration > 0 && !isHlsStream) {
+                        fadeAudioIn(volume, Math.min(audioSettings.crossfadeDuration * 1000, 3000));
+                      }
+                    }).catch(() => {});
+                  }
                   audioRef.current?.removeEventListener('canplay', handleCanPlay);
                 };
                 audioRef.current?.addEventListener('canplay', handleCanPlay);
