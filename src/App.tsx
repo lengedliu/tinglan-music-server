@@ -251,7 +251,7 @@ export default function App() {
     const playSrc = currentSong?.url || (currentSong ? `/api/stream/${encodeURIComponent(currentSong.id)}` : '');
     if (!playSrc) return;
 
-    const isHlsStream = /\.m3u8($|\?)/i.test(playSrc) || playSrc.includes('/api/radio/stream/') || playSrc.includes('/api/radio/proxy');
+    const isHlsStream = /\.m3u8($|\?)/i.test(playSrc);
 
     if (isHlsStream && Hls.isSupported()) {
       if (hlsRef.current) {
@@ -284,6 +284,11 @@ export default function App() {
               break;
             default:
               hls.destroy();
+              hlsRef.current = null;
+              if (!audio.src || !audio.src.endsWith(playSrc)) {
+                audio.src = playSrc;
+                if (isPlaying) audio.play().catch(() => {});
+              }
               break;
           }
         }
@@ -293,8 +298,11 @@ export default function App() {
         hlsRef.current.destroy();
         hlsRef.current = null;
       }
-      if (audio.src !== playSrc) {
+      if (!audio.src || !audio.src.endsWith(playSrc)) {
         audio.src = playSrc;
+      }
+      if (isPlaying && audio.paused) {
+        audio.play().catch(() => {});
       }
     }
 
@@ -304,7 +312,7 @@ export default function App() {
         hlsRef.current = null;
       }
     };
-  }, [currentSong?.id, currentSong?.url]);
+  }, [currentSong?.id, currentSong?.url, isPlaying]);
 
   const activeDevice = devices.find(d => d.did === activeDeviceId) || devices[0];
 
@@ -988,9 +996,13 @@ export default function App() {
     timeActions.setCurrentTime(0);
     timeActions.setDuration(song.duration || 200);
 
-    const newQueue = (targetQueue && targetQueue.length > 0)
+    const baseQueue = (targetQueue && targetQueue.length > 0)
       ? targetQueue
       : (playQueue.length > 0 ? playQueue : songs);
+
+    // Ensure the song being played is ALWAYS in the play queue
+    const songInQueue = baseQueue.some(s => s.id === song.id);
+    const newQueue = songInQueue ? baseQueue : [song, ...baseQueue];
 
     setPlayQueue(newQueue);
 
@@ -1011,53 +1023,45 @@ export default function App() {
         ? song.url 
         : `/api/stream/${encodeURIComponent(song.id)}`;
 
-      const isHlsStream = /\.m3u8($|\?)/i.test(playSrc) || playSrc.includes('/api/radio/stream/') || playSrc.includes('/api/radio/proxy');
+      const isHlsStream = /\.m3u8($|\?)/i.test(playSrc);
 
       if (audioRef.current) {
-        if (audioSettings.crossfadeDuration > 0) {
+        if (audioSettings.crossfadeDuration > 0 && !isHlsStream) {
           audioRef.current.volume = 0;
         } else {
           audioRef.current.volume = volume;
         }
 
-        if (!isHlsStream) {
-          // Check if src needs update without triggering redundant reload
-          if (!audioRef.current.src || !audioRef.current.src.includes(encodeURIComponent(song.id))) {
-            audioRef.current.src = playSrc;
-          }
-          audioRef.current.currentTime = 0;
-          const playPromise = audioRef.current.play();
-          if (playPromise !== undefined) {
-            playPromise
-              .then(() => {
-                setIsPlaying(true);
-                isCrossfadingRef.current = false;
-                if (audioSettings.crossfadeDuration > 0) {
-                  fadeAudioIn(volume, Math.min(audioSettings.crossfadeDuration * 1000, 3000));
-                }
-              })
-              .catch((e: any) => {
-                isCrossfadingRef.current = false;
-                if (e && e.name === 'AbortError') {
-                  // Recover immediately once buffer is ready
-                  const handleCanPlay = () => {
-                    audioRef.current?.play().then(() => {
-                      setIsPlaying(true);
-                      if (audioSettings.crossfadeDuration > 0) {
-                        fadeAudioIn(volume, Math.min(audioSettings.crossfadeDuration * 1000, 3000));
-                      }
-                    }).catch(() => {});
-                    audioRef.current?.removeEventListener('canplay', handleCanPlay);
-                  };
-                  audioRef.current?.addEventListener('canplay', handleCanPlay);
-                } else {
-                  console.warn('Audio play request error:', e);
-                }
-              });
-          }
-        } else {
-          // For HLS & radio streams, Hls.js in dual-engine useEffect handles loading and playback
-          setIsPlaying(true);
+        if (!audioRef.current.src || !audioRef.current.src.endsWith(playSrc)) {
+          audioRef.current.src = playSrc;
+        }
+        audioRef.current.currentTime = 0;
+
+        const playPromise = audioRef.current.play();
+        if (playPromise !== undefined) {
+          playPromise
+            .then(() => {
+              setIsPlaying(true);
+              isCrossfadingRef.current = false;
+              if (audioSettings.crossfadeDuration > 0 && !isHlsStream) {
+                fadeAudioIn(volume, Math.min(audioSettings.crossfadeDuration * 1000, 3000));
+              }
+            })
+            .catch((e: any) => {
+              isCrossfadingRef.current = false;
+              setIsPlaying(true);
+              if (e && e.name === 'AbortError') {
+                const handleCanPlay = () => {
+                  audioRef.current?.play().then(() => {
+                    setIsPlaying(true);
+                  }).catch(() => {});
+                  audioRef.current?.removeEventListener('canplay', handleCanPlay);
+                };
+                audioRef.current?.addEventListener('canplay', handleCanPlay);
+              } else {
+                console.warn('Audio play request error:', e);
+              }
+            });
         }
       }
     }
@@ -2369,6 +2373,20 @@ export default function App() {
             }
           }}
           onEnded={() => {
+            const isRadioStream = Boolean(
+              currentSong && (
+                currentSong.url?.includes('/api/radio/') ||
+                currentSong.id?.startsWith('st_') ||
+                currentSong.id?.startsWith('radio_') ||
+                currentSong.album === '网络广播/播客' ||
+                currentSong.album === 'RADIO'
+              )
+            );
+            if (isRadioStream) {
+              // Live radio streams do not auto-advance to song 0 in music library
+              return;
+            }
+
             if (sleepTimer.enabled && sleepTimer.stopAtEndOfSong) {
               setSleepTimer(prev => ({ ...prev, enabled: false, remainingSeconds: 0 }));
               setIsPlaying(false);
@@ -2387,6 +2405,22 @@ export default function App() {
               }
             } else {
               handleNextSong();
+            }
+          }}
+          onError={(e) => {
+            console.warn('Audio stream error event:', e);
+            const isRadioStream = Boolean(
+              currentSong && (
+                currentSong.url?.includes('/api/radio/') ||
+                currentSong.id?.startsWith('st_') ||
+                currentSong.id?.startsWith('radio_') ||
+                currentSong.album === '网络广播/播客' ||
+                currentSong.album === 'RADIO'
+              )
+            );
+            if (isRadioStream) {
+              // Live radio streams shouldn't advance to song 0 on stream error
+              return;
             }
           }}
         />
