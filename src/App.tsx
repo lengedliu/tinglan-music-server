@@ -626,13 +626,6 @@ export default function App() {
     (!user && securityStatus?.isDefaultAdminPassword && !securityStatus?.authRequired)
   );
 
-  // Automatically pop up the ForceChangePasswordModal when default admin password is detected
-  useEffect(() => {
-    if (isUsingDefaultAdminPassword && !dismissedDefaultPasswordAlert) {
-      setIsForcePasswordModalOpen(true);
-    }
-  }, [isUsingDefaultAdminPassword, dismissedDefaultPasswordAlert]);
-
   const handleLogout = () => {
     setUser(null);
     setAuthToken(null);
