@@ -20,6 +20,7 @@ export interface Song {
   channels?: string;
   codec?: string;
   filePath?: string;
+  isLiveStream?: boolean;
   playCount?: number; // Total playback count across local player and Xiaomi speaker
   lastPlayedAt?: number; // Timestamp (ms) of the most recent playback
 }

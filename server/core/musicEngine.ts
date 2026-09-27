@@ -17,6 +17,7 @@ export interface Song {
   bitrate?: string;
   fileSize?: string;
   isFavorite: boolean;
+  isLiveStream?: boolean;
   source?: 'local' | 'uploaded' | 'sample' | 'nas';
   localFilename?: string;
   lyrics?: string;

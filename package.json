@@ -30,6 +30,7 @@
     "qrcode": "^1.5.4",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
+    "sql.js": "^1.14.2",
     "sqlite3": "^6.0.1",
     "vite": "^6.2.3",
     "ws": "^8.21.3"
@@ -41,6 +42,7 @@
     "@types/node": "^22.14.0",
     "@types/pg": "^8.23.1",
     "@types/pngjs": "^6.0.5",
+    "@types/sql.js": "^1.4.11",
     "@types/sqlite3": "^5.1.0",
     "@types/ws": "^8.18.1",
     "autoprefixer": "^10.4.21",

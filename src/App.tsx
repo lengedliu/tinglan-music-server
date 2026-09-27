@@ -1429,6 +1429,7 @@ export default function App() {
           .catch(() => {});
 
         // Actively monitor whether the speaker hardware connects and fetches the audio stream
+        const cleanId = String(song.id || '');
         const checkInterval = setInterval(async () => {
           try {
             const statusRes = await apiFetch('/api/miot/stream-status');

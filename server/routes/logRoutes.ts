@@ -56,6 +56,20 @@ export function createLogRouter() {
     }
   });
 
+  // POST /api/logs/prune - Prune database logs
+  router.post('/logs/prune', (req: Request, res: Response) => {
+    try {
+      const keep = parseInt(req.body?.keep as string, 10) || 5000;
+      logEngine.pruneSqliteDatabase(keep);
+      logEngine.info('system', '日志数据库归档修剪', `已执行日志持久化数据库修剪，保留最近 ${keep} 条记录`, {
+        clientIp: req.ip
+      });
+      res.json({ success: true, message: `已修剪日志，保留最近 ${keep} 条` });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // DELETE /api/logs - Clear all logs
   router.delete('/logs', (req: Request, res: Response) => {
     try {

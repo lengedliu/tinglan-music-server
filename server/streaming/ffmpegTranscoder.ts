@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { spawn, execFile, ChildProcessWithoutNullStreams } from 'child_process';
 import { promisify } from 'util';
 import { Readable, PassThrough } from 'stream';

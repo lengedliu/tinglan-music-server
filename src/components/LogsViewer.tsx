@@ -19,7 +19,9 @@ import {
   Activity,
   Layers,
   Bug,
-  HardDrive
+  HardDrive,
+  Database,
+  Scissors
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useAppEvents } from '../context/AppEventsContext';
@@ -58,7 +60,20 @@ export const LogsViewer: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [autoScroll, setAutoScroll] = useState<boolean>(true);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
-  const [stats, setStats] = useState<{ total: number; cast: number; audit: number; automation: number; system: number; info: number; warn: number; error: number }>({
+  const [stats, setStats] = useState<{
+    total: number;
+    cast: number;
+    audit: number;
+    automation: number;
+    system: number;
+    info: number;
+    warn: number;
+    error: number;
+    storageEngine?: string;
+    dbAvailable?: boolean;
+    totalPersisted?: number;
+    retentionLimit?: number;
+  }>({
     total: 0, cast: 0, audit: 0, automation: 0, system: 0, info: 0, warn: 0, error: 0
   });
 
@@ -74,12 +89,18 @@ export const LogsViewer: React.FC = () => {
     setLoading(true);
     try {
       const res = await apiFetch('/api/logs?limit=300');
-      if (res && res.success && Array.isArray(res.logs)) {
-        setLogs(res.logs);
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.success && Array.isArray(data.logs)) {
+          setLogs(data.logs);
+        }
       }
       const statsRes = await apiFetch('/api/logs/stats');
-      if (statsRes && statsRes.success && statsRes.stats) {
-        setStats(statsRes.stats);
+      if (statsRes.ok) {
+        const statsData = await statsRes.json();
+        if (statsData && statsData.success && statsData.stats) {
+          setStats(statsData.stats);
+        }
       }
     } catch (err) {
       console.warn('Failed to fetch logs:', err);
@@ -95,11 +116,21 @@ export const LogsViewer: React.FC = () => {
         apiFetch('/api/miot/logs'),
         apiFetch('/api/miot/devices')
       ]);
-      if (logsRes && logsRes.success && Array.isArray(logsRes.logs)) {
-        setCastLogs(logsRes.logs);
+      if (logsRes.ok) {
+        const logsData = await logsRes.json();
+        if (Array.isArray(logsData)) {
+          setCastLogs(logsData);
+        } else if (logsData && Array.isArray(logsData.logs)) {
+          setCastLogs(logsData.logs);
+        }
       }
-      if (devRes && Array.isArray(devRes.devices)) {
-        setDevices(devRes.devices);
+      if (devRes.ok) {
+        const devData = await devRes.json();
+        if (Array.isArray(devData)) {
+          setDevices(devData);
+        } else if (devData && Array.isArray(devData.devices)) {
+          setDevices(devData.devices);
+        }
       }
     } catch (err) {
       console.warn('Failed to fetch speaker terminal data:', err);
@@ -149,9 +180,29 @@ export const LogsViewer: React.FC = () => {
     try {
       await apiFetch('/api/logs', { method: 'DELETE' });
       setLogs([]);
-      setStats({ total: 0, cast: 0, audit: 0, automation: 0, system: 0, info: 0, warn: 0, error: 0 });
+      setStats(prev => ({ ...prev, total: 0, cast: 0, audit: 0, automation: 0, system: 0, info: 0, warn: 0, error: 0, totalPersisted: 0 }));
     } catch (err) {
       alert('清空日志失败');
+    }
+  };
+
+  const handlePruneLogs = async () => {
+    if (!window.confirm('确认执行日志数据库修剪归档吗？系统将保留最近 2,000 条关键诊断记录并清理历史老旧数据以释放空间。')) return;
+    try {
+      const res = await apiFetch('/api/logs/prune', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keep: 2000 })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.success) {
+          alert(data.message || '日志修剪成功');
+          fetchLogs();
+        }
+      }
+    } catch {
+      alert('日志修剪失败');
     }
   };
 
@@ -178,12 +229,12 @@ export const LogsViewer: React.FC = () => {
       {/* Header Title & Mode Switcher */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/10 pb-5">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2.5">
+          <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2.5 flex-wrap">
             <Terminal className="w-6 h-6" style={{ color: themeConfig.primaryColor }} />
             <span>全链路诊断与日志中心</span>
-            <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-medium flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              系统全融合日志
+            <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-medium flex items-center gap-1.5" title="SQLite 3 (WASM) 数据库持久化存储与 B-Tree 索引加速">
+              <Database className="w-3.5 h-3.5 text-emerald-400" />
+              <span>SQLite 3 数据库驱动已生效 {stats.totalPersisted ? `(${stats.totalPersisted} 条持久化)` : ''}</span>
             </span>
           </h1>
           <p className="text-xs text-zinc-400 mt-1">
@@ -306,6 +357,15 @@ export const LogsViewer: React.FC = () => {
               </button>
 
               <button
+                onClick={handlePruneLogs}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30 hover:bg-amber-500/25 transition cursor-pointer"
+                title="修剪老旧日志，保留最近 2000 条"
+              >
+                <Scissors className="w-3.5 h-3.5" />
+                <span>修剪归档</span>
+              </button>
+
+              <button
                 onClick={handleClearLogs}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-rose-500/10 text-rose-400 border border-rose-500/30 hover:bg-rose-500/20 transition cursor-pointer"
               >
@@ -406,7 +466,14 @@ export const LogsViewer: React.FC = () => {
                           </span>
 
                           {log.traceId && (
-                            <span className="px-1.5 py-0.5 text-[10px] rounded bg-zinc-900 text-zinc-400 border border-zinc-800 font-mono">
+                            <span 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSearchQuery(log.traceId!);
+                              }}
+                              title="点击按此 Trace ID 过滤同一请求全链路日志"
+                              className="px-1.5 py-0.5 text-[10px] rounded bg-zinc-900 text-zinc-400 hover:text-amber-300 hover:border-amber-500/50 border border-zinc-800 font-mono transition cursor-pointer"
+                            >
                               #{log.traceId}
                             </span>
                           )}

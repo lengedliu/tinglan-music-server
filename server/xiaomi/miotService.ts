@@ -12,6 +12,7 @@ import { xiaomiAdapter } from './xiaomiAdapter.js';
 import { adaptiveHeartbeatEngine } from './adaptiveHeartbeatEngine.js';
 import { transcodeSemaphorePool } from '../streaming/transcodeSemaphore.js';
 import { queueEngine } from '../core/queueEngine.js';
+import { logEngine } from '../core/logEngine.js';
 
 export interface MiotCastLog {
   id: string;
@@ -56,6 +57,32 @@ export const castLogs: MiotCastLog[] = [
 export function addCastLog(log: MiotCastLog) {
   castLogs.unshift(log);
   if (castLogs.length > 50) castLogs.pop();
+
+  try {
+    logEngine.log(
+      'cast',
+      log.success ? 'info' : 'warn',
+      log.message,
+      log.detail || '',
+      {
+        targetDid: log.did,
+        clientIp: log.ip,
+        deviceName: log.model || log.did,
+        details: {
+          type: log.type,
+          model: log.model,
+          protocol: log.protocol,
+          requestMethod: log.requestMethod,
+          httpStatus: log.httpStatus,
+          miioStatus: log.miioStatus,
+          minaStatus: log.minaStatus,
+          errorCode: log.errorCode,
+          responseTimeMs: log.responseTimeMs,
+          streamUrl: log.streamUrl
+        }
+      }
+    );
+  } catch {}
 }
 
 export function getCastLogs(): MiotCastLog[] {

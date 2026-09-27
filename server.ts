@@ -65,6 +65,7 @@ import {
 } from './server/index.js';
 
 import { DynamicPlaylistEngine } from './server/core/dynamicPlaylistEngine.js';
+import { logEngine } from './server/core/logEngine.js';
 import { ttsEngine } from './server/ttsEngine.js';
 import { createAuthRouter, createSecurityRouter } from './server/routes/authRoutes.js';
 import { createDbRouter } from './server/routes/dbRoutes.js';
@@ -82,7 +83,6 @@ import { createRadioRouter } from './server/routes/radioRoutes.js';
 import { createAutomationRouter } from './server/routes/automationRoutes.js';
 import { createSystemBackupRouter } from './server/routes/systemBackupRoutes.js';
 import { createLogRouter } from './server/routes/logRoutes.js';
-import { logEngine } from './server/core/logEngine.js';
 import { automationService } from './server/services/automationService.js';
 
 const app = express();
@@ -208,6 +208,7 @@ let activeDbConfig = loadJson(DB_CONFIG_FILE, {
 });
 const sqliteDb = initSqliteDatabase(SQLITE_FILE, defaultAdminUser);
 if (sqliteDb) {
+  logEngine.setSqliteDb(sqliteDb);
   musicRepository.setSqliteDb(sqliteDb);
   interactionRepository.setSqliteDb(sqliteDb);
   scheduledTaskRepository.setSqliteDb(sqliteDb);

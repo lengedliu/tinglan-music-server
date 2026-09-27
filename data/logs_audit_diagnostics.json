@@ -1,0 +1,28 @@
+[
+  {
+    "id": "log_1790515309562_896vc",
+    "timestamp": 1790515309562,
+    "timeFormatted": "13:21:49.562",
+    "category": "audit",
+    "level": "info",
+    "traceId": "tr_17mg0d",
+    "title": "用户登录成功",
+    "message": "用户「admin」通过 IP 127.0.0.1 成功登录系统",
+    "details": {
+      "username": "admin",
+      "role": "admin"
+    },
+    "clientIp": "127.0.0.1"
+  },
+  {
+    "id": "log_1790515359734_n8u4n",
+    "timestamp": 1790515359734,
+    "timeFormatted": "13:22:39.734",
+    "category": "system",
+    "level": "info",
+    "title": "日志数据库归档修剪",
+    "message": "已执行日志持久化数据库修剪，保留最近 1000 条记录",
+    "traceId": "tr_wakibk",
+    "clientIp": "127.0.0.1"
+  }
+]
