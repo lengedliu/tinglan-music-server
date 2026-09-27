@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Database, Server, Check, AlertCircle, RefreshCw, Layers, ShieldCheck, Cpu, HardDrive, ArrowRight, Activity, Terminal } from 'lucide-react';
-import { DbEngine, DbConfig, DbStatusInfo } from '../types';
+import { Database, Server, Check, AlertCircle, RefreshCw, Layers, ShieldCheck, HardDrive, Terminal, UploadCloud, CheckCircle2 } from 'lucide-react';
+import { DbEngine, DbStatusInfo } from '../types';
 import { apiFetch } from '../utils/api';
 
 interface DatabaseModalProps {
@@ -29,8 +29,11 @@ export const DatabaseModal: React.FC<DatabaseModalProps> = ({ isOpen, onClose, o
 
   // Action states
   const [testing, setTesting] = useState(false);
+  const [initializing, setInitializing] = useState(false);
+  const [migrating, setMigrating] = useState(false);
   const [switching, setSwitching] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string; latency?: number } | null>(null);
+  const [actionFeedback, setActionFeedback] = useState<{ success: boolean; message: string } | null>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -65,29 +68,33 @@ export const DatabaseModal: React.FC<DatabaseModalProps> = ({ isOpen, onClose, o
 
   if (!isOpen) return null;
 
-  const handleTestConnection = async () => {
-    setTesting(true);
-    setTestResult(null);
-
+  const buildConfigPayload = () => {
     const configPayload: any = { engine: selectedEngine };
     if (selectedEngine === 'postgres') {
       configPayload.postgresConfig = { host: pgHost, port: Number(pgPort), user: pgUser, password: pgPassword, database: pgDatabase };
     } else if (selectedEngine === 'mysql') {
       configPayload.mysqlConfig = { host: myHost, port: Number(myPort), user: myUser, password: myPassword, database: myDatabase };
     }
+    return configPayload;
+  };
+
+  const handleTestConnection = async () => {
+    setTesting(true);
+    setTestResult(null);
+    setActionFeedback(null);
 
     try {
       const startTime = Date.now();
       const res = await apiFetch('/api/db/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(configPayload)
+        body: JSON.stringify(buildConfigPayload())
       });
       const latency = Date.now() - startTime;
       const data = await res.json();
 
       if (res.ok && data.success) {
-        setTestResult({ success: true, message: data.message || '数据库连接成功！', latency });
+        setTestResult({ success: true, message: data.message || '数据库连接测试成功！', latency });
       } else {
         setTestResult({ success: false, message: data.error || data.message || '连接失败，请检查主机名与密钥' });
       }
@@ -98,20 +105,76 @@ export const DatabaseModal: React.FC<DatabaseModalProps> = ({ isOpen, onClose, o
     }
   };
 
+  const handleInitTables = async () => {
+    setInitializing(true);
+    setActionFeedback(null);
+
+    try {
+      const res = await apiFetch('/api/db/init-tables', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildConfigPayload())
+      });
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        setActionFeedback({ success: true, message: data.message || `成功初始化 ${data.tablesCount || 17} 张数据表！` });
+        onShowToast('数据表初始化成功', data.message || `已为 ${selectedEngine.toUpperCase()} 完成 17 张数据表初始化`, 'success');
+        fetchDbStatus();
+      } else {
+        setActionFeedback({ success: false, message: data.error || '数据表初始化失败' });
+        onShowToast('初始化失败', data.error || '无法在目标数据库创建数据表', 'error');
+      }
+    } catch (err: any) {
+      setActionFeedback({ success: false, message: `执行错误: ${err.message}` });
+      onShowToast('网络错误', err.message || '初始化请求失败', 'error');
+    } finally {
+      setInitializing(false);
+    }
+  };
+
+  const handleMigrateData = async () => {
+    if (selectedEngine === 'sqlite') {
+      onShowToast('无需迁移', '当前数据已保存在 SQLite 本地存储中', 'info');
+      return;
+    }
+
+    setMigrating(true);
+    setActionFeedback(null);
+
+    try {
+      const res = await apiFetch('/api/db/migrate-data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildConfigPayload())
+      });
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        setActionFeedback({ success: true, message: data.message || '全量数据同步完成！' });
+        onShowToast('数据同步成功', data.message || `本地数据已成功迁移至 ${selectedEngine.toUpperCase()}`, 'success');
+        fetchDbStatus();
+      } else {
+        setActionFeedback({ success: false, message: data.error || '数据迁移失败' });
+        onShowToast('迁移失败', data.error || '无法将数据写入目标数据库', 'error');
+      }
+    } catch (err: any) {
+      setActionFeedback({ success: false, message: `迁移异常: ${err.message}` });
+      onShowToast('网络错误', err.message || '数据迁移请求异常', 'error');
+    } finally {
+      setMigrating(false);
+    }
+  };
+
   const handleSwitchEngine = async () => {
     setSwitching(true);
-    const configPayload: any = { engine: selectedEngine };
-    if (selectedEngine === 'postgres') {
-      configPayload.postgresConfig = { host: pgHost, port: Number(pgPort), user: pgUser, password: pgPassword, database: pgDatabase };
-    } else if (selectedEngine === 'mysql') {
-      configPayload.mysqlConfig = { host: myHost, port: Number(myPort), user: myUser, password: myPassword, database: myDatabase };
-    }
+    setActionFeedback(null);
 
     try {
       const res = await apiFetch('/api/db/switch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(configPayload)
+        body: JSON.stringify(buildConfigPayload())
       });
       const data = await res.json();
 
@@ -142,10 +205,10 @@ export const DatabaseModal: React.FC<DatabaseModalProps> = ({ isOpen, onClose, o
               <h2 className="text-lg font-bold text-white flex items-center gap-2">
                 数据库管理中心
                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                  多引擎支持
+                  SQLite · PostgreSQL · MySQL 全面支持
                 </span>
               </h2>
-              <p className="text-xs text-zinc-400">支持 SQLite (零配置嵌入库)、PostgreSQL (云原生高并发) 与 MySQL</p>
+              <p className="text-xs text-zinc-400">支持 17 张数据表全自动 DDL 初始化、跨库数据无缝迁移与运行时引擎热切换</p>
             </div>
           </div>
           <button
@@ -161,13 +224,13 @@ export const DatabaseModal: React.FC<DatabaseModalProps> = ({ isOpen, onClose, o
           <div className="p-4 rounded-2xl bg-zinc-950/80 border border-white/10 space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <Activity className="w-4 h-4 text-[#FF6700]" />
+                <Database className="w-4 h-4 text-[#FF6700]" />
                 <span className="text-xs text-zinc-400 font-medium">当前运行引擎:</span>
                 <span className="text-sm font-bold text-white uppercase tracking-wider">{dbStatus.engineName}</span>
               </div>
               <div className="flex items-center gap-2">
                 <span className={`w-2.5 h-2.5 rounded-full ${dbStatus.isConnected ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]' : 'bg-rose-500'}`} />
-                <span className="text-xs font-semibold text-emerald-400">{dbStatus.isConnected ? '正常在线' : '连接异常'}</span>
+                <span className="text-xs font-semibold text-emerald-400">{dbStatus.isConnected ? '已连通就绪' : '连接异常'}</span>
               </div>
             </div>
 
@@ -185,8 +248,8 @@ export const DatabaseModal: React.FC<DatabaseModalProps> = ({ isOpen, onClose, o
                 <p className="text-base font-bold text-white">{dbStatus.totalPlaylists ?? 0} 个</p>
               </div>
               <div className="p-2.5 rounded-xl bg-zinc-900 border border-white/5">
-                <p className="text-[10px] text-zinc-500 uppercase">持久化数据表</p>
-                <p className="text-base font-bold text-[#FF6700]">{dbStatus.tablesCount ?? 14} 张</p>
+                <p className="text-[10px] text-zinc-500 uppercase">已加载数据表</p>
+                <p className="text-base font-bold text-[#FF6700]">{dbStatus.tablesCount ?? 17} 张</p>
               </div>
             </div>
 
@@ -194,39 +257,39 @@ export const DatabaseModal: React.FC<DatabaseModalProps> = ({ isOpen, onClose, o
             <div className="pt-2 border-t border-white/5">
               <p className="text-[11px] font-semibold text-zinc-400 mb-2 flex items-center gap-1.5">
                 <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                已装载持久化数据表清单 (P0 - P3 分层架构)
+                全库 17 张数据表结构 (SQLite / MySQL / PostgreSQL 100% 结构对齐)
               </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
                 <div className="p-2 rounded-lg bg-zinc-900/60 border border-white/5 space-y-1">
                   <div className="flex items-center justify-between font-mono font-medium text-amber-400">
-                    <span>⚡ P0: 离线调度引擎</span>
-                    <span className="text-[10px] text-zinc-500">1 表</span>
+                    <span>⚡ 用户与曲库核心</span>
+                    <span className="text-[10px] text-zinc-500">5 表</span>
                   </div>
-                  <p className="text-zinc-400 font-mono text-[10px]">• scheduled_tasks (离线休眠/叫醒闹钟/定时计划)</p>
+                  <p className="text-zinc-400 font-mono text-[10px]">users, songs, playlists, user_song_interactions, play_history</p>
                 </div>
 
                 <div className="p-2 rounded-lg bg-zinc-900/60 border border-white/5 space-y-1">
                   <div className="flex items-center justify-between font-mono font-medium text-blue-400">
-                    <span>📡 P1: 音箱编组与广播</span>
-                    <span className="text-[10px] text-zinc-500">1 表</span>
+                    <span>📡 音箱串流与调度</span>
+                    <span className="text-[10px] text-zinc-500">4 表</span>
                   </div>
-                  <p className="text-zinc-400 font-mono text-[10px]">• speaker_groups (多房间编组/主音量与偏移)</p>
+                  <p className="text-zinc-400 font-mono text-[10px]">scheduled_tasks, speaker_groups, device_customizations, device_strategy_profiles</p>
                 </div>
 
                 <div className="p-2 rounded-lg bg-zinc-900/60 border border-white/5 space-y-1">
                   <div className="flex items-center justify-between font-mono font-medium text-purple-400">
-                    <span>🎯 P2: 智能规则与定制</span>
-                    <span className="text-[10px] text-zinc-500">2 表</span>
+                    <span>🎯 音频与智能规则</span>
+                    <span className="text-[10px] text-zinc-500">4 表</span>
                   </div>
-                  <p className="text-zinc-400 font-mono text-[10px]">• smart_playlist_rules (流派/评分/过滤条件)<br />• device_customizations (别名/房间/快捷键)</p>
+                  <p className="text-zinc-400 font-mono text-[10px]">smart_playlist_rules, device_eq_presets, lyrics_store, audio_fingerprint_cache</p>
                 </div>
 
                 <div className="p-2 rounded-lg bg-zinc-900/60 border border-white/5 space-y-1">
                   <div className="flex items-center justify-between font-mono font-medium text-emerald-400">
-                    <span>💾 P3: 指纹刮削与断点</span>
-                    <span className="text-[10px] text-zinc-500">2 表</span>
+                    <span>💾 断点续播与审计日志</span>
+                    <span className="text-[10px] text-zinc-500">4 表</span>
                   </div>
-                  <p className="text-zinc-400 font-mono text-[10px]">• audio_fingerprint_cache (AcoustID指纹)<br />• playback_checkpoints (设备跨端断点续播)</p>
+                  <p className="text-zinc-400 font-mono text-[10px]">playback_checkpoints, playback_resume_points, cast_audit_logs, system_logs</p>
                 </div>
               </div>
             </div>
@@ -249,7 +312,7 @@ export const DatabaseModal: React.FC<DatabaseModalProps> = ({ isOpen, onClose, o
             >
               <HardDrive className="w-5 h-5 text-[#FF6700] mb-2" />
               <p className="text-sm font-bold text-white">SQLite 3</p>
-              <p className="text-[10px] text-zinc-400 mt-0.5">本地轻量文件存储 (开箱即用)</p>
+              <p className="text-[10px] text-zinc-400 mt-0.5">本地嵌入式 (内置 17 表)</p>
             </button>
 
             {/* PostgreSQL */}
@@ -263,7 +326,7 @@ export const DatabaseModal: React.FC<DatabaseModalProps> = ({ isOpen, onClose, o
             >
               <Server className="w-5 h-5 text-blue-400 mb-2" />
               <p className="text-sm font-bold text-white">PostgreSQL</p>
-              <p className="text-[10px] text-zinc-400 mt-0.5">云端高并发关系型数据库</p>
+              <p className="text-[10px] text-zinc-400 mt-0.5">支持自动 DDL 建表与同步</p>
             </button>
 
             {/* MySQL */}
@@ -277,7 +340,7 @@ export const DatabaseModal: React.FC<DatabaseModalProps> = ({ isOpen, onClose, o
             >
               <Layers className="w-5 h-5 text-amber-400 mb-2" />
               <p className="text-sm font-bold text-white">MySQL</p>
-              <p className="text-[10px] text-zinc-400 mt-0.5">经典高性能关系型数据库</p>
+              <p className="text-[10px] text-zinc-400 mt-0.5">支持自动 DDL 建表与同步</p>
             </button>
 
           </div>
@@ -407,7 +470,7 @@ export const DatabaseModal: React.FC<DatabaseModalProps> = ({ isOpen, onClose, o
           </div>
         )}
 
-        {/* Test Result Toast */}
+        {/* Test / Action Result Toast */}
         {testResult && (
           <div className={`p-3 rounded-2xl text-xs flex items-center justify-between border ${
             testResult.success
@@ -424,32 +487,77 @@ export const DatabaseModal: React.FC<DatabaseModalProps> = ({ isOpen, onClose, o
           </div>
         )}
 
+        {actionFeedback && (
+          <div className={`p-3 rounded-2xl text-xs flex items-center gap-2 border ${
+            actionFeedback.success
+              ? 'bg-blue-500/15 border-blue-500/30 text-blue-300'
+              : 'bg-rose-500/15 border-rose-500/30 text-rose-300'
+          }`}>
+            {actionFeedback.success ? <CheckCircle2 className="w-4 h-4 flex-shrink-0" /> : <AlertCircle className="w-4 h-4 flex-shrink-0" />}
+            <span>{actionFeedback.message}</span>
+          </div>
+        )}
+
         {/* Actions Footer */}
-        <div className="flex items-center justify-between pt-2 border-t border-white/10">
-          <button
-            type="button"
-            onClick={handleTestConnection}
-            disabled={testing}
-            className="px-4 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-semibold border border-white/10 transition active:scale-95 disabled:opacity-50 flex items-center gap-2"
-          >
-            {testing ? (
-              <span className="animate-spin w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full" />
-            ) : (
-              <Terminal className="w-4 h-4 text-[#FF6700]" />
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-white/10">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleTestConnection}
+              disabled={testing}
+              className="px-3.5 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-semibold border border-white/10 transition active:scale-95 disabled:opacity-50 flex items-center gap-1.5"
+            >
+              {testing ? (
+                <span className="animate-spin w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full" />
+              ) : (
+                <Terminal className="w-3.5 h-3.5 text-[#FF6700]" />
+              )}
+              <span>测试连接</span>
+            </button>
+
+            {selectedEngine !== 'sqlite' && (
+              <>
+                <button
+                  type="button"
+                  onClick={handleInitTables}
+                  disabled={initializing}
+                  className="px-3.5 py-2.5 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 text-xs font-semibold border border-blue-500/30 transition active:scale-95 disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  {initializing ? (
+                    <span className="animate-spin w-3.5 h-3.5 border-2 border-blue-400 border-t-transparent rounded-full" />
+                  ) : (
+                    <ShieldCheck className="w-3.5 h-3.5 text-blue-400" />
+                  )}
+                  <span>初始化17张数据表</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleMigrateData}
+                  disabled={migrating}
+                  className="px-3.5 py-2.5 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 text-xs font-semibold border border-purple-500/30 transition active:scale-95 disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  {migrating ? (
+                    <span className="animate-spin w-3.5 h-3.5 border-2 border-purple-400 border-t-transparent rounded-full" />
+                  ) : (
+                    <UploadCloud className="w-3.5 h-3.5 text-purple-400" />
+                  )}
+                  <span>同步迁移本地数据</span>
+                </button>
+              </>
             )}
-            <span>测试连接</span>
-          </button>
+          </div>
 
           <button
             type="button"
             onClick={handleSwitchEngine}
             disabled={switching}
-            className="px-6 py-2.5 rounded-xl bg-[#FF6700] hover:bg-[#e55c00] text-white text-xs font-semibold shadow-[0_4px_15px_rgba(255,103,0,0.35)] transition-all active:scale-95 disabled:opacity-50 flex items-center gap-2"
+            className="px-5 py-2.5 rounded-xl bg-[#FF6700] hover:bg-[#e55c00] text-white text-xs font-semibold shadow-[0_4px_15px_rgba(255,103,0,0.35)] transition-all active:scale-95 disabled:opacity-50 flex items-center gap-2"
           >
             {switching ? (
               <span className="animate-spin w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full" />
             ) : (
-              <RefreshCw className="w-4 h-4" />
+              <RefreshCw className="w-3.5 h-3.5" />
             )}
             <span>保存并切换引擎</span>
           </button>

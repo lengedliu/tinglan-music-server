@@ -540,7 +540,8 @@ app.use('/api/db', createDbRouter({
   },
   getStoredSongs: () => musicRepository.getAllSongs(),
   getStoredPlaylists: () => musicRepository.getAllPlaylists(),
-  sqliteDb
+  sqliteDb,
+  defaultAdminUser
 }));
 
 // 3. Audio Streaming & Media

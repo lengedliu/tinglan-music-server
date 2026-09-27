@@ -142,6 +142,8 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const [myDatabase, setMyDatabase] = useState('tinglan_db');
 
   const [dbTesting, setDbTesting] = useState(false);
+  const [dbInitializing, setDbInitializing] = useState(false);
+  const [dbMigrating, setDbMigrating] = useState(false);
   const [dbSwitching, setDbSwitching] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string; latency?: number } | null>(null);
 
@@ -582,6 +584,85 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       setTestResult({ success: false, message: `网络错误: ${err.message || '请求无法送达'}` });
     } finally {
       setDbTesting(false);
+    }
+  };
+
+  // Initialize 17 Tables Schema DDL
+  const handleInitTables = async () => {
+    if (!currentUser) {
+      onShowToast('需要登录', '初始化数据表需要管理员权限，请先登录', 'error');
+      onOpenAuthModal();
+      return;
+    }
+
+    setDbInitializing(true);
+    const configPayload: any = { engine: selectedEngine };
+    if (selectedEngine === 'postgres') {
+      configPayload.postgresConfig = { host: pgHost, port: Number(pgPort), user: pgUser, password: pgPassword, database: pgDatabase };
+    } else if (selectedEngine === 'mysql') {
+      configPayload.mysqlConfig = { host: myHost, port: Number(myPort), user: myUser, password: myPassword, database: myDatabase };
+    }
+
+    try {
+      const res = await apiFetch('/api/db/init-tables', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(configPayload)
+      });
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        onShowToast('数据表初始化成功', data.message || `已为 ${selectedEngine.toUpperCase()} 完成 17 张数据表初始化`, 'success');
+        fetchDbStatus();
+      } else {
+        onShowToast('初始化失败', data.error || '无法在目标数据库创建数据表', 'error');
+      }
+    } catch (err: any) {
+      onShowToast('网络错误', err.message || '初始化请求失败', 'error');
+    } finally {
+      setDbInitializing(false);
+    }
+  };
+
+  // Migrate Data from SQLite to Remote DB
+  const handleMigrateData = async () => {
+    if (!currentUser) {
+      onShowToast('需要登录', '执行数据迁移需要管理员权限，请先登录', 'error');
+      onOpenAuthModal();
+      return;
+    }
+
+    if (selectedEngine === 'sqlite') {
+      onShowToast('无需迁移', '当前数据已保存在 SQLite 本地存储中', 'info');
+      return;
+    }
+
+    setDbMigrating(true);
+    const configPayload: any = { engine: selectedEngine };
+    if (selectedEngine === 'postgres') {
+      configPayload.postgresConfig = { host: pgHost, port: Number(pgPort), user: pgUser, password: pgPassword, database: pgDatabase };
+    } else if (selectedEngine === 'mysql') {
+      configPayload.mysqlConfig = { host: myHost, port: Number(myPort), user: myUser, password: myPassword, database: myDatabase };
+    }
+
+    try {
+      const res = await apiFetch('/api/db/migrate-data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(configPayload)
+      });
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        onShowToast('数据同步成功', data.message || `本地数据已成功迁移至 ${selectedEngine.toUpperCase()}`, 'success');
+        fetchDbStatus();
+      } else {
+        onShowToast('迁移失败', data.error || '无法将数据写入目标数据库', 'error');
+      }
+    } catch (err: any) {
+      onShowToast('网络错误', err.message || '数据迁移请求异常', 'error');
+    } finally {
+      setDbMigrating(false);
     }
   };
 
@@ -1759,18 +1840,40 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
             )}
 
             {/* Action Buttons */}
-            <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-              <div>
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-white/5">
+              <div className="flex flex-wrap items-center gap-2">
                 {selectedEngine !== 'sqlite' && (
-                  <button
-                    type="button"
-                    onClick={handleTestConnection}
-                    disabled={dbTesting}
-                    className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
-                  >
-                    {dbTesting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Activity className="w-3.5 h-3.5 text-blue-400" />}
-                    <span>测试数据库连通性</span>
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={handleTestConnection}
+                      disabled={dbTesting}
+                      className="px-3.5 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      {dbTesting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Activity className="w-3.5 h-3.5 text-blue-400" />}
+                      <span>测试连通性</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleInitTables}
+                      disabled={dbInitializing}
+                      className="px-3.5 py-2 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 text-xs font-semibold border border-blue-500/30 transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      {dbInitializing ? <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-400" /> : <ShieldCheck className="w-3.5 h-3.5 text-blue-400" />}
+                      <span>初始化 17 张数据表</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={handleMigrateData}
+                      disabled={dbMigrating}
+                      className="px-3.5 py-2 rounded-xl bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 text-xs font-semibold border border-purple-500/30 transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                    >
+                      {dbMigrating ? <RefreshCw className="w-3.5 h-3.5 animate-spin text-purple-400" /> : <HardDrive className="w-3.5 h-3.5 text-purple-400" />}
+                      <span>同步迁移本地数据</span>
+                    </button>
+                  </>
                 )}
               </div>
 
