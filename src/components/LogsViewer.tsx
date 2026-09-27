@@ -27,6 +27,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useAppEvents } from '../context/AppEventsContext';
 import { apiFetch } from '../utils/api';
 import { LogTerminalTab } from './speaker/LogTerminalTab';
+import { CloudSnapshotModal } from './speaker/CloudSnapshotModal';
 import { CastLog, XiaomiDevice } from '../types';
 
 export interface LogEntry {
@@ -533,6 +534,12 @@ export const LogsViewer: React.FC = () => {
           />
         </div>
       )}
+
+      {/* Cloud Device Query Raw Snapshots Inspector Modal */}
+      <CloudSnapshotModal
+        isOpen={isSnapshotModalOpen}
+        onClose={() => setIsSnapshotModalOpen(false)}
+      />
     </div>
   );
 };

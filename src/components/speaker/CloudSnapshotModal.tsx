@@ -20,8 +20,8 @@ import { cleanDeviceName } from './speakerUtils';
 interface CloudSnapshotModalProps {
   isOpen: boolean;
   onClose: () => void;
-  miotConfig: MiotConfig;
-  onTriggerScan: () => void;
+  miotConfig?: MiotConfig;
+  onTriggerScan?: () => void;
 }
 
 export const CloudSnapshotModal: React.FC<CloudSnapshotModalProps> = ({
@@ -35,6 +35,12 @@ export const CloudSnapshotModal: React.FC<CloudSnapshotModalProps> = ({
   const [selectedSnapshotIndex, setSelectedSnapshotIndex] = useState(0);
   const [copiedSnapshot, setCopiedSnapshot] = useState(false);
   const [copiedItem, setCopiedItem] = useState(false);
+  const [accountInfo, setAccountInfo] = useState<{
+    userId?: string;
+    miUser?: string;
+    isLoggedIn?: boolean;
+    hasServiceToken?: boolean;
+  }>({});
 
   const fetchCloudSnapshots = async () => {
     setIsLoadingSnapshots(true);
@@ -43,6 +49,9 @@ export const CloudSnapshotModal: React.FC<CloudSnapshotModalProps> = ({
       const data = await res.json();
       if (data.success && Array.isArray(data.snapshots)) {
         setCloudSnapshots(data.snapshots);
+      }
+      if (data.account) {
+        setAccountInfo(data.account);
       }
     } catch (err) {
       console.error('Failed to fetch cloud snapshots', err);
@@ -54,8 +63,40 @@ export const CloudSnapshotModal: React.FC<CloudSnapshotModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       fetchCloudSnapshots();
+      // Also fetch config if not passed in
+      if (!miotConfig) {
+        apiFetch('/api/miot/config')
+          .then(r => r.ok ? r.json() : null)
+          .then(d => {
+            if (d && d.config) {
+              setAccountInfo({
+                userId: d.config.userId,
+                miUser: d.config.miUser,
+                isLoggedIn: d.config.isLoggedIn,
+                hasServiceToken: Boolean(d.config.serviceToken || d.config.hasServiceToken)
+              });
+            }
+          })
+          .catch(() => {});
+      }
     }
   }, [isOpen]);
+
+  const handleScanAndRefresh = async () => {
+    setIsLoadingSnapshots(true);
+    try {
+      if (onTriggerScan) {
+        onTriggerScan();
+      } else {
+        await apiFetch('/api/miot/scan', { method: 'POST' });
+      }
+    } catch (err) {
+      console.warn('Scan trigger error:', err);
+    }
+    setTimeout(() => {
+      fetchCloudSnapshots();
+    }, 1500);
+  };
 
   const handleClearSnapshots = async () => {
     try {
@@ -67,6 +108,10 @@ export const CloudSnapshotModal: React.FC<CloudSnapshotModalProps> = ({
   };
 
   if (!isOpen) return null;
+
+  const currentUserId = miotConfig?.miUser || miotConfig?.userId || accountInfo.miUser || accountInfo.userId || '未绑定';
+  const isLoggedIn = miotConfig ? Boolean(miotConfig.isLoggedIn) : Boolean(accountInfo.isLoggedIn);
+  const hasToken = miotConfig ? Boolean(miotConfig.hasServiceToken || miotConfig.serviceToken) : Boolean(accountInfo.hasServiceToken);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-md animate-fadeIn">
@@ -114,13 +159,13 @@ export const CloudSnapshotModal: React.FC<CloudSnapshotModalProps> = ({
         <div className="px-6 py-3 bg-zinc-950/60 border-b border-white/5 flex flex-wrap items-center justify-between gap-3 text-xs">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px] text-zinc-400">
             <span>
-              用户ID: <strong className="text-zinc-200">{cleanDeviceName(miotConfig.miUser || miotConfig.userId || '未绑定')}</strong>
+              用户ID: <strong className="text-zinc-200">{cleanDeviceName(currentUserId)}</strong>
             </span>
             <span>
-              登录态: <strong className={miotConfig.isLoggedIn ? 'text-emerald-400' : 'text-amber-400'}>{miotConfig.isLoggedIn ? '已授权' : '未登录'}</strong>
+              登录态: <strong className={isLoggedIn ? 'text-emerald-400' : 'text-amber-400'}>{isLoggedIn ? '已授权' : '未登录'}</strong>
             </span>
             <span>
-              Token: <strong className={miotConfig.hasServiceToken || miotConfig.serviceToken ? 'text-emerald-400' : 'text-rose-400'}>{miotConfig.hasServiceToken || miotConfig.serviceToken ? '已配置 (已脱敏)' : '未配置'}</strong>
+              Token: <strong className={hasToken ? 'text-emerald-400' : 'text-rose-400'}>{hasToken ? '已配置 (已脱敏)' : '未配置'}</strong>
             </span>
           </div>
 
@@ -168,13 +213,11 @@ export const CloudSnapshotModal: React.FC<CloudSnapshotModalProps> = ({
                 <p className="text-xs text-zinc-400">暂无云端抓包快照记录</p>
                 <button
                   type="button"
-                  onClick={() => {
-                    onTriggerScan();
-                    setTimeout(() => fetchCloudSnapshots(), 1500);
-                  }}
-                  className="px-4 py-2 rounded-xl bg-[#FF6700] hover:bg-[#e55c00] text-white text-xs font-semibold transition cursor-pointer"
+                  onClick={handleScanAndRefresh}
+                  disabled={isLoadingSnapshots}
+                  className="px-4 py-2 rounded-xl bg-[#FF6700] hover:bg-[#e55c00] text-white text-xs font-semibold transition cursor-pointer disabled:opacity-50"
                 >
-                  立即发起云端扫描以生成快照
+                  {isLoadingSnapshots ? '正在发起云端扫描...' : '立即发起云端扫描以生成快照'}
                 </button>
               </div>
             ) : (
