@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { loadJson, saveJson } from '../storage/jsonStorage.js';
+import { logEngine } from '../core/logEngine.js';
 
 export interface AutomationScene {
   id: string;
@@ -187,6 +188,16 @@ class AutomationService {
     this.logs.unshift(newLog);
     if (this.logs.length > 100) this.logs = this.logs.slice(0, 100);
     saveJson(LOGS_FILE, this.logs);
+
+    if (result.success) {
+      logEngine.info('automation', '自动化场景触发成功', `场景「${scene.name}」${isManual ? '(手动)' : '(定时)'} 执行成功: ${result.message}`, {
+        details: { sceneId: scene.id, actionType: scene.actionType }
+      });
+    } else {
+      logEngine.error('automation', '自动化场景触发失败', `场景「${scene.name}」${isManual ? '(手动)' : '(定时)'} 执行失败: ${result.message}`, {
+        details: { sceneId: scene.id, actionType: scene.actionType }
+      });
+    }
 
     return result;
   }

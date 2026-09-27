@@ -13,15 +13,16 @@ import {
   Heart,
   Speaker,
   Laptop,
-  Rss
+  Rss,
+  Terminal
 } from 'lucide-react';
 import { XiaomiDevice, MiotConfig, User } from '../types';
 import { UserHeader } from './UserHeader';
 import { useTheme } from '../context/ThemeContext';
 
 interface NavbarProps {
-  activeTab: 'library' | 'radio' | 'lyrics' | 'xiaomi' | 'subsonic' | 'settings' | 'sponsor';
-  setActiveTab: (tab: 'library' | 'radio' | 'lyrics' | 'xiaomi' | 'subsonic' | 'settings' | 'sponsor') => void;
+  activeTab: 'library' | 'radio' | 'lyrics' | 'xiaomi' | 'subsonic' | 'logs' | 'settings' | 'sponsor';
+  setActiveTab: (tab: 'library' | 'radio' | 'lyrics' | 'xiaomi' | 'subsonic' | 'logs' | 'settings' | 'sponsor') => void;
   activeDevice: XiaomiDevice | undefined;
   miotConfig: MiotConfig;
   isCasting: boolean;
@@ -260,6 +261,22 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <Mic2 className="w-4 h-4" />
               <span>歌词唱机</span>
+            </button>
+
+            {/* 日志 */}
+            <button
+              id="nav-tab-logs"
+              onClick={() => setActiveTab('logs')}
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-sm font-medium transition-all whitespace-nowrap ${
+                activeTab === 'logs'
+                  ? themeConfig.activeTabStyle
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-transparent'
+              }`}
+              title="全链路投播诊断、弱网重连与安全操作审计日志"
+            >
+              <Terminal className="w-4 h-4 text-emerald-400" />
+              <span>日志</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_6px_rgba(52,211,153,0.8)]" />
             </button>
 
             {/* 设置 */}

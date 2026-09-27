@@ -706,6 +706,10 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
     res.send(JSON.stringify(debugBundle, null, 2));
   });
 
+  router.get('/logs', (req: Request, res: Response) => {
+    res.json({ success: true, logs: getCastLogs() });
+  });
+
   router.get('/events', (req: Request, res: Response) => {
     if (!checkMiotAdminPermission(req, res)) return;
 

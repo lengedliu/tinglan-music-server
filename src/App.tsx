@@ -15,6 +15,7 @@ import { NavidromeModal } from './components/NavidromeModal';
 import { AuthModal } from './components/AuthModal';
 import { SettingsPage } from './components/SettingsPage';
 import { SponsorPage } from './components/SponsorPage';
+import { LogsViewer } from './components/LogsViewer';
 import { ThemeSelectorModal } from './components/ThemeSelectorModal';
 import { SleepTimerModal } from './components/SleepTimerModal';
 import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
@@ -51,11 +52,11 @@ export default function App() {
   const [isForcePasswordModalOpen, setIsForcePasswordModalOpen] = useState(false);
   const [dismissedDefaultPasswordAlert, setDismissedDefaultPasswordAlert] = useState(false);
 
-  // Navigation: 音乐曲库, 广播与播客, 歌词播放, 智能音箱, Subsonic API, 设置, 赞助
-  const [activeTab, setActiveTab] = useState<'library' | 'radio' | 'lyrics' | 'xiaomi' | 'subsonic' | 'settings' | 'sponsor'>(() => {
+  // Navigation: 音乐曲库, 广播与播客, 歌词播放, 智能音箱, Subsonic API, 日志, 设置, 赞助
+  const [activeTab, setActiveTab] = useState<'library' | 'radio' | 'lyrics' | 'xiaomi' | 'subsonic' | 'logs' | 'settings' | 'sponsor'>(() => {
     try {
       const saved = localStorage.getItem('tinglan_active_tab');
-      return (saved === 'library' || saved === 'radio' || saved === 'lyrics' || saved === 'xiaomi' || saved === 'subsonic' || saved === 'settings' || saved === 'sponsor') ? saved : 'library';
+      return (saved === 'library' || saved === 'radio' || saved === 'lyrics' || saved === 'xiaomi' || saved === 'subsonic' || saved === 'logs' || saved === 'settings' || saved === 'sponsor') ? saved : 'library';
     } catch {
       return 'library';
     }
@@ -2621,6 +2622,10 @@ export default function App() {
               playlistsCount={playlists.length}
               onOpenNavidromeModal={() => setIsNavidromeModalOpen(true)}
             />
+          )}
+
+          {activeTab === 'logs' && (
+            <LogsViewer />
           )}
 
           {activeTab === 'settings' && (

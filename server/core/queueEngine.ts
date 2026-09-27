@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import path from 'path';
 import { Song } from './musicEngine.js';
 import { JsonStore } from '../storage/jsonStore.js';
+import { logEngine } from './logEngine.js';
 
 export type QueueLoopMode = 'all' | 'one' | 'shuffle';
 
@@ -348,6 +349,12 @@ export class QueueEngine extends EventEmitter {
     this.currentDuration = isLive ? 0 : ((song.duration && song.duration > 5) ? song.duration : 180);
 
     console.log(`[QueueEngine] ▶️ 启动全歌单连续投播: 共 ${this.queue.length} 首, 起始首:《${song.title}》, 模式: ${this.loopMode}, 时长: ${isLive ? '24h无限电台直播' : `${this.currentDuration}s`}`);
+    logEngine.info('cast', '启动歌单投播', `开始为【${this.targetDeviceName || '小爱音箱'}】连续播放《${song.title}》 (${this.currentIndex + 1}/${this.queue.length})`, {
+      targetDid: this.targetDid,
+      deviceName: this.targetDeviceName,
+      songId: song.id,
+      details: { songTitle: song.title, artist: song.artist, duration: this.currentDuration, loopMode: this.loopMode }
+    });
 
     // Dispatch cast command to the target speaker
     let dispatchRes: { success: boolean; message?: string; error?: string } = { success: true, message: '已下发投播指令' };
@@ -466,6 +473,12 @@ export class QueueEngine extends EventEmitter {
       }
 
       console.log(`[QueueEngine] 🎧 音箱硬件已成功拉取流媒体《${activeSong?.title}》，启动精准切歌倒计时 (时长: ${this.currentDuration}s, 模式: ${this.loopMode})`);
+      logEngine.info('cast', '音箱握手成功', `【${this.targetDeviceName || '小爱音箱'}】成功建立 HTTP 流连接，开始播放《${activeSong?.title}》`, {
+        targetDid: this.targetDid,
+        deviceName: this.targetDeviceName,
+        songId: activeSong?.id,
+        details: { songTitle: activeSong?.title, duration: this.currentDuration, range: options?.range }
+      });
       this.scheduleAutoAdvance(this.currentDuration);
       this.startHeartbeat();
       this.triggerNextTrackPreheat();
@@ -494,6 +507,12 @@ export class QueueEngine extends EventEmitter {
         return;
       } else {
         console.log(`[QueueEngine] 📶 捕获到音箱弱网/网络抖动重新握手请求 (已播 ${elapsed}s / 总时长 ${this.currentDuration}s)，判定为网络重连，保持当前曲目平稳播放`);
+        logEngine.warn('cast', '网络重连/弱网握手', `捕获到音箱请求 Range: bytes=0-，已播放 ${elapsed}s/总 ${this.currentDuration}s，保持当前曲目《${activeSong?.title}》继续平稳播放`, {
+          targetDid: this.targetDid,
+          deviceName: this.targetDeviceName,
+          songId: activeSong?.id,
+          details: { elapsed, totalDuration: this.currentDuration }
+        });
       }
     }
 
@@ -518,6 +537,13 @@ export class QueueEngine extends EventEmitter {
     const remaining = this.currentDuration - elapsed;
 
     console.log(`[QueueEngine] 🏁 捕获音箱流结束闭环事件 (已播放 ${elapsed}s / 总时长 ${this.currentDuration}s, 剩余 ${remaining}s)`);
+    logEngine.info('cast', '音箱流关闭', `捕获音箱 HTTP 流关闭事件 (已播 ${elapsed}s/总 ${this.currentDuration}s, 剩余 ${remaining}s)《${currentSong?.title}》`, {
+      targetDid: this.targetDid,
+      deviceName: this.targetDeviceName,
+      songId: currentSong?.id,
+      clientIp,
+      details: { elapsed, totalDuration: this.currentDuration, remaining }
+    });
 
     // If less than 4 seconds remaining, cleanly trigger next track immediately
     if (remaining <= 4) {

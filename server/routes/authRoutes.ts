@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { logEngine } from '../core/logEngine.js';
 
 export interface AuthRouterOptions {
   getSecuritySettings: () => any;
@@ -141,6 +142,11 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
         }
       }
 
+      logEngine.info('audit', '密码修改成功', `用户「${targetUser.username}」的密码已由 ${clientUser.username} 成功修改`, {
+        clientIp: getClientIp(req),
+        details: { targetUsername: targetUser.username, operator: clientUser.username }
+      });
+
       return res.json({
         success: true,
         message: `用户「${targetUser.username}」的密码已成功修改！`
@@ -259,6 +265,11 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
 
       user.lastLoginAt = new Date().toISOString();
       setStoredUsers(storedUsers);
+
+      logEngine.info('audit', '用户登录成功', `用户「${user.username}」通过 IP ${clientIp} 成功登录系统`, {
+        clientIp,
+        details: { username: user.username, role: user.role }
+      });
 
       let isDefaultPassword = false;
       if (user.username === 'admin' && user.passwordHash) {

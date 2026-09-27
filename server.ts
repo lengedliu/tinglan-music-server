@@ -81,6 +81,8 @@ import { createGroupRouter } from './server/routes/groupRoutes.js';
 import { createRadioRouter } from './server/routes/radioRoutes.js';
 import { createAutomationRouter } from './server/routes/automationRoutes.js';
 import { createSystemBackupRouter } from './server/routes/systemBackupRoutes.js';
+import { createLogRouter } from './server/routes/logRoutes.js';
+import { logEngine } from './server/core/logEngine.js';
 import { automationService } from './server/services/automationService.js';
 
 const app = express();
@@ -825,6 +827,14 @@ queueEngine.on('change', (status) => {
   appEventBus.broadcast('queue:change', status);
   appEventBus.checkPlaybackTickLoop();
 });
+
+// Full-link Diagnostic Log Broadcast via SSE
+logEngine.on('log', (logEntry) => {
+  appEventBus.broadcast('log:new', logEntry);
+});
+
+// Full-link Diagnostics & Audit Log Router
+app.use('/api', createLogRouter());
 
 // Real-time Unified Server-Sent Events (SSE) Hub
 app.get('/api/events', (req: Request, res: Response) => {

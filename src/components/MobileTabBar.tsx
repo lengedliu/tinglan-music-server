@@ -1,11 +1,11 @@
 import React, { memo } from 'react';
-import { Music2, Cast, Radio, Server, Mic2, Settings, Rss } from 'lucide-react';
+import { Music2, Cast, Radio, Server, Mic2, Settings, Rss, Terminal } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { XiaomiDevice } from '../types';
 
 export interface MobileTabBarProps {
-  activeTab: 'library' | 'radio' | 'lyrics' | 'xiaomi' | 'subsonic' | 'settings' | 'sponsor';
-  setActiveTab: (tab: 'library' | 'radio' | 'lyrics' | 'xiaomi' | 'subsonic' | 'settings' | 'sponsor') => void;
+  activeTab: 'library' | 'radio' | 'lyrics' | 'xiaomi' | 'subsonic' | 'logs' | 'settings' | 'sponsor';
+  setActiveTab: (tab: 'library' | 'radio' | 'lyrics' | 'xiaomi' | 'subsonic' | 'logs' | 'settings' | 'sponsor') => void;
   songCount: number;
   isCasting: boolean;
   activeDevice?: XiaomiDevice;
@@ -24,7 +24,7 @@ export const MobileTabBar: React.FC<MobileTabBarProps> = memo(({
   const isLight = Boolean(ctxIsLight ?? themeConfig?.isLight);
 
   const tabs: Array<{
-    id: 'library' | 'radio' | 'xiaomi' | 'subsonic' | 'lyrics' | 'settings';
+    id: 'library' | 'radio' | 'xiaomi' | 'subsonic' | 'logs' | 'lyrics' | 'settings';
     label: string;
     icon: React.ReactNode;
     badge?: React.ReactNode;
@@ -66,6 +66,11 @@ export const MobileTabBar: React.FC<MobileTabBarProps> = memo(({
       id: 'subsonic',
       label: '网关',
       icon: <Server className="w-5 h-5" />
+    },
+    {
+      id: 'logs',
+      label: '日志',
+      icon: <Terminal className="w-5 h-5 text-emerald-400" />
     },
     {
       id: 'settings',
