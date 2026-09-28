@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import { ShieldAlert, KeyRound, Lock, Eye, EyeOff, CheckCircle2, AlertCircle, X, ShieldCheck } from 'lucide-react';
-import { apiFetch } from '../utils/api';
+import { apiFetch, setStoredAuthToken } from '../utils/api';
 import { useTheme } from '../context/ThemeContext';
 
 interface ForceChangePasswordModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onPasswordChanged: () => void;
+  onPasswordChanged: (user?: any, token?: string) => void;
   username?: string;
 }
 
@@ -84,11 +84,15 @@ export const ForceChangePasswordModal: React.FC<ForceChangePasswordModalProps> =
         throw new Error(data.error || data.message || '修改密码失败，请检查原密码是否正确');
       }
 
-      setSuccessMsg('管理员密码已成功更新！系统已加固。');
+      if (data.token) {
+        setStoredAuthToken(data.token);
+      }
+
+      setSuccessMsg('管理员密码已成功更新！系统已加固并保持登录。');
       setTimeout(() => {
-        onPasswordChanged();
+        onPasswordChanged(data.user, data.token);
         onClose();
-      }, 900);
+      }, 500);
     } catch (err: any) {
       setErrorMsg(err.message || '网络请求异常，请稍后重试');
     } finally {

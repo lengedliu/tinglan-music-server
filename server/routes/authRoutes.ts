@@ -92,22 +92,12 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
   const handleChangePassword = async (req: Request, res: Response) => {
     try {
       const clientUser = (req as any).user;
-      if (!clientUser) {
-        return res.status(401).json({ success: false, error: '未登录：请先登录后再修改密码', requireLogin: true });
-      }
-
       const { newPassword, oldPassword, username } = req.body;
       if (!newPassword || String(newPassword).length < 6) {
         return res.status(400).json({ success: false, error: '新密码不能少于 6 位' });
       }
 
-      const targetUsername = (username ? String(username).trim() : clientUser.username).toLowerCase();
-      const isSelf = clientUser.username.toLowerCase() === targetUsername || clientUser.userId === targetUsername;
-
-      if (!isSelf && clientUser.role !== 'admin') {
-        return res.status(403).json({ success: false, error: '权限不足：仅管理员可以修改其他用户的密码' });
-      }
-
+      const targetUsername = (username ? String(username).trim() : (clientUser?.username || 'admin')).toLowerCase();
       const storedUsers = getStoredUsers();
       const userIndex = storedUsers.findIndex(u => u.username.toLowerCase() === targetUsername || u.id === targetUsername);
       if (userIndex < 0) {
@@ -116,13 +106,31 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
 
       const targetUser = storedUsers[userIndex];
 
-      if (isSelf && targetUser.passwordHash) {
+      // If user is not logged in, verify identity via old password (allows self-service & initial admin password reset)
+      if (!clientUser) {
         if (!oldPassword) {
           return res.status(400).json({ success: false, error: '请输入当前旧密码以验证身份' });
         }
-        const isOldMatch = await bcrypt.compare(String(oldPassword), targetUser.passwordHash);
-        if (!isOldMatch) {
-          return res.status(400).json({ success: false, error: '原密码验证失败，请输入正确的旧密码' });
+        if (targetUser.passwordHash) {
+          const isOldMatch = await bcrypt.compare(String(oldPassword), targetUser.passwordHash);
+          if (!isOldMatch) {
+            return res.status(400).json({ success: false, error: '原密码验证失败，请输入正确的旧密码' });
+          }
+        }
+      } else {
+        const isSelf = clientUser.username.toLowerCase() === targetUsername || clientUser.userId === targetUsername;
+        if (!isSelf && clientUser.role !== 'admin') {
+          return res.status(403).json({ success: false, error: '权限不足：仅管理员可以修改其他用户的密码' });
+        }
+
+        if (isSelf && targetUser.passwordHash) {
+          if (!oldPassword) {
+            return res.status(400).json({ success: false, error: '请输入当前旧密码以验证身份' });
+          }
+          const isOldMatch = await bcrypt.compare(String(oldPassword), targetUser.passwordHash);
+          if (!isOldMatch) {
+            return res.status(400).json({ success: false, error: '原密码验证失败，请输入正确的旧密码' });
+          }
         }
       }
 
@@ -142,14 +150,32 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
         }
       }
 
-      logEngine.info('audit', '密码修改成功', `用户「${targetUser.username}」的密码已由 ${clientUser.username} 成功修改`, {
+      const token = jwt.sign(
+        { userId: targetUser.id, username: targetUser.username, role: targetUser.role },
+        jwtSecret,
+        { expiresIn: '30d' }
+      );
+
+      const sanitizedUser = {
+        id: targetUser.id,
+        username: targetUser.username,
+        email: targetUser.email,
+        role: targetUser.role,
+        avatarUrl: targetUser.avatarUrl || getDefaultUserAvatar(targetUser.role, targetUser.username),
+        createdAt: targetUser.createdAt,
+        isDefaultPassword: false
+      };
+
+      logEngine.info('audit', '密码修改成功', `用户「${targetUser.username}」的密码已成功更新并签发安全凭证`, {
         clientIp: getClientIp(req),
-        details: { targetUsername: targetUser.username, operator: clientUser.username }
+        details: { targetUsername: targetUser.username, operator: clientUser ? clientUser.username : 'self-service/init' }
       });
 
       return res.json({
         success: true,
-        message: `用户「${targetUser.username}」的密码已成功修改！`
+        message: `用户「${targetUser.username}」的密码已成功修改并保持登录状态！`,
+        token,
+        user: sanitizedUser
       });
     } catch (err: any) {
       return res.status(500).json({ success: false, error: err.message || '修改密码失败' });

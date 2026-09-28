@@ -575,10 +575,12 @@ export default function App() {
 
     const handleUnauthorized = (e: any) => {
       const url = e?.detail?.url || '';
-      if (url.includes('/api/auth/me')) {
-        setStoredAuthToken(null);
-        setAuthToken(null);
-        setUser(null);
+      if (
+        url.includes('/api/auth/me') ||
+        url.includes('/api/auth/change-password') ||
+        url.includes('/api/auth/change-admin-password') ||
+        url.includes('/api/auth/login')
+      ) {
         return;
       }
       showToast('需要登录', '该操作需要管理员登录授权，请先登录系统', 'info');
@@ -2971,14 +2973,22 @@ export default function App() {
           setIsForcePasswordModalOpen(false);
           setDismissedDefaultPasswordAlert(true);
         }}
-        onPasswordChanged={() => {
-          checkSecurityStatus();
-          if (user) {
+        onPasswordChanged={(updatedUser?: any, token?: string) => {
+          setIsForcePasswordModalOpen(false);
+          setIsAuthModalOpen(false);
+          setDismissedDefaultPasswordAlert(true);
+          if (token) {
+            setAuthToken(token);
+            setStoredAuthToken(token);
+          }
+          if (updatedUser) {
+            setUser({ ...updatedUser, isDefaultPassword: false });
+          } else if (user) {
             setUser(prev => prev ? ({ ...prev, isDefaultPassword: false }) : null);
           }
           setSecurityStatus(prev => prev ? ({ ...prev, isDefaultAdminPassword: false }) : null);
-          setDismissedDefaultPasswordAlert(true);
-          showToast('管理员密码已成功更新！', '系统安全加固完成，初始弱口令已清除', 'success');
+          checkSecurityStatus();
+          showToast('管理员密码已成功更新！', '系统安全加固完成，已自动保持登录状态', 'success');
         }}
         username={user?.username || 'admin'}
       />
