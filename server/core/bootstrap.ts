@@ -13,7 +13,8 @@ import {
   ensureValidActiveDeviceId,
   dispatchCastSongDirectly,
   callMinaCloudApi,
-  sendMiioCommand
+  sendMiioCommand,
+  validateMicoServiceToken
 } from '../xiaomi/miotService.js';
 
 export interface BootstrapOptions {
@@ -28,38 +29,82 @@ export function restoreSessionAndDevicesOnStartup(options: BootstrapOptions): vo
   const { getMiotConfig, saveMiotConfig, activeStreamIps } = options;
   const miotConfig = getMiotConfig();
 
-  if (!miotConfig || !miotConfig.passToken) return;
+  if (!miotConfig) return;
 
-  const candidateUid = miotConfig.userId || miotConfig.cUserId || '0';
-  Promise.allSettled([
-    xiaomiPassport.fetchAdditionalStsToken(candidateUid, miotConfig.passToken, 'micoapi'),
-    xiaomiPassport.fetchAdditionalStsToken(candidateUid, miotConfig.passToken, 'xiaomiio')
-  ]).then(async ([micoRes, ioRes]) => {
-    const micoToken = micoRes.status === 'fulfilled' ? micoRes.value.serviceToken : '';
-    const ioToken = ioRes.status === 'fulfilled' ? ioRes.value.serviceToken : '';
-    const recoveredUid = (micoRes.status === 'fulfilled' && micoRes.value.userId) || (ioRes.status === 'fulfilled' && ioRes.value.userId) || candidateUid;
-    const ssec = (micoRes.status === 'fulfilled' && micoRes.value.ssecurity) || (ioRes.status === 'fulfilled' && ioRes.value.ssecurity) || miotConfig.ssecurity;
+  const candidateUid = miotConfig.userId || miotConfig.cUserId || '';
+  const currentMicoToken = miotConfig.micoServiceToken || miotConfig.serviceToken || '';
+  const currentMiotToken = miotConfig.miotServiceToken || miotConfig.xiaomiioServiceToken || miotConfig.serviceToken || '';
 
-    if (micoToken || ioToken) {
-      if (micoToken) miotConfig.micoServiceToken = micoToken;
-      if (ioToken) miotConfig.miotServiceToken = ioToken;
-      miotConfig.isMicoValid = Boolean(micoToken);
-      if (ssec) miotConfig.ssecurity = ssec;
-      if (recoveredUid && recoveredUid !== '0') {
-        miotConfig.userId = recoveredUid;
-        miotConfig.miUser = `uid_${recoveredUid}`;
+  (async () => {
+    let isValid = false;
+
+    // 1. 如果本地保存了 userId 和 serviceToken，启动时优先进行轻量自检，判断 Token 是否依然有效
+    if (candidateUid && currentMicoToken) {
+      try {
+        const validation = await validateMicoServiceToken(candidateUid, currentMicoToken);
+        if (validation.valid) {
+          isValid = true;
+          miotConfig.isLoggedIn = true;
+          miotConfig.isMicoValid = true;
+          saveMiotConfig(miotConfig);
+          console.log(`[Auth] 🔑 启动自检：小米 serviceToken 依然有效，无需重新请求，直接复用已有凭证 (用户: ${candidateUid})`);
+        } else {
+          console.log(`[Auth] ⚠️ 启动自检：当前 serviceToken 已失效/过期 (${validation.error || 'HTTP ' + validation.status})，准备使用 passToken 重新换领...`);
+        }
+      } catch (valErr: any) {
+        console.warn('[Auth] 启动 Token 校验请求异常:', valErr?.message || valErr);
       }
-      miotConfig.isLoggedIn = true;
-      saveMiotConfig(miotConfig);
-      console.log('[Auth] Restored active dual-channel session via stored passToken for user:', miotConfig.userId);
+    }
 
-      // Auto resolve XiaoAi devices
+    // 2. 如果已有的 serviceToken 已失效（或尚无 serviceToken），且本地保存了 passToken，则调用 passToken 静默换领新凭证
+    if (!isValid && miotConfig.passToken) {
+      try {
+        const uidToUse = candidateUid || '0';
+        const [micoRes, ioRes] = await Promise.allSettled([
+          xiaomiPassport.fetchAdditionalStsToken(uidToUse, miotConfig.passToken, 'micoapi'),
+          xiaomiPassport.fetchAdditionalStsToken(uidToUse, miotConfig.passToken, 'xiaomiio')
+        ]);
+
+        const micoToken = micoRes.status === 'fulfilled' ? micoRes.value.serviceToken : '';
+        const ioToken = ioRes.status === 'fulfilled' ? ioRes.value.serviceToken : '';
+        const recoveredUid = (micoRes.status === 'fulfilled' && micoRes.value.userId) || (ioRes.status === 'fulfilled' && ioRes.value.userId) || candidateUid;
+        const ssec = (micoRes.status === 'fulfilled' && micoRes.value.ssecurity) || (ioRes.status === 'fulfilled' && ioRes.value.ssecurity) || miotConfig.ssecurity;
+
+        if (micoToken || ioToken) {
+          if (micoToken) {
+            miotConfig.micoServiceToken = micoToken;
+            miotConfig.serviceToken = micoToken;
+          }
+          if (ioToken) miotConfig.miotServiceToken = ioToken;
+          miotConfig.isMicoValid = Boolean(micoToken);
+          if (ssec) miotConfig.ssecurity = ssec;
+          if (recoveredUid && recoveredUid !== '0') {
+            miotConfig.userId = recoveredUid;
+            miotConfig.miUser = `uid_${recoveredUid}`;
+          }
+          miotConfig.isLoggedIn = true;
+          isValid = true;
+          saveMiotConfig(miotConfig);
+          console.log(`[Auth] 🔑 启动自检：已通过 passToken 为用户 ${miotConfig.userId} 成功换领最新 serviceToken`);
+        } else {
+          console.warn('[Auth] ❌ passToken 换发 serviceToken 失败，建议重新登录');
+        }
+      } catch (err: any) {
+        console.warn('[Auth] passToken 启动换领异常:', err?.message || err);
+      }
+    }
+
+    // 3. 如果凭证可用，自动同步设备列表与 Mina WebSocket 长连接
+    if (isValid && miotConfig.isLoggedIn) {
+      const activeMico = miotConfig.micoServiceToken || miotConfig.serviceToken;
+      const activeMiot = miotConfig.miotServiceToken || miotConfig.xiaomiioServiceToken || miotConfig.serviceToken;
+
       try {
         const resolveResult = await xiaoaiResolverEngine.resolveDevices({
           userId: miotConfig.userId,
-          micoServiceToken: micoToken || undefined,
-          miotServiceToken: ioToken || undefined,
-          ssecurity: ssec,
+          micoServiceToken: activeMico || undefined,
+          miotServiceToken: activeMiot || undefined,
+          ssecurity: miotConfig.ssecurity,
           existingDevices: deviceRepository.getAllDevices(),
           activeStreamIps: Array.from(activeStreamIps)
         });
@@ -67,20 +112,19 @@ export function restoreSessionAndDevicesOnStartup(options: BootstrapOptions): vo
           deviceRepository.setDevices(resolveResult.xiaoAiDevices);
           ensureValidActiveDeviceId(miotConfig, (cfg) => saveMiotConfig(cfg));
           saveMiotConfig(miotConfig);
-          console.log(`[Discovery] Auto-restored ${deviceRepository.getAllDevices().length} XiaoAi speakers from cloud`);
+          console.log(`[Discovery] 启动成功恢复 ${deviceRepository.getAllDevices().length} 台小爱音箱`);
         }
       } catch (err: any) {
-        console.warn('[Discovery] Device auto-resolution warning:', err.message);
+        console.warn('[Discovery] 启动云端设备同步提醒:', err.message);
       }
 
-      // Connect Mina WS
-      if (micoToken) {
+      if (activeMico) {
         try {
-          minaWsClient.connect(miotConfig.userId, micoToken, miotConfig.activeDeviceId || '');
+          minaWsClient.connect(miotConfig.userId, activeMico, miotConfig.activeDeviceId || '');
         } catch {}
       }
     }
-  }).catch((err) => console.warn('[Auth] passToken startup recovery skipped:', err.message));
+  })();
 }
 
 export function bindVoiceCommandCallbacks(options: BootstrapOptions): void {

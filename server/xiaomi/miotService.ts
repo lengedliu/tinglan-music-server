@@ -264,7 +264,17 @@ export async function validateMicoServiceToken(userId: string, serviceToken: str
     if (resp.status === 401 || resp.status === 403) {
       return { valid: false, status: resp.status, error: `小米云端鉴权失败 (HTTP ${resp.status})，Token 无效或已过期` };
     }
-    return { valid: true, status: resp.status };
+    if (resp.ok) {
+      const text = await resp.text();
+      try {
+        const json = JSON.parse(text);
+        if (json.code === 401 || json.code === 403 || json.code === -10017) {
+          return { valid: false, status: json.code, error: json.message || `小米接口鉴权失败 (code: ${json.code})` };
+        }
+      } catch {}
+      return { valid: true, status: resp.status };
+    }
+    return { valid: false, status: resp.status, error: `HTTP ${resp.status}` };
   } catch (err: any) {
     return { valid: false, error: err.message || '网络请求超时' };
   }
