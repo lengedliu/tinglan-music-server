@@ -224,42 +224,6 @@ export const LibraryToolbar: React.FC<LibraryToolbarProps> = memo(({
           )}
         </div>
 
-        {/* View Mode Switch (Paginated vs Virtual Scroll Stream) */}
-        {onViewModeChange && (
-          <div className={`hidden sm:flex items-center p-1 rounded-xl border text-xs ${
-            isLight ? 'bg-zinc-100/90 border-zinc-200' : 'bg-zinc-800/80 border-white/5'
-          }`}>
-            <button
-              type="button"
-              id="btn-view-mode-paginated"
-              onClick={() => onViewModeChange('paginated')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg transition font-medium ${
-                viewMode === 'paginated'
-                  ? 'bg-[#FF6700] text-white font-bold shadow-sm'
-                  : isLight ? 'text-zinc-600 hover:text-zinc-950 hover:bg-zinc-200/60' : 'text-zinc-400 hover:text-white'
-              }`}
-              title="传统分页浏览模式（适合低翻页精度管理）"
-            >
-              <Layers className="w-3.5 h-3.5" />
-              <span>分页</span>
-            </button>
-            <button
-              type="button"
-              id="btn-view-mode-virtual"
-              onClick={() => onViewModeChange('virtual')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg transition font-medium ${
-                viewMode === 'virtual'
-                  ? 'bg-[#FF6700] text-white font-bold shadow-sm'
-                  : isLight ? 'text-zinc-600 hover:text-zinc-950 hover:bg-zinc-200/60' : 'text-zinc-400 hover:text-white'
-              }`}
-              title="极速虚拟流模式（无翻页限制，千首万首 60fps 丝滑滑行）"
-            >
-              <Zap className="w-3.5 h-3.5 text-amber-300" />
-              <span>虚拟流</span>
-            </button>
-          </div>
-        )}
-
         {/* Listening Insights Analytics Button */}
         {onToggleInsights && (
           <button
