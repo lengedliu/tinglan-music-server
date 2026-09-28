@@ -328,8 +328,8 @@ automationService.registerActionHandler(async (scene, context) => {
         online: true
       }];
     }
-  } else if (scene.targetDids && Array.isArray(scene.targetDids) && scene.targetDids.length > 0) {
-    targetDevices = allDevs.filter((d: any) => scene.targetDids!.includes(d.did));
+  } else if ((scene as any).targetDids && Array.isArray((scene as any).targetDids) && (scene as any).targetDids.length > 0) {
+    targetDevices = allDevs.filter((d: any) => (scene as any).targetDids.includes(d.did));
   } else if (scene.targetId) {
     const d = deviceRepository.getDeviceByDid(scene.targetId) || allDevs.find((x: any) => x.did === scene.targetId);
     if (d) targetDevices = [d];

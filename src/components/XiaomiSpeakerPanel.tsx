@@ -4485,16 +4485,6 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
         />
       )}
 
-      {/* ---------------- Sub-tab: Voice Command Engine ---------------- */}
-      {activeSubTab === 'voice' && (
-        <VoiceCommandSection
-          devices={devices}
-          activeDevice={activeDevice}
-          onSelectDevice={onSelectDevice}
-          playlists={playlists}
-        />
-      )}
-
       {/* Filtered Non-Speaker Devices Modal */}
       {showIgnoredModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
