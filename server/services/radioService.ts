@@ -233,7 +233,7 @@ export class RadioService {
   /**
    * Fetch and parse RSS XML feed into structured Podcast metadata & episode list
    */
-  public async parseRssFeed(rssUrl: string): Promise<{
+  public async parseRssFeed(rssUrlInput: string): Promise<{
     title: string;
     author: string;
     description: string;
@@ -241,24 +241,52 @@ export class RadioService {
     link: string;
     episodes: PodcastEpisode[];
   }> {
-    if (!rssUrl || !rssUrl.startsWith('http')) {
-      throw new Error('无效的 RSS Feed URL 地址');
+    let rssUrl = (rssUrlInput || '').trim();
+    if (!rssUrl) {
+      throw new Error('请提供有效的 RSS 订阅地址');
     }
 
-    const res = await fetch(rssUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) TinglanRadioRSS/2.0',
-        'Accept': 'application/rss+xml, application/xml, text/xml, */*'
-      },
-      signal: AbortSignal.timeout(10000)
-    });
-
-    if (!res.ok) {
-      throw new Error(`抓取 RSS 失败 (HTTP ${res.status}): ${res.statusText}`);
+    if (!/^https?:\/\//i.test(rssUrl)) {
+      rssUrl = `https://${rssUrl}`;
     }
 
-    const xmlText = await res.text();
-    return this.parseXmlText(xmlText, rssUrl);
+    // 小宇宙网页链接转换处理 (e.g. xiaoyuzhoufm.com/podcast/xxx -> feed.xyzfm.space/xxx)
+    if (rssUrl.includes('xiaoyuzhoufm.com/podcast/')) {
+      const match = rssUrl.match(/podcast\/([a-zA-Z0-9_-]+)/);
+      if (match && match[1]) {
+        rssUrl = `https://feed.xyzfm.space/${match[1]}`;
+      }
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    try {
+      const res = await fetch(rssUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'application/rss+xml, application/xml, text/xml, application/atom+xml, */*'
+        },
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
+
+      if (!res.ok) {
+        throw new Error(`抓取 RSS 失败 (HTTP ${res.status}): ${res.statusText}`);
+      }
+
+      const xmlText = await res.text();
+      if (!xmlText || xmlText.trim().length === 0) {
+        throw new Error('抓取的 RSS 数据为空');
+      }
+      return this.parseXmlText(xmlText, rssUrl);
+    } catch (err: any) {
+      clearTimeout(timeout);
+      if (err.name === 'AbortError') {
+        throw new Error('请求 RSS 订阅源超时（15秒），请检查网络连接或 URL 是否正确');
+      }
+      throw err;
+    }
   }
 
   private parseXmlText(xml: string, rssUrl: string) {

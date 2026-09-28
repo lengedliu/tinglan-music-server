@@ -209,40 +209,72 @@ export const RadioPodcastTab: React.FC<RadioPodcastTabProps> = ({
     }
   };
 
-  const handleParseRss = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!rssInputUrl || !rssInputUrl.startsWith('http')) return;
+  const PRESET_PODCASTS = [
+    { title: '故事 FM', rssUrl: 'https://feeds.storyfm.cn/storyfm.xml', desc: '倾听普通人讲述真实故事' },
+    { title: '声东击西', rssUrl: 'https://feeds.fireside.fm/shengdongjixi/rss', desc: '带你看世界的文化科技播客' },
+    { title: '硅谷 101', rssUrl: 'https://feeds.fireside.fm/sv101/rss', desc: '深度解读前沿科技与商业' },
+    { title: '半拿铁', rssUrl: 'https://proxy.wavpub.com/caffebreve.xml', desc: '商业沉浮录与趣味历史商业故事' },
+    { title: '随机波动', rssUrl: 'https://feeds.fireside.fm/stovol/rss', desc: '泛文化类人文社科与女性视角对话' },
+    { title: '文化有限', rssUrl: 'https://s1.proxy.wavpub.com/weknownothing.xml', desc: '每周分享一本好书与人生思考' },
+    { title: '无聊斋', rssUrl: 'https://feed.xyzfm.space/njwyhpcjqn9t', desc: '幽默喜剧演员的走心对谈' },
+    { title: 'TED Talks Daily', rssUrl: 'https://feeds.acast.com/public/shows/67587e77c705e441797aff96', desc: 'TED 每日精选演讲 (英文)' },
+    { title: 'NPR Planet Money', rssUrl: 'https://feeds.npr.org/510289/podcast.xml', desc: 'NPR 经典商业经济解释学 (英文)' },
+    { title: 'BBC Global News', rssUrl: 'https://podcasts.files.bbci.co.uk/p02nq0gn.rss', desc: 'BBC 国际环球要闻总览' }
+  ];
+
+  const handleParseRss = async (e?: React.FormEvent, directUrl?: string) => {
+    if (e) e.preventDefault();
+    let urlToUse = (directUrl || rssInputUrl || '').trim();
+    if (!urlToUse) {
+      setActionMessage({ text: '请填写或选择有效的播客 RSS 订阅 URL 地址', type: 'error' });
+      return;
+    }
+
+    if (!/^https?:\/\//i.test(urlToUse)) {
+      urlToUse = `https://${urlToUse}`;
+    }
+
+    setRssInputUrl(urlToUse);
     setIsParsingRss(true);
     setParsedPodcast(null);
+    setActionMessage({ text: '正在连接并解析播客 RSS Feed 节点...', type: 'info' });
+
     try {
       const res = await apiFetch('/api/radio/podcasts/parse-rss', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rssUrl: rssInputUrl })
+        body: JSON.stringify({ rssUrl: urlToUse })
       });
+
       if (res.ok) {
         const data = await res.json();
         if (data.success && data.podcast) {
           setParsedPodcast(data.podcast);
+          // 自动直接提交订阅
+          await handleSubscribePodcast(data.podcast, urlToUse);
         } else {
           setActionMessage({ text: data.error || '解析 RSS 失败，请检查 URL 是否为有效的播客 Feed XML', type: 'error' });
         }
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        setActionMessage({ text: errData.error || `请求 RSS 失败 (HTTP ${res.status})`, type: 'error' });
       }
     } catch (err: any) {
-      setActionMessage({ text: `RSS 解析异常: ${err.message}`, type: 'error' });
+      setActionMessage({ text: `RSS 解析异常: ${err.message || '网络连接超时'}`, type: 'error' });
     } finally {
       setIsParsingRss(false);
     }
   };
 
-  const handleSubscribePodcast = async (podData: any) => {
+  const handleSubscribePodcast = async (podData: any, customRssUrl?: string) => {
+    const targetUrl = customRssUrl || rssInputUrl;
     try {
       const res = await apiFetch('/api/radio/podcasts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: podData.title,
-          rssUrl: rssInputUrl,
+          rssUrl: targetUrl,
           author: podData.author,
           description: podData.description,
           coverUrl: podData.coverUrl,
@@ -252,11 +284,20 @@ export const RadioPodcastTab: React.FC<RadioPodcastTabProps> = ({
       });
       if (res.ok) {
         const data = await res.json();
-        if (data.success) {
-          setPodcasts(prev => [data.podcast, ...prev]);
+        if (data.success && data.podcast) {
+          await fetchPodcasts();
           setParsedPodcast(null);
           setRssInputUrl('');
-          setActionMessage({ text: `已成功订阅播客《${podData.title}》！`, type: 'success' });
+          setActionMessage({ text: `🎉 已成功订阅播客《${podData.title}》！检索到 ${podData.episodes?.length || 0} 集节目`, type: 'success' });
+          // 自动展开单集列表
+          setSelectedPodcast({
+            title: podData.title,
+            author: podData.author || '播客主播',
+            description: podData.description || '',
+            coverUrl: podData.coverUrl || 'https://images.unsplash.com/photo-1590602847861-f357a9332bbc?w=300&auto=format&fit=crop&q=80',
+            rssUrl: targetUrl,
+            episodes: podData.episodes || []
+          });
         }
       }
     } catch (err: any) {
@@ -672,9 +713,9 @@ export const RadioPodcastTab: React.FC<RadioPodcastTabProps> = ({
 
             <form onSubmit={handleParseRss} className="flex flex-col sm:flex-row gap-3">
               <input
-                type="url"
+                type="text"
                 required
-                placeholder="粘贴播客 RSS XML 链接 (例如: https://feed.xyz.fm/xxx 或 https://rss.art19.com/xxx)"
+                placeholder="粘贴播客 RSS XML 或小宇宙链接 (如: feed.xyzfm.space/v3epqfvw8 或 xiaoyuzhoufm.com/podcast/...)"
                 value={rssInputUrl}
                 onChange={e => setRssInputUrl(e.target.value)}
                 className={`flex-1 rounded-xl px-4 py-2.5 text-xs transition focus:outline-none ${
@@ -691,16 +732,44 @@ export const RadioPodcastTab: React.FC<RadioPodcastTabProps> = ({
                 {isParsingRss ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>正在拉取与解析 XML...</span>
+                    <span>正在解析与拉取 XML...</span>
                   </>
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4" />
-                    <span>解析 RSS 节点</span>
+                    <span>解析并一键订阅</span>
                   </>
                 )}
               </button>
             </form>
+
+            {/* Popular Public Podcasts Preset Chips */}
+            <div className="pt-2">
+              <p className={`text-[11px] font-semibold mb-2 flex items-center gap-1.5 ${
+                isLight ? 'text-zinc-500' : 'text-zinc-400'
+              }`}>
+                <span>💡 热门公共播客一键订阅推荐：</span>
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {PRESET_PODCASTS.map((preset, pIdx) => (
+                  <button
+                    key={pIdx}
+                    type="button"
+                    disabled={isParsingRss}
+                    onClick={() => handleParseRss(undefined, preset.rssUrl)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer ${
+                      isLight
+                        ? 'bg-zinc-100 hover:bg-amber-100 hover:border-amber-300 text-zinc-800 border-zinc-200/80'
+                        : 'bg-zinc-950 hover:bg-amber-500/20 hover:border-amber-500/40 text-zinc-300 border-white/10'
+                    }`}
+                    title={preset.desc}
+                  >
+                    <Plus className="w-3 h-3 text-amber-500" />
+                    <span className="font-bold">{preset.title}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
 
             {/* Parsed Preview Modal Card */}
             {parsedPodcast && (
