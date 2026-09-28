@@ -534,7 +534,7 @@ app.use('/api/db', createDbRouter({
   getActiveDbConfig: () => activeDbConfig,
   setActiveDbConfig: (config) => {
     activeDbConfig = config;
-    saveJson(DB_CONFIG_FILE, activeDbConfig);
+    saveJson(DB_CONFIG_FILE, activeDbConfig, true);
   },
   getStoredUsers: () => {
     storedUsers = loadJson(USERS_FILE, storedUsers);

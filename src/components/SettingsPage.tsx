@@ -128,7 +128,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
   // --- Database State ---
   const [dbStatus, setDbStatus] = useState<DbStatusInfo | null>(null);
-  const [selectedEngine, setSelectedEngine] = useState<DbEngine>('sqlite');
+  const [selectedEngine, setSelectedEngine] = useState<DbEngine>(() => {
+    try {
+      const saved = localStorage.getItem('tinglan_active_db_engine');
+      if (saved === 'sqlite' || saved === 'postgres' || saved === 'mysql') return saved as DbEngine;
+    } catch {}
+    return 'sqlite';
+  });
   const [pgHost, setPgHost] = useState('localhost');
   const [pgPort, setPgPort] = useState(5432);
   const [pgUser, setPgUser] = useState('postgres');
@@ -158,6 +164,12 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
     fetchDbStatus();
     fetchUsersList();
   }, [currentUser]);
+
+  useEffect(() => {
+    if (subTab === 'all' || subTab === 'database') {
+      fetchDbStatus();
+    }
+  }, [subTab]);
 
   const fetchSecurityStatus = async (forceSync = false) => {
     setSecLoading(true);
@@ -248,9 +260,19 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       const res = await apiFetch('/api/db/status');
       if (res.ok) {
         const data = await res.json();
-        if (data.success && data.status) {
-          setDbStatus(data.status);
-          setSelectedEngine(data.status.engine);
+        if (data.success) {
+          const activeEngine = (data.config?.engine || data.status?.engine || 'sqlite') as DbEngine;
+          if (data.status) {
+            setDbStatus({
+              ...data.status,
+              engine: activeEngine
+            });
+          }
+          setSelectedEngine(activeEngine);
+          try {
+            localStorage.setItem('tinglan_active_db_engine', activeEngine);
+          } catch {}
+
           if (data.config?.postgresConfig) {
             setPgHost(data.config.postgresConfig.host || 'localhost');
             setPgPort(data.config.postgresConfig.port || 5432);
@@ -691,8 +713,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       const data = await res.json();
 
       if (res.ok && data.success) {
-        onShowToast('数据库切换成功', data.message || `已切换至 ${selectedEngine.toUpperCase()} 引擎`, 'success');
-        fetchDbStatus();
+        const targetEngine = (data.config?.engine || selectedEngine) as DbEngine;
+        setSelectedEngine(targetEngine);
+        try {
+          localStorage.setItem('tinglan_active_db_engine', targetEngine);
+        } catch {}
+        onShowToast('数据库切换成功', data.message || `已切换至 ${targetEngine.toUpperCase()} 引擎`, 'success');
+        await fetchDbStatus();
       } else {
         onShowToast('数据库切换失败', data.error || data.message || '请检查数据库服务器配置', 'error');
         if (data.requireLogin) {
@@ -1638,6 +1665,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 
                 {/* SQLite Option */}
                 <div
+                  id="card-engine-sqlite"
                   onClick={() => setSelectedEngine('sqlite')}
                   className={`p-4 rounded-2xl border cursor-pointer transition ${
                     selectedEngine === 'sqlite'
@@ -1650,7 +1678,15 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                       <Layers className="w-3.5 h-3.5 text-[#FF6700]" />
                       SQLite 3 (单文件轻量)
                     </span>
-                    {selectedEngine === 'sqlite' && <Check className="w-4 h-4 text-[#FF6700]" />}
+                    <div className="flex items-center gap-1.5">
+                      {dbStatus?.engine === 'sqlite' && (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                          运行中
+                        </span>
+                      )}
+                      {selectedEngine === 'sqlite' && <Check className="w-4 h-4 text-[#FF6700]" />}
+                    </div>
                   </div>
                   <p className="text-[11px] text-zinc-400 leading-relaxed">
                     无需配置独立数据库服务器，数据直接保存在本地 JSON 与 SQLite 文件中，开箱即用。
@@ -1659,6 +1695,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
                 {/* PostgreSQL Option */}
                 <div
+                  id="card-engine-postgres"
                   onClick={() => setSelectedEngine('postgres')}
                   className={`p-4 rounded-2xl border cursor-pointer transition ${
                     selectedEngine === 'postgres'
@@ -1671,7 +1708,15 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                       <Database className="w-3.5 h-3.5 text-blue-400" />
                       PostgreSQL (企业云原生)
                     </span>
-                    {selectedEngine === 'postgres' && <Check className="w-4 h-4 text-blue-400" />}
+                    <div className="flex items-center gap-1.5">
+                      {dbStatus?.engine === 'postgres' && (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                          运行中
+                        </span>
+                      )}
+                      {selectedEngine === 'postgres' && <Check className="w-4 h-4 text-blue-400" />}
+                    </div>
                   </div>
                   <p className="text-[11px] text-zinc-400 leading-relaxed">
                     适合多设备并发访问与 Docker 容器化编排环境，具备事务强一致性与高吞吐能力。
@@ -1680,6 +1725,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
                 {/* MySQL Option */}
                 <div
+                  id="card-engine-mysql"
                   onClick={() => setSelectedEngine('mysql')}
                   className={`p-4 rounded-2xl border cursor-pointer transition ${
                     selectedEngine === 'mysql'
@@ -1692,7 +1738,15 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                       <Server className="w-3.5 h-3.5 text-amber-400" />
                       MySQL (经典关系型)
                     </span>
-                    {selectedEngine === 'mysql' && <Check className="w-4 h-4 text-amber-400" />}
+                    <div className="flex items-center gap-1.5">
+                      {dbStatus?.engine === 'mysql' && (
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                          运行中
+                        </span>
+                      )}
+                      {selectedEngine === 'mysql' && <Check className="w-4 h-4 text-amber-400" />}
+                    </div>
                   </div>
                   <p className="text-[11px] text-zinc-400 leading-relaxed">
                     广泛支持各类 NAS (群晖 / 威联通 / 飞牛 NAS) 及云服务器环境，易于备份与维护。
@@ -1879,12 +1933,27 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
 
               <button
                 type="button"
+                id="btn-switch-database-engine"
                 onClick={handleSwitchEngine}
-                disabled={dbSwitching}
-                className="px-6 py-2.5 rounded-xl bg-[#FF6700] hover:bg-[#e55c00] text-white text-xs font-semibold transition active:scale-95 shadow-md flex items-center gap-2 disabled:opacity-50 cursor-pointer"
+                disabled={dbSwitching || (selectedEngine === dbStatus?.engine)}
+                className={`px-6 py-2.5 rounded-xl text-xs font-semibold transition active:scale-95 shadow-md flex items-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${
+                  selectedEngine === dbStatus?.engine
+                    ? 'bg-zinc-800 text-zinc-400 border border-white/5'
+                    : 'bg-[#FF6700] hover:bg-[#e55c00] text-white shadow-[0_4px_16px_rgba(255,103,0,0.35)]'
+                }`}
               >
-                {dbSwitching ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-                <span>应用并切换数据库引擎</span>
+                {dbSwitching ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : selectedEngine === dbStatus?.engine ? (
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                ) : (
+                  <Check className="w-3.5 h-3.5" />
+                )}
+                <span>
+                  {selectedEngine === dbStatus?.engine
+                    ? `当前正在使用 ${selectedEngine.toUpperCase()} 存储引擎`
+                    : `应用并切换至 ${selectedEngine.toUpperCase()} 存储引擎`}
+                </span>
               </button>
             </div>
 
