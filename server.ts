@@ -302,79 +302,106 @@ taskSchedulerEngine.on('taskExecuted', (task) => {
 
 // ---------------- AUTOMATION SCENE ENGINE ACTION HANDLER ----------------
 automationService.registerActionHandler(async (scene) => {
-  const allDevs = deviceRepository.getAllDevices();
+  const activeMiotConfig = loadJson(CONFIG_FILE, miotConfig);
+  let allDevs = deviceRepository.getAllDevices();
   let targetDevices = allDevs;
+
   if (scene.targetType === 'single_device' && scene.targetId) {
     const d = deviceRepository.getDeviceByDid(scene.targetId);
     if (d) targetDevices = [d];
   }
 
-  if (targetDevices.length === 0 && allDevs.length > 0) {
+  // Fallback if targetDevices is empty but activeDeviceId exists
+  if (targetDevices.length === 0 && activeMiotConfig.activeDeviceId) {
+    const d = deviceRepository.getDeviceByDid(activeMiotConfig.activeDeviceId);
+    if (d) {
+      targetDevices = [d];
+    } else {
+      // Create a virtual target device descriptor from activeDeviceId
+      targetDevices = [{
+        did: activeMiotConfig.activeDeviceId,
+        name: '选中的小爱音箱',
+        hardware: 'L16A',
+        model: 'xiaomi.wifispeaker.lx06',
+        online: true
+      }];
+    }
+  } else if (targetDevices.length === 0 && allDevs.length > 0) {
     targetDevices = [allDevs[0]];
   }
 
   const results: string[] = [];
 
   for (const dev of targetDevices) {
-    // 1. Set volume if specified
+    // 1. Set volume if specified in scene payload
     if (scene.payload.volume !== undefined && scene.payload.volume >= 0) {
       try {
         await xiaomiAdapter.setVolume(
           dev,
           scene.payload.volume,
-          (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry, miotConfig, (cfg) => saveJson(CONFIG_FILE, cfg)),
+          (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry, activeMiotConfig, (cfg) => saveJson(CONFIG_FILE, cfg)),
           sendMiioCommand,
-          miotConfig
+          activeMiotConfig
         );
       } catch (e: any) {
-        console.warn(`[Automation] Volume error on ${dev.name}:`, e.message);
+        console.warn(`[Automation] Volume setting error on ${dev.name}:`, e.message);
       }
     }
 
-    // 2. Action execution
-    if (scene.actionType === 'tts_announce' && scene.payload.ttsText) {
+    // 2. Dispatch TTS Voice Prompt if present or actionType is tts_announce
+    const ttsTextToSpeak = scene.payload.ttsText || (scene.actionType === 'tts_announce' ? '夜深了，为您调低音量，祝您晚安好梦。' : undefined);
+    if (ttsTextToSpeak) {
       try {
+        const primaryLanIp = getLocalNetworkIps()[0] || '127.0.0.1';
+        const resolvedServerHost = (activeMiotConfig.serverHost && activeMiotConfig.serverHost.startsWith('http'))
+          ? activeMiotConfig.serverHost.replace(/\/$/, '')
+          : `http://${primaryLanIp}:${PORT}`;
+
         const res = await ttsEngine.dispatchToSpeaker({
           targetDevice: dev,
-          text: scene.payload.ttsText,
-          miotConfig,
-          sendMiioCommandFn: sendMiioCommand,
-          callMinaCloudApiFn: (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry, miotConfig, (cfg) => saveJson(CONFIG_FILE, cfg))
+          text: ttsTextToSpeak,
+          serverHost: resolvedServerHost,
+          mode: 'auto',
+          miotConfig: activeMiotConfig,
+          sendMiioCommandFn: (ip, token, method, params, timeoutMs) => sendMiioCommand(ip, token, method, params, timeoutMs || 2500),
+          callMinaCloudApiFn: (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry, activeMiotConfig, (cfg) => saveJson(CONFIG_FILE, cfg))
         });
-        results.push(`${dev.name}: ${res.success ? 'TTS播报成功' : 'TTS已下发/离线重试'}`);
+        results.push(`${dev.name}: ${res.success ? `TTS睡前问候播报成功 (${res.channel})` : `TTS发送提示 (${res.error || '重试中'})`}`);
       } catch (e: any) {
         results.push(`${dev.name}: TTS异常 (${e.message})`);
       }
-    } else if (scene.actionType === 'play_radio' && (scene.payload.radioUrl || scene.payload.ttsText)) {
+    }
+
+    // 3. Dispatch Music/Radio audio stream ONLY if actionType is play_radio and radioUrl is explicitly set
+    if (scene.actionType === 'play_radio' && scene.payload.radioUrl) {
+      // Wait briefly for TTS to finish speaking
       if (scene.payload.ttsText) {
-        await ttsEngine.dispatchToSpeaker({
-          targetDevice: dev,
-          text: scene.payload.ttsText,
-          miotConfig,
-          sendMiioCommandFn: sendMiioCommand,
-          callMinaCloudApiFn: (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry, miotConfig, (cfg) => saveJson(CONFIG_FILE, cfg))
-        }).catch(() => {});
+        await new Promise(r => setTimeout(r, 2000));
       }
-      if (scene.payload.radioUrl) {
-        const fakeSong: any = {
-          id: `radio_${Date.now()}`,
-          title: scene.payload.radioTitle || '网络定时电台广播',
-          artist: '定时自动化电台',
-          album: '网络音频流',
-          url: scene.payload.radioUrl,
-          coverUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=300&q=80',
-          duration: 3600
-        };
+
+      const radioSong: any = {
+        id: `radio_${Date.now()}`,
+        title: scene.payload.radioTitle || '网络电台广播',
+        artist: '定时自动化电台',
+        album: '网络音频流',
+        url: scene.payload.radioUrl,
+        coverUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=300&q=80',
+        duration: 3600
+      };
+
+      try {
         const castRes = await dispatchCastSongDirectly({
-          song: fakeSong,
+          song: radioSong,
           targetDid: dev.did,
-          miotConfig,
+          miotConfig: activeMiotConfig,
           saveMiotConfigFn: (cfg) => saveJson(CONFIG_FILE, cfg),
           serverPort: PORT,
           jwtSecret: JWT_SECRET,
           activeStreamIps
         });
-        results.push(`${dev.name}: ${castRes.success ? '电台投送成功' : '电台投送指令已下发'}`);
+        results.push(`${dev.name}: ${castRes.success ? '电台伴听流推流成功' : '电台播放指令已投送'}`);
+      } catch (e: any) {
+        results.push(`${dev.name}: 电台推流异常 (${e.message})`);
       }
     } else if (scene.actionType === 'play_playlist') {
       const plId = scene.payload.playlistId || 'all';
@@ -384,7 +411,7 @@ automationService.registerActionHandler(async (scene) => {
         const castRes = await dispatchCastSongDirectly({
           song: songs[0],
           targetDid: dev.did,
-          miotConfig,
+          miotConfig: activeMiotConfig,
           saveMiotConfigFn: (cfg) => saveJson(CONFIG_FILE, cfg),
           serverPort: PORT,
           jwtSecret: JWT_SECRET,
@@ -397,9 +424,9 @@ automationService.registerActionHandler(async (scene) => {
         await xiaomiAdapter.setPlaybackOperation(
           dev,
           'pause',
-          (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry, miotConfig, (cfg) => saveJson(CONFIG_FILE, cfg)),
+          (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry, activeMiotConfig, (cfg) => saveJson(CONFIG_FILE, cfg)),
           (ip, token, method, params, timeoutMs) => sendMiioCommand(ip, token, method, params, timeoutMs || 2500),
-          miotConfig
+          activeMiotConfig
         );
         results.push(`${dev.name}: 已暂停播放`);
       } catch (e: any) {
@@ -409,9 +436,9 @@ automationService.registerActionHandler(async (scene) => {
   }
 
   if (results.length === 0) {
-    return { success: true, message: `已触发场景「${scene.name}」（若要实时响铃与语音播报，请先连接并选中小爱音箱设备）` };
+    return { success: true, message: `已触发场景「${scene.name}」（请确保已登录小米账号并勾选小爱音箱）` };
   }
-  return { success: true, message: `【全屋自动化响应】${results.join('；')}` };
+  return { success: true, message: `【小爱音箱响应】${results.join('；')}` };
 });
 
 adaptiveHeartbeatEngine.setRpcHandlers(

@@ -51,20 +51,21 @@ const DEFAULT_SCENES: AutomationScene[] = [
     payload: {
       radioUrl: 'https://stream.zeno.fm/f3wvbbqmdg8uv',
       radioTitle: 'Lofi Chill Morning Beats',
+      ttsText: '早上好！为你播报早安问候与晨间舒缓音频，祝你新一天愉快。',
       volume: 35
     },
     createdAt: new Date().toISOString()
   },
   {
     id: 'scene_night_lullaby',
-    name: '🌙 夜间睡前舒缓音乐 & 自动打关机',
-    description: '每晚 23:00 自动调低客厅与卧室音箱音量至 20%，播报睡前问候并开启轻音乐',
+    name: '🌙 夜间睡前舒缓问候 & 自动调低音量',
+    description: '每晚 23:00 自动调低客厅与卧室音箱音量至 20%，播报睡前晚安问候语音',
     cronExpr: '00 23 * * *',
     enabled: true,
     actionType: 'tts_announce',
     targetType: 'all_devices',
     payload: {
-      ttsText: '夜深了，为您调低音量并播放助眠旋律，祝您晚安好梦。',
+      ttsText: '夜深了，为您调低音量，祝您晚安好梦。',
       volume: 20
     },
     createdAt: new Date().toISOString()
@@ -84,6 +85,25 @@ class AutomationService {
   private init() {
     this.scenes = loadJson<AutomationScene[]>(AUTOMATION_FILE, DEFAULT_SCENES);
     this.logs = loadJson<AutomationLog[]>(LOGS_FILE, []);
+
+    // Ensure night lullaby preset is updated to pure tts_announce without radioUrl
+    let updated = false;
+    this.scenes.forEach(s => {
+      if (s.id === 'scene_night_lullaby') {
+        s.actionType = 'tts_announce';
+        s.name = '🌙 夜间睡前舒缓问候 & 自动调低音量';
+        s.description = '每晚 23:00 自动调低客厅与卧室音箱音量至 20%，播报睡前晚安问候语音';
+        delete s.payload.radioUrl;
+        delete s.payload.radioTitle;
+        s.payload.ttsText = '夜深了，为您调低音量，祝您晚安好梦。';
+        s.payload.volume = 20;
+        updated = true;
+      }
+    });
+    if (updated) {
+      saveJson(AUTOMATION_FILE, this.scenes, true);
+    }
+
     this.startScheduler();
   }
 
