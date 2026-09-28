@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { multiDbManager } from '../../storage/multiDbClient.js';
 
 export interface UserSongInteraction {
   userId: string;
@@ -212,6 +213,20 @@ export class InteractionRepository {
         ON CONFLICT(user_id, song_id) DO UPDATE SET is_favorite = excluded.is_favorite
       `, [userId, songId, isFavorite ? 1 : 0, existing.rating || 0, existing.playCount, existing.lastPlayedAt || null]);
     }
+
+    if (multiDbManager.isRemoteActive) {
+      multiDbManager.executeWrite(
+        `INSERT INTO user_song_interactions (user_id, song_id, is_favorite, rating, play_count, last_played_at)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (user_id, song_id) DO UPDATE SET is_favorite = EXCLUDED.is_favorite;`,
+        [userId, songId, isFavorite ? 1 : 0, existing.rating || 0, existing.playCount, existing.lastPlayedAt || null],
+        `INSERT INTO user_song_interactions (user_id, song_id, is_favorite, rating, play_count, last_played_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE is_favorite = VALUES(is_favorite);`,
+        [userId, songId, isFavorite ? 1 : 0, existing.rating || 0, existing.playCount, existing.lastPlayedAt || null]
+      ).catch(() => {});
+    }
+
     return existing;
   }
 
@@ -295,6 +310,19 @@ export class InteractionRepository {
         item.playedAt
       ]);
     }
+
+    if (multiDbManager.isRemoteActive) {
+      multiDbManager.executeWrite(
+        `INSERT INTO play_history (id, user_id, song_id, song_title, song_artist, device_did, device_name, duration_seconds, played_seconds, played_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         ON CONFLICT (id) DO NOTHING;`,
+        [item.id, item.userId || null, item.songId, item.songTitle, item.songArtist || null, item.deviceDid || null, item.deviceName || null, item.durationSeconds || 0, item.playedSeconds || 0, item.playedAt],
+        `INSERT IGNORE INTO play_history (id, user_id, song_id, song_title, song_artist, device_did, device_name, duration_seconds, played_seconds, played_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        [item.id, item.userId || null, item.songId, item.songTitle, item.songArtist || null, item.deviceDid || null, item.deviceName || null, item.durationSeconds || 0, item.playedSeconds || 0, item.playedAt]
+      ).catch(() => {});
+    }
+
     return item;
   }
 
@@ -333,6 +361,19 @@ export class InteractionRepository {
         item.latencyMs || null
       ]);
     }
+
+    if (multiDbManager.isRemoteActive) {
+      multiDbManager.executeWrite(
+        `INSERT INTO cast_audit_logs (id, timestamp, log_type, device_did, device_name, song_title, status, detail, latency_ms)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         ON CONFLICT (id) DO NOTHING;`,
+        [item.id, item.timestamp, item.logType, item.deviceDid || null, item.deviceName || null, item.songTitle || null, item.status, item.detail || null, item.latencyMs || null],
+        `INSERT IGNORE INTO cast_audit_logs (id, timestamp, log_type, device_did, device_name, song_title, status, detail, latency_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);`,
+        [item.id, item.timestamp, item.logType, item.deviceDid || null, item.deviceName || null, item.songTitle || null, item.status, item.detail || null, item.latencyMs || null]
+      ).catch(() => {});
+    }
+
     return item;
   }
 

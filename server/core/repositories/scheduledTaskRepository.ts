@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { multiDbManager } from '../../storage/multiDbClient.js';
 
 export interface ScheduledTask {
   id: string;
@@ -174,6 +175,27 @@ export class ScheduledTaskRepository {
       }
     }
 
+    if (multiDbManager.isRemoteActive) {
+      multiDbManager.executeWrite(
+        `INSERT INTO scheduled_tasks (id, user_id, title, type, cron_expr, target_time, target_did, target_device_name, playlist_id, song_id, action, volume, fade_duration_seconds, repeat_days, is_enabled, last_executed_at, next_run_at, tts_text, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+         ON CONFLICT (id) DO UPDATE SET
+           title = EXCLUDED.title, type = EXCLUDED.type, cron_expr = EXCLUDED.cron_expr, target_time = EXCLUDED.target_time,
+           target_did = EXCLUDED.target_did, target_device_name = EXCLUDED.target_device_name, playlist_id = EXCLUDED.playlist_id,
+           song_id = EXCLUDED.song_id, action = EXCLUDED.action, volume = EXCLUDED.volume, is_enabled = EXCLUDED.is_enabled,
+           updated_at = EXCLUDED.updated_at;`,
+        [record.id, record.userId || 'usr-admin-001', record.title, record.type, record.cronExpr || null, record.targetTime || null, record.targetDid, record.targetDeviceName || null, record.playlistId || null, record.songId || null, record.action, record.volume ?? null, record.fadeDurationSeconds || 0, record.repeatDays ? JSON.stringify(record.repeatDays) : null, record.isEnabled ? 1 : 0, record.lastExecutedAt || null, record.nextRunAt || null, record.ttsText || null, record.createdAt || new Date().toISOString(), record.updatedAt],
+        `INSERT INTO scheduled_tasks (id, user_id, title, type, cron_expr, target_time, target_did, target_device_name, playlist_id, song_id, action, volume, fade_duration_seconds, repeat_days, is_enabled, last_executed_at, next_run_at, tts_text, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           title = VALUES(title), type = VALUES(type), cron_expr = VALUES(cron_expr), target_time = VALUES(target_time),
+           target_did = VALUES(target_did), target_device_name = VALUES(target_device_name), playlist_id = VALUES(playlist_id),
+           song_id = VALUES(song_id), action = VALUES(action), volume = VALUES(volume), is_enabled = VALUES(is_enabled),
+           updated_at = VALUES(updated_at);`,
+        [record.id, record.userId || 'usr-admin-001', record.title, record.type, record.cronExpr || null, record.targetTime || null, record.targetDid, record.targetDeviceName || null, record.playlistId || null, record.songId || null, record.action, record.volume ?? null, record.fadeDurationSeconds || 0, record.repeatDays ? JSON.stringify(record.repeatDays) : null, record.isEnabled ? 1 : 0, record.lastExecutedAt || null, record.nextRunAt || null, record.ttsText || null, record.createdAt || new Date().toISOString(), record.updatedAt]
+      ).catch(() => {});
+    }
+
     return record;
   }
 
@@ -187,6 +209,14 @@ export class ScheduledTaskRepository {
         } catch (e) {
           console.error('[ScheduledTaskRepository] SQLite delete error:', e);
         }
+      }
+      if (multiDbManager.isRemoteActive) {
+        multiDbManager.executeWrite(
+          'DELETE FROM scheduled_tasks WHERE id = $1',
+          [id],
+          'DELETE FROM scheduled_tasks WHERE id = ?',
+          [id]
+        ).catch(() => {});
       }
     }
     return existed;

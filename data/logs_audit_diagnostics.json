@@ -43,5 +43,35 @@
       "operator": "self-service/init"
     },
     "clientIp": "127.0.0.1"
+  },
+  {
+    "id": "log_1790579903437_rwazf",
+    "timestamp": 1790579903437,
+    "timeFormatted": "07:18:23.437",
+    "category": "audit",
+    "level": "info",
+    "title": "密码修改成功",
+    "message": "用户「admin」的密码已成功更新并签发安全凭证",
+    "traceId": "tr_gpycd7",
+    "details": {
+      "targetUsername": "admin",
+      "operator": "self-service/init"
+    },
+    "clientIp": "127.0.0.1"
+  },
+  {
+    "id": "log_1790579907801_uarve",
+    "timestamp": 1790579907801,
+    "timeFormatted": "07:18:27.801",
+    "category": "audit",
+    "level": "info",
+    "title": "密码修改成功",
+    "message": "用户「admin」的密码已成功更新并签发安全凭证",
+    "traceId": "tr_8m27hf",
+    "details": {
+      "targetUsername": "admin",
+      "operator": "self-service/init"
+    },
+    "clientIp": "127.0.0.1"
   }
 ]

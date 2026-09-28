@@ -171,6 +171,9 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
       if (clientUser && clientUser.role !== 'admin') {
         return res.status(403).json({ success: false, error: '权限不足：普通用户无权触发物理曲库全盘重扫，仅管理员允许操作' });
       }
+      if (!clientUser && options.hasAdminAccount && options.hasAdminAccount()) {
+        return res.status(403).json({ success: false, error: '安全拦截：物理曲库全盘扫描耗费系统 I/O 资源，请登录管理员账号方可执行' });
+      }
 
       if (asyncMusicScanner.isBusy()) {
         return res.json({
@@ -245,6 +248,9 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
       const clientUser = (req as any).user;
       if (clientUser && clientUser.role !== 'admin') {
         return res.status(403).json({ success: false, error: '权限不足：普通用户无权向曲库上传文件，仅管理员允许操作' });
+      }
+      if (!clientUser && options.hasAdminAccount && options.hasAdminAccount()) {
+        return res.status(403).json({ success: false, error: '安全拦截：上传曲目至本地曲库属于管理操作，请登录管理员账号方可执行' });
       }
 
       const { title, artist, album, genre, duration, lyrics, bitrate, fileBase64, fileName, coverUrl } = req.body;
@@ -372,6 +378,9 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
     const clientUser = (req as any).user;
     if (clientUser && clientUser.role !== 'admin') {
       return res.status(403).json({ success: false, error: '权限不足：普通用户无权删除物理曲目，仅管理员允许操作' });
+    }
+    if (!clientUser && options.hasAdminAccount && options.hasAdminAccount()) {
+      return res.status(403).json({ success: false, error: '安全拦截：删除物理曲目属于高危管理操作，请登录管理员账号方可执行' });
     }
 
     const { id } = req.params;

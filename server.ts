@@ -13,6 +13,7 @@ import {
   configureStoragePaths
 } from './server/storage/jsonStorage.js';
 import { initSqliteDatabase } from './server/storage/sqliteInit.js';
+import { multiDbManager, MultiDbConfig } from './server/storage/multiDbClient.js';
 import {
   getClientIp,
   isPrivateOrLocalIp,
@@ -201,11 +202,12 @@ storedUsers.forEach(u => {
 saveJson(USERS_FILE, storedUsers);
 
 // Database configuration
-let activeDbConfig = loadJson(DB_CONFIG_FILE, {
-  engine: 'sqlite',
+let activeDbConfig: MultiDbConfig = loadJson(DB_CONFIG_FILE, {
+  engine: 'sqlite' as const,
   postgresConfig: { host: 'localhost', port: 5432, user: 'postgres', password: '', database: 'tinglan_db' },
   mysqlConfig: { host: 'localhost', port: 3306, user: 'root', password: '', database: 'tinglan_db' }
 });
+multiDbManager.setConfig(activeDbConfig);
 const sqliteDb = initSqliteDatabase(SQLITE_FILE, defaultAdminUser);
 if (sqliteDb) {
   logEngine.setSqliteDb(sqliteDb);

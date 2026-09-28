@@ -19,7 +19,7 @@ import {
   Settings
 } from 'lucide-react';
 import { SecuritySettings, SecurityStatus, User } from '../types';
-import { apiFetch } from '../utils/api';
+import { apiFetch, setStoredAuthToken } from '../utils/api';
 
 interface SecuritySettingsModalProps {
   isOpen: boolean;
@@ -48,8 +48,10 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
   
   // Change password state
   const [showPasswordChange, setShowPasswordChange] = useState(false);
+  const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showOldPassword, setShowOldPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [passwordSuccess, setPasswordSuccess] = useState('');
   const [passwordError, setPasswordError] = useState('');
@@ -122,12 +124,16 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
     setPasswordSuccess('');
     setPasswordError('');
 
+    if (!oldPassword.trim()) {
+      setPasswordError('请输入当前旧密码以验证管理员身份');
+      return;
+    }
     if (newPassword.length < 6) {
-      setPasswordError('密码长度不能少于 6 位');
+      setPasswordError('新密码长度不能少于 6 位');
       return;
     }
     if (newPassword !== confirmPassword) {
-      setPasswordError('两次输入的密码不一致');
+      setPasswordError('两次输入的新密码不一致');
       return;
     }
 
@@ -136,7 +142,11 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
       const res = await apiFetch('/api/auth/change-admin-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ newPassword })
+        body: JSON.stringify({ 
+          username: 'admin',
+          oldPassword: oldPassword.trim(),
+          newPassword: newPassword.trim() 
+        })
       });
 
       const data = await res.json();
@@ -144,9 +154,15 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
         throw new Error(data.error || '修改管理员密码失败');
       }
 
+      if (data.token) {
+        setStoredAuthToken(data.token);
+      }
+
       setPasswordSuccess('管理员密码已成功更新！请妥善保管新密码。');
+      setOldPassword('');
       setNewPassword('');
       setConfirmPassword('');
+      if (onSecurityUpdated) onSecurityUpdated();
       setTimeout(() => setShowPasswordChange(false), 2000);
     } catch (err: any) {
       setPasswordError(err.message || '修改密码异常');
@@ -457,38 +473,61 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
                 </div>
               )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="space-y-3">
                 <div>
-                  <label className="block text-[11px] text-zinc-400 mb-1 font-medium">新管理员密码</label>
+                  <label className="block text-[11px] text-zinc-400 mb-1 font-medium">当前管理员旧密码 (原密码)</label>
                   <div className="relative">
                     <input
-                      type={showNewPassword ? 'text' : 'password'}
+                      type={showOldPassword ? 'text' : 'password'}
                       required
-                      placeholder="设置 6 位以上新密码"
-                      value={newPassword}
-                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="输入当前密码以验证管理员身份"
+                      value={oldPassword}
+                      onChange={(e) => setOldPassword(e.target.value)}
                       className="w-full px-3 py-2 bg-zinc-900 border border-white/10 rounded-xl text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-[#FF6700]"
                     />
                     <button
                       type="button"
-                      onClick={() => setShowNewPassword(!showNewPassword)}
+                      onClick={() => setShowOldPassword(!showOldPassword)}
                       className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white"
                     >
-                      {showNewPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      {showOldPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                     </button>
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-[11px] text-zinc-400 mb-1 font-medium">确认新密码</label>
-                  <input
-                    type="password"
-                    required
-                    placeholder="再次输入新密码"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    className="w-full px-3 py-2 bg-zinc-900 border border-white/10 rounded-xl text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-[#FF6700]"
-                  />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] text-zinc-400 mb-1 font-medium">新管理员密码</label>
+                    <div className="relative">
+                      <input
+                        type={showNewPassword ? 'text' : 'password'}
+                        required
+                        placeholder="设置 6 位以上新密码"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        className="w-full px-3 py-2 bg-zinc-900 border border-white/10 rounded-xl text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-[#FF6700]"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowNewPassword(!showNewPassword)}
+                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white"
+                      >
+                        {showNewPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] text-zinc-400 mb-1 font-medium">确认新密码</label>
+                    <input
+                      type="password"
+                      required
+                      placeholder="再次输入新密码"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      className="w-full px-3 py-2 bg-zinc-900 border border-white/10 rounded-xl text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-[#FF6700]"
+                    />
+                  </div>
                 </div>
               </div>
 

@@ -4,6 +4,7 @@ import { Song } from '../musicEngine.js';
 import { Playlist } from '../playlistEngine.js';
 import { musicSearchIndex, SearchOptions } from '../searchIndex.js';
 import { DEFAULT_SONGS, DEFAULT_PLAYLISTS } from '../defaultData.js';
+import { multiDbManager } from '../../storage/multiDbClient.js';
 
 export { DEFAULT_SONGS, DEFAULT_PLAYLISTS };
 
@@ -122,6 +123,26 @@ export class MusicRepository {
     } catch (err) {
       console.warn('[MusicRepository] Failed to sync songs to SQLite:', err);
     }
+
+    // Dual-write to active remote database (PostgreSQL / MySQL) if configured
+    if (multiDbManager.isRemoteActive) {
+      for (const s of this.songs) {
+        multiDbManager.executeWrite(
+          `INSERT INTO songs (id, title, artist, album, duration, url, cover_url, lyrics, genre, year, bitrate, file_size, source, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+           ON CONFLICT (id) DO UPDATE SET
+             title = EXCLUDED.title, artist = EXCLUDED.artist, album = EXCLUDED.album, duration = EXCLUDED.duration,
+             url = EXCLUDED.url, cover_url = EXCLUDED.cover_url, lyrics = EXCLUDED.lyrics, genre = EXCLUDED.genre;`,
+          [s.id, s.title, s.artist || '', s.album || '', s.duration || 0, s.url || '', s.coverUrl || '', s.lyrics || '', s.genre || '', s.year || null, s.bitrate || '', s.fileSize || '', s.source || 'local', new Date().toISOString()],
+          `INSERT INTO songs (id, title, artist, album, duration, url, cover_url, lyrics, genre, year, bitrate, file_size, source, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             title = VALUES(title), artist = VALUES(artist), album = VALUES(album), duration = VALUES(duration),
+             url = VALUES(url), cover_url = VALUES(cover_url), lyrics = VALUES(lyrics), genre = VALUES(genre);`,
+          [s.id, s.title, s.artist || '', s.album || '', s.duration || 0, s.url || '', s.coverUrl || '', s.lyrics || '', s.genre || '', s.year || null, s.bitrate || '', s.fileSize || '', s.source || 'local', new Date().toISOString()]
+        ).catch(() => {});
+      }
+    }
   }
 
   private syncPlaylistsToSqlite() {
@@ -147,6 +168,24 @@ export class MusicRepository {
       });
     } catch (err) {
       console.warn('[MusicRepository] Failed to sync playlists to SQLite:', err);
+    }
+
+    // Dual-write to active remote database (PostgreSQL / MySQL) if configured
+    if (multiDbManager.isRemoteActive) {
+      for (const p of this.playlists) {
+        multiDbManager.executeWrite(
+          `INSERT INTO playlists (id, user_id, name, description, cover_url, song_ids, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           ON CONFLICT (id) DO UPDATE SET
+             name = EXCLUDED.name, description = EXCLUDED.description, cover_url = EXCLUDED.cover_url, song_ids = EXCLUDED.song_ids;`,
+          [p.id, (p as any).userId || 'usr-admin-001', p.name, p.description || '', p.coverUrl || '', JSON.stringify(p.songIds || []), p.createdAt || new Date().toISOString()],
+          `INSERT INTO playlists (id, user_id, name, description, cover_url, song_ids, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             name = VALUES(name), description = VALUES(description), cover_url = VALUES(cover_url), song_ids = VALUES(song_ids);`,
+          [p.id, (p as any).userId || 'usr-admin-001', p.name, p.description || '', p.coverUrl || '', JSON.stringify(p.songIds || []), p.createdAt || new Date().toISOString()]
+        ).catch(() => {});
+      }
     }
   }
 

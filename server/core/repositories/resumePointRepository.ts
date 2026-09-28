@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { multiDbManager } from '../../storage/multiDbClient.js';
 
 export interface PlaybackResumePoint {
   id: string; // `${userId || 'anon'}_${songId}`
@@ -211,6 +212,23 @@ export class ResumePointRepository {
       } catch (e) {
         console.error('[ResumePointRepository] SQLite upsert error:', e);
       }
+    }
+
+    if (multiDbManager.isRemoteActive) {
+      multiDbManager.executeWrite(
+        `INSERT INTO playback_resume_points (id, user_id, song_id, song_title, song_artist, song_cover_url, device_did, device_name, resume_position_seconds, duration_seconds, progress_percent, is_completed, queue_context_json, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+         ON CONFLICT (id) DO UPDATE SET
+           resume_position_seconds = EXCLUDED.resume_position_seconds, duration_seconds = EXCLUDED.duration_seconds,
+           progress_percent = EXCLUDED.progress_percent, is_completed = EXCLUDED.is_completed, updated_at = EXCLUDED.updated_at;`,
+        [record.id, record.userId, record.songId, record.songTitle || null, record.songArtist || null, record.songCoverUrl || null, record.deviceDid || null, record.deviceName || null, record.resumePositionSeconds, record.durationSeconds, record.progressPercent, record.isCompleted ? 1 : 0, record.queueContext ? JSON.stringify(record.queueContext) : null, record.updatedAt],
+        `INSERT INTO playback_resume_points (id, user_id, song_id, song_title, song_artist, song_cover_url, device_did, device_name, resume_position_seconds, duration_seconds, progress_percent, is_completed, queue_context_json, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           resume_position_seconds = VALUES(resume_position_seconds), duration_seconds = VALUES(duration_seconds),
+           progress_percent = VALUES(progress_percent), is_completed = VALUES(is_completed), updated_at = VALUES(updated_at);`,
+        [record.id, record.userId, record.songId, record.songTitle || null, record.songArtist || null, record.songCoverUrl || null, record.deviceDid || null, record.deviceName || null, record.resumePositionSeconds, record.durationSeconds, record.progressPercent, record.isCompleted ? 1 : 0, record.queueContext ? JSON.stringify(record.queueContext) : null, record.updatedAt]
+      ).catch(() => {});
     }
 
     return record;

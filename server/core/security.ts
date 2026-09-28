@@ -212,16 +212,47 @@ export function createAuthMiddleware(options: AuthMiddlewareOptions) {
     const relative = (req.path || req.url).split('?')[0];
     const fullPath = original.startsWith('/api') ? original : `/api${original}`;
 
+    // 1. API key authentication
+    const reqApiKey = req.headers['x-api-key'] || req.query.apiKey;
+    if (apiKey && reqApiKey === apiKey) {
+      (req as any).user = { id: 'api-key-user', username: 'api-key-client', role: 'admin' };
+      return next();
+    }
+
+    // 2. Token resolution (always attach user if valid token exists)
+    const authHeader = req.headers['authorization'];
+    let token: string | null = null;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.slice(7).trim();
+    } else if (req.query.token) {
+      token = String(req.query.token).trim();
+    }
+
+    let tokenInvalid = false;
+    if (token) {
+      try {
+        const decoded: any = jwt.verify(token, jwtSecret);
+        (req as any).user = decoded;
+      } catch (err: any) {
+        tokenInvalid = true;
+      }
+    }
+
+    // 3. Whitelisted public and self-verifying endpoints
     if (
       fullPath === '/api/auth/login' ||
       fullPath === '/api/auth/register' ||
       fullPath === '/api/auth/status' ||
+      fullPath === '/api/auth/change-password' ||
+      fullPath === '/api/auth/change-admin-password' ||
       ((fullPath === '/api/system/security' || relative === '/system/security') && req.method === 'GET') ||
       fullPath === '/api/health' ||
       fullPath === '/api/ping' ||
       relative === '/auth/login' ||
       relative === '/auth/register' ||
       relative === '/auth/status' ||
+      relative === '/auth/change-password' ||
+      relative === '/auth/change-admin-password' ||
       relative === '/health' ||
       relative === '/ping'
     ) {
@@ -240,36 +271,18 @@ export function createAuthMiddleware(options: AuthMiddlewareOptions) {
       return next();
     }
 
-    const reqApiKey = req.headers['x-api-key'] || req.query.apiKey;
-    if (apiKey && reqApiKey === apiKey) {
-      (req as any).user = { id: 'api-key-user', username: 'api-key-client', role: 'admin' };
+    const authRequired = isAuthRequiredForRequest(req, getSecuritySettings);
+
+    if (token && (req as any).user) {
       return next();
     }
 
-    const authHeader = req.headers['authorization'];
-    let token: string | null = null;
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      token = authHeader.slice(7).trim();
-    } else if (req.query.token) {
-      token = String(req.query.token).trim();
-    }
-
-    const authRequired = isAuthRequiredForRequest(req, getSecuritySettings);
-
-    if (token) {
-      try {
-        const decoded: any = jwt.verify(token, jwtSecret);
-        (req as any).user = decoded;
-        return next();
-      } catch (err: any) {
-        if (authRequired) {
-          return res.status(401).json({
-            success: false,
-            error: '身份验证令牌无效或已过期，请重新登录账号',
-            requireLogin: true
-          });
-        }
-      }
+    if (tokenInvalid && authRequired) {
+      return res.status(401).json({
+        success: false,
+        error: '身份验证令牌无效或已过期，请重新登录账号',
+        requireLogin: true
+      });
     }
 
     if (authRequired) {

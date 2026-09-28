@@ -518,12 +518,41 @@ export async function bootstrapPostgresSchema(config: DbConnectionConfig['postgr
     throw new Error('未配置 PostgreSQL 连接参数 (Host 未指定)');
   }
 
+  const targetDb = config.database || 'tinglan_db';
+
+  // 1. Attempt auto-creation of target database if not exists by connecting to default 'postgres' database
+  try {
+    const adminPool = new pg.Pool({
+      host: config.host,
+      port: Number(config.port) || 5432,
+      user: config.user || 'postgres',
+      password: config.password || '',
+      database: 'postgres',
+      connectionTimeoutMillis: 5000
+    });
+    const adminClient = await adminPool.connect();
+    try {
+      const checkRes = await adminClient.query('SELECT 1 FROM pg_database WHERE datname = $1', [targetDb]);
+      if (checkRes.rowCount === 0) {
+        const escapedDb = targetDb.replace(/"/g, '""');
+        await adminClient.query(`CREATE DATABASE "${escapedDb}" WITH ENCODING 'UTF8';`);
+      }
+    } finally {
+      adminClient.release();
+      await adminPool.end().catch(() => {});
+    }
+  } catch (adminErr: any) {
+    // If connecting to 'postgres' fails or user lacks permission, proceed directly to targetDb
+    console.warn('[Postgres Init] Notice auto-creating database:', adminErr?.message || adminErr);
+  }
+
+  // 2. Connect to target database and build 17 tables and indexes
   const pool = new pg.Pool({
     host: config.host,
     port: Number(config.port) || 5432,
     user: config.user || 'postgres',
     password: config.password || '',
-    database: config.database || 'tinglan_db',
+    database: targetDb,
     connectionTimeoutMillis: 8000
   });
 
@@ -561,7 +590,7 @@ export async function bootstrapPostgresSchema(config: DbConnectionConfig['postgr
       success: true,
       createdCount: tables.length,
       tables,
-      message: `PostgreSQL (${config.host}:${config.port || 5432}) 17 张数据表结构与索引初始化完成！`
+      message: `PostgreSQL (${config.host}:${config.port || 5432}/${targetDb}) 17 张数据表结构与索引初始化完成！`
     };
   } finally {
     client.release();
@@ -577,12 +606,34 @@ export async function bootstrapMysqlSchema(config: DbConnectionConfig['mysqlConf
     throw new Error('未配置 MySQL 连接参数 (Host 未指定)');
   }
 
+  const targetDb = config.database || 'tinglan_db';
+
+  // 1. Connect without selecting database to ensure database exists or create it automatically
+  try {
+    const rootConn = await mysql.createConnection({
+      host: config.host,
+      port: Number(config.port) || 3306,
+      user: config.user || 'root',
+      password: config.password || '',
+      connectTimeout: 6000
+    });
+    try {
+      const escapedDb = targetDb.replace(/`/g, '``');
+      await rootConn.query(`CREATE DATABASE IF NOT EXISTS \`${escapedDb}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;`);
+    } finally {
+      await rootConn.end().catch(() => {});
+    }
+  } catch (err: any) {
+    console.warn('[MySQL Init] Notice auto-creating database:', err?.message || err);
+  }
+
+  // 2. Connect to target database and build 17 tables and indexes
   const connection = await mysql.createConnection({
     host: config.host,
     port: Number(config.port) || 3306,
     user: config.user || 'root',
     password: config.password || '',
-    database: config.database || 'tinglan_db',
+    database: targetDb,
     connectTimeout: 8000,
     multipleStatements: true
   });
@@ -612,14 +663,14 @@ export async function bootstrapMysqlSchema(config: DbConnectionConfig['mysqlConf
       SELECT table_name 
       FROM information_schema.tables 
       WHERE table_schema = ?
-    `, [config.database || 'tinglan_db']);
+    `, [targetDb]);
     const tables = rows.map((r: any) => r.table_name || r.TABLE_NAME);
 
     return {
       success: true,
       createdCount: tables.length,
       tables,
-      message: `MySQL (${config.host}:${config.port || 3306}) 17 张数据表结构与索引初始化完成！`
+      message: `MySQL (${config.host}:${config.port || 3306}/${targetDb}) 17 张数据表结构与索引初始化完成！`
     };
   } finally {
     await connection.end();
@@ -753,6 +804,33 @@ export async function inspectDatabaseDetails(activeConfig: DbConnectionConfig, s
         client.release();
       }
     } catch (err: any) {
+      if (String(err.message).toLowerCase().includes('does not exist')) {
+        try {
+          const testPool = new pg.Pool({
+            host: pgCfg.host,
+            port: Number(pgCfg.port) || 5432,
+            user: pgCfg.user || 'postgres',
+            password: pgCfg.password || '',
+            database: 'postgres',
+            connectionTimeoutMillis: 5000
+          });
+          const testClient = await testPool.connect();
+          testClient.release();
+          await testPool.end().catch(() => {});
+          return {
+            engine: 'postgres',
+            isConnected: true,
+            engineName: `PostgreSQL (${pgCfg.host}:${pgCfg.port || 5432}) - 待建库`,
+            tablesCount: 0,
+            tables: [],
+            totalUsers: 0,
+            totalSongs: 0,
+            totalPlaylists: 0,
+            detailsMessage: `已连通 PostgreSQL 服务端！目标数据库「${pgCfg.database || 'tinglan_db'}」尚未创建。点击下方「初始化 17 张数据表」将全自动为您建库建表。`
+          };
+        } catch {}
+      }
+
       return {
         engine: 'postgres',
         isConnected: false,
@@ -841,6 +919,30 @@ export async function inspectDatabaseDetails(activeConfig: DbConnectionConfig, s
         await conn.end();
       }
     } catch (err: any) {
+      if (err.code === 'ER_BAD_DB_ERROR' || String(err.message).toLowerCase().includes('unknown database')) {
+        try {
+          const testConn = await mysql.createConnection({
+            host: myCfg.host,
+            port: Number(myCfg.port) || 3306,
+            user: myCfg.user || 'root',
+            password: myCfg.password || '',
+            connectTimeout: 5000
+          });
+          await testConn.end().catch(() => {});
+          return {
+            engine: 'mysql',
+            isConnected: true,
+            engineName: `MySQL (${myCfg.host}:${myCfg.port || 3306}) - 待建库`,
+            tablesCount: 0,
+            tables: [],
+            totalUsers: 0,
+            totalSongs: 0,
+            totalPlaylists: 0,
+            detailsMessage: `已连通 MySQL 服务端！目标数据库「${myCfg.database || 'tinglan_db'}」尚未创建。点击下方「初始化 17 张数据表」将全自动为您建库建表。`
+          };
+        } catch {}
+      }
+
       return {
         engine: 'mysql',
         isConnected: false,

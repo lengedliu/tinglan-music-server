@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { multiDbManager } from '../../storage/multiDbClient.js';
 
 export interface DeviceCustomization {
   deviceDid: string;
@@ -128,6 +129,23 @@ export class DeviceCustomizationRepository {
       } catch (e) {
         console.error('[DeviceCustomizationRepository] SQLite upsert error:', e);
       }
+    }
+
+    if (multiDbManager.isRemoteActive) {
+      multiDbManager.executeWrite(
+        `INSERT INTO device_customizations (device_did, custom_alias, room_name, default_volume, max_volume_limit, default_eq_preset_id, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (device_did) DO UPDATE SET
+           custom_alias = EXCLUDED.custom_alias, room_name = EXCLUDED.room_name, default_volume = EXCLUDED.default_volume,
+           max_volume_limit = EXCLUDED.max_volume_limit, default_eq_preset_id = EXCLUDED.default_eq_preset_id, updated_at = EXCLUDED.updated_at;`,
+        [record.deviceDid, record.customName || null, record.roomName || null, record.defaultVolume ?? 40, record.maxVolumeLimit ?? 100, record.defaultEqPresetId || null, record.updatedAt],
+        `INSERT INTO device_customizations (device_did, custom_alias, room_name, default_volume, max_volume_limit, default_eq_preset_id, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           custom_alias = VALUES(custom_alias), room_name = VALUES(room_name), default_volume = VALUES(default_volume),
+           max_volume_limit = VALUES(max_volume_limit), default_eq_preset_id = VALUES(default_eq_preset_id), updated_at = VALUES(updated_at);`,
+        [record.deviceDid, record.customName || null, record.roomName || null, record.defaultVolume ?? 40, record.maxVolumeLimit ?? 100, record.defaultEqPresetId || null, record.updatedAt]
+      ).catch(() => {});
     }
 
     return record;

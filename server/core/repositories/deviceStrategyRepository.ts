@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { multiDbManager } from '../../storage/multiDbClient.js';
 
 export interface DeviceStrategyProfile {
   deviceDid: string;
@@ -169,6 +170,23 @@ export class DeviceStrategyRepository {
       } catch (e) {
         console.error('[DeviceStrategyRepository] SQLite upsert error:', e);
       }
+    }
+
+    if (multiDbManager.isRemoteActive) {
+      multiDbManager.executeWrite(
+        `INSERT INTO device_strategy_profiles (device_did, device_name, device_model, preferred_protocol, direct_stream_supported, best_mime_type, transcode_profile, avg_latency_ms, last_latency_ms, success_rate_percent, total_calls, success_count, fail_count, fallback_count, health_score, last_error, last_success_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+         ON CONFLICT (device_did) DO UPDATE SET
+           device_name = EXCLUDED.device_name, preferred_protocol = EXCLUDED.preferred_protocol, avg_latency_ms = EXCLUDED.avg_latency_ms,
+           success_rate_percent = EXCLUDED.success_rate_percent, health_score = EXCLUDED.health_score, updated_at = EXCLUDED.updated_at;`,
+        [profile.deviceDid, profile.deviceName || null, profile.deviceModel, profile.preferredProtocol, profile.directStreamSupported ? 1 : 0, profile.bestMimeType, profile.transcodeProfile || null, profile.avgLatencyMs, profile.lastLatencyMs, profile.successRatePercent, profile.totalCalls, profile.successCount, profile.failCount, profile.fallbackCount, profile.healthScore, profile.lastError || null, profile.lastSuccessAt || null, profile.updatedAt],
+        `INSERT INTO device_strategy_profiles (device_did, device_name, device_model, preferred_protocol, direct_stream_supported, best_mime_type, transcode_profile, avg_latency_ms, last_latency_ms, success_rate_percent, total_calls, success_count, fail_count, fallback_count, health_score, last_error, last_success_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           device_name = VALUES(device_name), preferred_protocol = VALUES(preferred_protocol), avg_latency_ms = VALUES(avg_latency_ms),
+           success_rate_percent = VALUES(success_rate_percent), health_score = VALUES(health_score), updated_at = VALUES(updated_at);`,
+        [profile.deviceDid, profile.deviceName || null, profile.deviceModel, profile.preferredProtocol, profile.directStreamSupported ? 1 : 0, profile.bestMimeType, profile.transcodeProfile || null, profile.avgLatencyMs, profile.lastLatencyMs, profile.successRatePercent, profile.totalCalls, profile.successCount, profile.failCount, profile.fallbackCount, profile.healthScore, profile.lastError || null, profile.lastSuccessAt || null, profile.updatedAt]
+      ).catch(() => {});
     }
 
     return profile;

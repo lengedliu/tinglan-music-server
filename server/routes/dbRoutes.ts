@@ -10,6 +10,7 @@ import {
 } from '../storage/multiDbInitializer.js';
 import { migrateDataToRemoteDatabase } from '../storage/multiDbMigrator.js';
 import { logEngine } from '../core/logEngine.js';
+import { multiDbManager } from '../storage/multiDbClient.js';
 
 export interface DbRouterOptions {
   getActiveDbConfig: () => any;
@@ -77,6 +78,11 @@ export function createDbRouter(options: DbRouterOptions): Router {
 
   // 2. Test Database Connection
   router.post('/test', async (req: Request, res: Response) => {
+    const clientUser = (req as any).user;
+    if (clientUser && clientUser.role !== 'admin') {
+      return res.status(403).json({ success: false, error: '权限不足：仅管理员可以测试数据库连接' });
+    }
+
     const activeDbConfig = getActiveDbConfig();
     const { engine, postgresConfig, mysqlConfig } = req.body;
 
@@ -167,8 +173,8 @@ export function createDbRouter(options: DbRouterOptions): Router {
   // 3. Initialize / Bootstrap Database Schema (DDL for 17 Tables)
   router.post('/init-tables', async (req: Request, res: Response) => {
     const clientUser = (req as any).user;
-    if (clientUser && clientUser.role !== 'admin') {
-      return res.status(403).json({ success: false, error: '权限不足：仅管理员可以执行数据库初始化' });
+    if (!clientUser || clientUser.role !== 'admin') {
+      return res.status(403).json({ success: false, error: '权限不足：仅管理员登录后方可执行数据库初始化操作', requireLogin: true });
     }
 
     const activeDbConfig = getActiveDbConfig();
@@ -253,8 +259,8 @@ export function createDbRouter(options: DbRouterOptions): Router {
   // 4. Data Migration / Sync (From Local SQLite to Remote Database)
   router.post('/migrate-data', async (req: Request, res: Response) => {
     const clientUser = (req as any).user;
-    if (clientUser && clientUser.role !== 'admin') {
-      return res.status(403).json({ success: false, error: '权限不足：仅管理员可以执行数据迁移' });
+    if (!clientUser || clientUser.role !== 'admin') {
+      return res.status(403).json({ success: false, error: '权限不足：仅管理员登录后方可执行数据迁移', requireLogin: true });
     }
 
     const activeDbConfig = getActiveDbConfig();
@@ -321,8 +327,8 @@ export function createDbRouter(options: DbRouterOptions): Router {
   // 5. Save & Switch Active Database Engine (Admin Only)
   router.post('/switch', async (req: Request, res: Response) => {
     const clientUser = (req as any).user;
-    if (clientUser && clientUser.role !== 'admin') {
-      return res.status(403).json({ success: false, error: '权限不足：仅管理员可以切换数据库引擎' });
+    if (!clientUser || clientUser.role !== 'admin') {
+      return res.status(403).json({ success: false, error: '权限不足：仅管理员登录后方可切换系统主数据库引擎', requireLogin: true });
     }
 
     const { engine, postgresConfig, mysqlConfig, autoBootstrap } = req.body;
@@ -371,6 +377,7 @@ export function createDbRouter(options: DbRouterOptions): Router {
     }
 
     setActiveDbConfig(activeDbConfig);
+    multiDbManager.setConfig(activeDbConfig);
 
     logEngine.info('audit', '切换活动数据库引擎', `活动数据库引擎已切换为 ${engine.toUpperCase()}${bootstrapMsg}`, {
       engine,

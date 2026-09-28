@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { multiDbManager } from '../../storage/multiDbClient.js';
 
 export interface FingerprintCacheItem {
   songId: string;
@@ -140,6 +141,23 @@ export class FingerprintCacheRepository {
       } catch (e) {
         console.error('[FingerprintCacheRepository] SQLite upsert error:', e);
       }
+    }
+
+    if (multiDbManager.isRemoteActive) {
+      multiDbManager.executeWrite(
+        `INSERT INTO audio_fingerprint_cache (song_id, fingerprint_hash, acoustid, musicbrainz_id, title, artist, album, cover_url, genre, year, lyrics, matched_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         ON CONFLICT (song_id) DO UPDATE SET
+           fingerprint_hash = EXCLUDED.fingerprint_hash, acoustid = EXCLUDED.acoustid, title = EXCLUDED.title,
+           artist = EXCLUDED.artist, album = EXCLUDED.album, cover_url = EXCLUDED.cover_url, matched_at = EXCLUDED.matched_at;`,
+        [record.songId, record.fingerprintHash || null, record.acoustid || null, record.musicbrainzId || null, record.title || null, record.artist || null, record.album || null, record.coverUrl || null, record.genre || null, record.year || null, record.lyrics || null, record.matchedAt],
+        `INSERT INTO audio_fingerprint_cache (song_id, fingerprint_hash, acoustid, musicbrainz_id, title, artist, album, cover_url, genre, year, lyrics, matched_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           fingerprint_hash = VALUES(fingerprint_hash), acoustid = VALUES(acoustid), title = VALUES(title),
+           artist = VALUES(artist), album = VALUES(album), cover_url = VALUES(cover_url), matched_at = VALUES(matched_at);`,
+        [record.songId, record.fingerprintHash || null, record.acoustid || null, record.musicbrainzId || null, record.title || null, record.artist || null, record.album || null, record.coverUrl || null, record.genre || null, record.year || null, record.lyrics || null, record.matchedAt]
+      ).catch(() => {});
     }
 
     return record;

@@ -73,12 +73,18 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
 
     if (authRequired) {
       if (!clientUser || clientUser.role !== 'admin') {
-        res.status(200).json({ success: false, error: '权限不足：该操作仅系统管理员允许执行' });
+        res.status(200).json({ success: false, error: '权限不足：该高危操作仅系统管理员允许执行' });
         return false;
       }
     } else {
+      // In LAN unauthenticated mode, if user is logged in they must be admin;
+      // If no user is logged in, but the system has admin accounts registered, block sensitive hardware configuration
       if (clientUser && clientUser.role !== 'admin') {
-        res.status(200).json({ success: false, error: '权限不足：普通用户无权执行此操作' });
+        res.status(200).json({ success: false, error: '权限不足：普通用户无权执行系统级硬件与认证管理操作' });
+        return false;
+      }
+      if (!clientUser) {
+        res.status(200).json({ success: false, error: '安全拦截：小米账号登录绑定、解绑与音箱核心配置属于高危管理操作，请先登录管理员账号' });
         return false;
       }
     }

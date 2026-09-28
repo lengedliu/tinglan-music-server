@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { Song } from '../musicEngine.js';
+import { multiDbManager } from '../../storage/multiDbClient.js';
 
 export interface SmartPlaylistCondition {
   field: 'genre' | 'artist' | 'rating' | 'playCount' | 'year' | 'title' | 'duration';
@@ -145,6 +146,23 @@ export class SmartPlaylistRepository {
       }
     }
 
+    if (multiDbManager.isRemoteActive) {
+      multiDbManager.executeWrite(
+        `INSERT INTO smart_playlist_rules (id, playlist_id, rule_name, condition_type, field_name, operator, target_value, sort_by, sort_order, limit_count, auto_refresh, last_evaluated_at, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+         ON CONFLICT (id) DO UPDATE SET
+           rule_name = EXCLUDED.rule_name, target_value = EXCLUDED.target_value, sort_by = EXCLUDED.sort_by,
+           limit_count = EXCLUDED.limit_count, auto_refresh = EXCLUDED.auto_refresh, last_evaluated_at = EXCLUDED.last_evaluated_at;`,
+        [record.id, record.playlistId, record.ruleName, record.matchType, 'combined', 'in', JSON.stringify(record.conditions || []), record.sortBy, 'desc', record.limitCount, record.autoRefresh ? 1 : 0, record.lastComputedAt || null, record.updatedAt],
+        `INSERT INTO smart_playlist_rules (id, playlist_id, rule_name, condition_type, field_name, operator, target_value, sort_by, sort_order, limit_count, auto_refresh, last_evaluated_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           rule_name = VALUES(rule_name), target_value = VALUES(target_value), sort_by = VALUES(sort_by),
+           limit_count = VALUES(limit_count), auto_refresh = VALUES(auto_refresh), last_evaluated_at = VALUES(last_evaluated_at);`,
+        [record.id, record.playlistId, record.ruleName, record.matchType, 'combined', 'in', JSON.stringify(record.conditions || []), record.sortBy, 'desc', record.limitCount, record.autoRefresh ? 1 : 0, record.lastComputedAt || null, record.updatedAt]
+      ).catch(() => {});
+    }
+
     return record;
   }
 
@@ -158,6 +176,14 @@ export class SmartPlaylistRepository {
         } catch (e) {
           console.error('[SmartPlaylistRepository] SQLite delete error:', e);
         }
+      }
+      if (multiDbManager.isRemoteActive) {
+        multiDbManager.executeWrite(
+          'DELETE FROM smart_playlist_rules WHERE id = $1',
+          [id],
+          'DELETE FROM smart_playlist_rules WHERE id = ?',
+          [id]
+        ).catch(() => {});
       }
     }
     return existed;

@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { multiDbManager } from '../../storage/multiDbClient.js';
 
 export interface SpeakerGroup {
   id: string;
@@ -156,6 +157,23 @@ export class SpeakerGroupRepository {
       }
     }
 
+    if (multiDbManager.isRemoteActive) {
+      multiDbManager.executeWrite(
+        `INSERT INTO speaker_groups (id, user_id, name, member_dids_json, leader_did, sync_strategy, volume_offset_json, is_active, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         ON CONFLICT (id) DO UPDATE SET
+           name = EXCLUDED.name, member_dids_json = EXCLUDED.member_dids_json, leader_did = EXCLUDED.leader_did,
+           volume_offset_json = EXCLUDED.volume_offset_json, updated_at = EXCLUDED.updated_at;`,
+        [record.id, 'usr-admin-001', record.name, JSON.stringify(record.memberDids || []), record.masterDid || '', 'mina_multicast', JSON.stringify(record.volumeOffsets || {}), 1, record.createdAt || new Date().toISOString(), record.updatedAt],
+        `INSERT INTO speaker_groups (id, user_id, name, member_dids_json, leader_did, sync_strategy, volume_offset_json, is_active, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           name = VALUES(name), member_dids_json = VALUES(member_dids_json), leader_did = VALUES(leader_did),
+           volume_offset_json = VALUES(volume_offset_json), updated_at = VALUES(updated_at);`,
+        [record.id, 'usr-admin-001', record.name, JSON.stringify(record.memberDids || []), record.masterDid || '', 'mina_multicast', JSON.stringify(record.volumeOffsets || {}), 1, record.createdAt || new Date().toISOString(), record.updatedAt]
+      ).catch(() => {});
+    }
+
     return record;
   }
 
@@ -169,6 +187,14 @@ export class SpeakerGroupRepository {
         } catch (e) {
           console.error('[SpeakerGroupRepository] SQLite delete error:', e);
         }
+      }
+      if (multiDbManager.isRemoteActive) {
+        multiDbManager.executeWrite(
+          'DELETE FROM speaker_groups WHERE id = $1',
+          [id],
+          'DELETE FROM speaker_groups WHERE id = ?',
+          [id]
+        ).catch(() => {});
       }
     }
     return existed;
