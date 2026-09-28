@@ -134,30 +134,31 @@ export const DeviceStrategyProfilesTab: React.FC<DeviceStrategyProfilesTabProps>
     };
   };
 
-  // If DB profiles are empty, generate synthesized cards from active devices list so the UI is never blank
+  // Generate display profiles from DB records or user bound devices
   const displayProfiles: DeviceStrategyProfileItem[] = (profiles && profiles.length > 0)
     ? profiles 
-    : (devices && devices.length > 0 ? devices : [
-        { did: 'dev-lx04-default', name: '触屏音箱 (LX04 示例)', model: 'xiaomi.wifispeaker.lx04' },
-        { did: 'dev-l05b-default', name: '小爱音箱 Play (L05B 示例)', model: 'xiaomi.wifispeaker.l05b' },
-        { did: 'dev-s12-default', name: '小爱 Pro (S12 示例)', model: 'xiaomi.wifispeaker.s12' }
-      ]).map((d: any) => ({
-        deviceDid: d?.did || d?.deviceID || 'unknown-did',
-        deviceName: d?.name || d?.did || '小爱音箱',
-        deviceModel: d?.model || 'xiaomi.wifispeaker.lx04',
-        preferredProtocol: (d?.model && d.model.includes('lx04')) ? 'dlna' : 'mina',
-        directStreamSupported: true,
-        bestMimeType: 'audio/mp3',
-        avgLatencyMs: 85,
-        lastLatencyMs: 82,
-        successRatePercent: 100,
-        totalCalls: 0,
-        successCount: 0,
-        failCount: 0,
-        fallbackCount: 0,
-        healthScore: 100,
-        updatedAt: new Date().toISOString()
-      }));
+    : (devices && devices.length > 0 ? devices : []).map((d: any, idx: number) => {
+        const did = String(d?.did || d?.deviceID || `dev-${idx}`);
+        const model = d?.model || 'xiaomi.wifispeaker.sound';
+        const isDlnaModel = /lx06|pro|sound|l16a|lx04/i.test(model);
+        return {
+          deviceDid: did,
+          deviceName: d?.name || '小爱音箱',
+          deviceModel: model,
+          preferredProtocol: isDlnaModel ? 'DLNA UPnP / Mina Cloud' : 'Mina Cloud UBUS',
+          directStreamSupported: true,
+          bestMimeType: 'audio/mp3',
+          avgLatencyMs: 0,
+          lastLatencyMs: 0,
+          successRatePercent: 100,
+          totalCalls: 0,
+          successCount: 0,
+          failCount: 0,
+          fallbackCount: 0,
+          healthScore: 100,
+          updatedAt: new Date().toISOString()
+        };
+      });
 
   return (
     <div className="space-y-4">

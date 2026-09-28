@@ -1052,45 +1052,6 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
     });
   });
 
-  router.get('/strategy-profiles', (_req: Request, res: Response) => {
-    const profiles = deviceRepository.getAllDevices().map((d: any) => {
-      const devId = d.did || d.ip || 'unknown';
-      const profile = castPipelineManager.getProfile(devId);
-      return {
-        did: d.did,
-        name: d.name,
-        model: d.model,
-        ip: d.ip,
-        preferredStrategy: profile?.preferredStrategy || 'auto_discover',
-        lastSuccessTime: profile?.lastSuccessTime || null,
-        failStreak: profile?.failStreak || 0
-      };
-    });
-    res.json({ success: true, profiles });
-  });
-
-  router.post('/strategy-profiles/reset', (req: Request, res: Response) => {
-    const { did } = req.body || {};
-    if (did) {
-      castPipelineManager.clearProfile(String(did));
-      res.json({ success: true, message: `已重置设备 ${did} 的投播策略记忆缓存` });
-    } else {
-      castPipelineManager.resetAllProfiles();
-      res.json({ success: true, message: '已全量重置所有设备的投播降级与策略记忆缓存' });
-    }
-  });
-
-  router.post('/strategy-profiles/:did/reset', (req: Request, res: Response) => {
-    const { did } = req.params;
-    castPipelineManager.clearProfile(did);
-    res.json({ success: true, message: `已重置设备 ${did} 的投播策略记忆缓存` });
-  });
-
-  router.post('/strategy-profiles/reset-all', (_req: Request, res: Response) => {
-    castPipelineManager.resetAllProfiles();
-    res.json({ success: true, message: '已全量重置所有设备的投播降级与策略记忆缓存' });
-  });
-
   router.post('/devices/resolve', async (req: Request, res: Response) => {
     if (!checkMiotAdminPermission(req, res)) return;
 
