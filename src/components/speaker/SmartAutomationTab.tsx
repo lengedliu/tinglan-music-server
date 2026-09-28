@@ -490,9 +490,9 @@ export const SmartAutomationTab: React.FC<SmartAutomationTabProps> = ({
                             onClick={() => {
                               if (onSendTts && activeDeviceDid) {
                                 onSendTts(activeDeviceDid, item.text);
-                                alert(`已向当前音箱发送 TTS 播报: “${item.text}”`);
+                                showToast('success', `已向当前音箱发送 TTS 播报: “${item.text}”`);
                               } else {
-                                alert('请先在顶部选中一台小爱音箱设备');
+                                showToast('error', '请先在顶部选中一台小爱音箱设备');
                               }
                             }}
                             className="text-[10px] px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800 hover:bg-amber-500 hover:text-zinc-950 font-semibold transition cursor-pointer flex items-center gap-1"
@@ -503,12 +503,14 @@ export const SmartAutomationTab: React.FC<SmartAutomationTabProps> = ({
 
                           <button
                             onClick={() => {
+                              const targetDid = activeDeviceDid || (devices.length > 0 ? devices[0].did : undefined);
                               setEditingScene({
                                 name: item.name,
                                 cronExpr: item.defaultCron,
                                 description: `定时自动广播语录: “${item.text}”`,
                                 actionType: 'tts_announce',
-                                targetType: 'all_devices',
+                                targetType: targetDid ? 'single_device' : 'all_devices',
+                                targetId: targetDid,
                                 payload: { ttsText: item.text, volume: 40 },
                                 enabled: true
                               });
@@ -536,12 +538,14 @@ export const SmartAutomationTab: React.FC<SmartAutomationTabProps> = ({
 
             <button
               onClick={() => {
+                const targetDid = activeDeviceDid || (devices.length > 0 ? devices[0].did : undefined);
                 setEditingScene({
                   name: '☀️ 智能早安晨曲唤醒',
                   cronExpr: '00 07 * * *',
                   description: '每天 07:00 自动播报早安语音并播放晨间电台',
                   actionType: 'tts_announce',
-                  targetType: 'all_devices',
+                  targetType: targetDid ? 'single_device' : 'all_devices',
+                  targetId: targetDid,
                   payload: { ttsText: '早上好，为你播报今日晨间旋律！', volume: 35 },
                   enabled: true
                 });
@@ -603,6 +607,11 @@ export const SmartAutomationTab: React.FC<SmartAutomationTabProps> = ({
                     isLight ? 'bg-zinc-50 border border-zinc-200 text-zinc-700' : 'bg-zinc-950/80 border border-white/5 text-zinc-300'
                   }`}>
                     <div>动作类型: <strong>{sc.actionType}</strong></div>
+                    <div>目标音箱: <strong className="text-amber-600 dark:text-amber-400">{
+                      sc.targetType === 'single_device'
+                        ? (devices.find(d => d.did === sc.targetId)?.name || (sc.targetId ? `指定音箱 (${sc.targetId.slice(-4)})` : '选中的音箱'))
+                        : '🔊 全屋所有音箱广播 (全设备)'
+                    }</strong></div>
                     {sc.payload.ttsText && <div>语音文本: “{sc.payload.ttsText}”</div>}
                     {sc.payload.radioTitle && <div>电台: {sc.payload.radioTitle}</div>}
                     {sc.payload.volume !== undefined && <div>音量设定: {sc.payload.volume}%</div>}
@@ -833,6 +842,34 @@ export const SmartAutomationTab: React.FC<SmartAutomationTabProps> = ({
               </div>
 
               <div>
+                <label className="block font-bold mb-1">目标播放音箱</label>
+                <select
+                  value={editingScene.targetType === 'single_device' ? (editingScene.targetId || '') : 'all_devices'}
+                  onChange={e => {
+                    const val = e.target.value;
+                    if (val === 'all_devices') {
+                      setEditingScene({ ...editingScene, targetType: 'all_devices', targetId: undefined });
+                    } else {
+                      setEditingScene({ ...editingScene, targetType: 'single_device', targetId: val });
+                    }
+                  }}
+                  className={`w-full px-3 py-2 rounded-xl border ${
+                    isLight ? 'bg-zinc-100 border-zinc-300' : 'bg-zinc-950 border-white/10'
+                  }`}
+                >
+                  <option value="all_devices">🔊 全屋所有音箱广播 (全设备)</option>
+                  {devices.map(dev => (
+                    <option key={dev.did} value={dev.did}>
+                      {dev.name || '小爱音箱'} ({dev.model || dev.hardware || dev.did.slice(-4)}) {dev.did === activeDeviceDid ? '★ [当前选中]' : ''}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-zinc-500 mt-1">
+                  选择指定单台音箱，或让全屋所有小爱音箱同步广播
+                </p>
+              </div>
+
+              <div>
                 <label className="block font-bold mb-1">执行动作</label>
                 <select
                   value={editingScene.actionType}
@@ -845,6 +882,26 @@ export const SmartAutomationTab: React.FC<SmartAutomationTabProps> = ({
                   <option value="play_radio">📻 播放网络电台直播流</option>
                   <option value="stop_playback">⏸️ 暂停/关闭播放</option>
                 </select>
+              </div>
+
+              {/* Volume Setting */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="font-bold">播报音量大小</label>
+                  <span className="text-amber-500 font-mono font-bold">{editingScene.payload?.volume ?? 40}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="5"
+                  max="100"
+                  step="5"
+                  value={editingScene.payload?.volume ?? 40}
+                  onChange={e => setEditingScene({
+                    ...editingScene,
+                    payload: { ...editingScene.payload, volume: Number(e.target.value) }
+                  })}
+                  className="w-full accent-amber-500 cursor-pointer"
+                />
               </div>
 
               {editingScene.actionType === 'tts_announce' && (

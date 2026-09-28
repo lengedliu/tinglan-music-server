@@ -21,7 +21,9 @@ import {
   Bug,
   HardDrive,
   Database,
-  Scissors
+  Scissors,
+  CheckCircle2,
+  AlertCircle
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useAppEvents } from '../context/AppEventsContext';
@@ -82,6 +84,16 @@ export const LogsViewer: React.FC = () => {
   const [castLogs, setCastLogs] = useState<CastLog[]>([]);
   const [devices, setDevices] = useState<XiaomiDevice[]>([]);
   const [isSnapshotModalOpen, setIsSnapshotModalOpen] = useState(false);
+
+  // Floating Toast Notification state
+  const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+
+  const showToast = (type: 'success' | 'error' | 'info', text: string) => {
+    setToastMessage({ type, text });
+    setTimeout(() => {
+      setToastMessage(null);
+    }, 4000);
+  };
 
   const listContainerRef = useRef<HTMLDivElement>(null);
 
@@ -182,8 +194,9 @@ export const LogsViewer: React.FC = () => {
       await apiFetch('/api/logs', { method: 'DELETE' });
       setLogs([]);
       setStats(prev => ({ ...prev, total: 0, cast: 0, audit: 0, automation: 0, system: 0, info: 0, warn: 0, error: 0, totalPersisted: 0 }));
+      showToast('success', '已清空所有运行诊断与审计日志');
     } catch (err) {
-      alert('清空日志失败');
+      showToast('error', '清空日志失败');
     }
   };
 
@@ -198,12 +211,12 @@ export const LogsViewer: React.FC = () => {
       if (res.ok) {
         const data = await res.json();
         if (data && data.success) {
-          alert(data.message || '日志修剪成功');
+          showToast('success', data.message || '日志修剪成功');
           fetchLogs();
         }
       }
     } catch {
-      alert('日志修剪失败');
+      showToast('error', '日志修剪失败');
     }
   };
 
@@ -226,7 +239,31 @@ export const LogsViewer: React.FC = () => {
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-6 space-y-6 pb-24">
+    <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-6 space-y-6 pb-24 relative">
+      {/* Toast Notification Banner */}
+      {toastMessage && (
+        <div className={`fixed top-6 right-6 z-50 px-4 py-3 rounded-2xl border shadow-2xl flex items-center gap-3 transition-all duration-300 backdrop-blur-xl ${
+          toastMessage.type === 'success'
+            ? 'bg-emerald-950/90 text-emerald-100 border-emerald-500/50 shadow-emerald-950/50'
+            : toastMessage.type === 'error'
+            ? 'bg-rose-950/90 text-rose-100 border-rose-500/50 shadow-rose-950/50'
+            : 'bg-amber-950/90 text-amber-100 border-amber-500/50 shadow-amber-950/50'
+        }`}>
+          <div className="p-1.5 rounded-xl bg-white/10 shrink-0">
+            {toastMessage.type === 'success' ? <CheckCircle2 className="w-5 h-5 text-emerald-300" /> :
+             toastMessage.type === 'error' ? <AlertCircle className="w-5 h-5 text-rose-300" /> :
+             <RefreshCw className="w-5 h-5 text-amber-300 animate-spin" />}
+          </div>
+          <span className="text-xs font-semibold leading-relaxed">{toastMessage.text}</span>
+          <button
+            onClick={() => setToastMessage(null)}
+            className="p-1 hover:bg-white/10 rounded-lg transition text-xs opacity-70 hover:opacity-100 cursor-pointer ml-2"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
       {/* Header Title & Mode Switcher */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/10 pb-5">
         <div>

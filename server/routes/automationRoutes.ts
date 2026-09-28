@@ -59,7 +59,10 @@ export function createAutomationRouter(): Router {
   // POST /api/automation/scenes/:id/trigger - 手动触发测试场景
   router.post('/scenes/:id/trigger', async (req: Request, res: Response) => {
     try {
-      const result = await automationService.triggerSceneManually(req.params.id);
+      const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'https';
+      const host = (req.headers['x-forwarded-host'] as string) || req.headers.host || req.get('host');
+      const reqOrigin = `${proto}://${host}`;
+      const result = await automationService.triggerSceneManually(req.params.id, { serverHost: reqOrigin });
       res.json(result);
     } catch (e: any) {
       res.status(500).json({ success: false, error: e.message });

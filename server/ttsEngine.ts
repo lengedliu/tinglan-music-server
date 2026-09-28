@@ -1,6 +1,7 @@
 import crypto from 'crypto';
 import { Communicate } from '@travisvn/edge-tts';
 import { miotRpcEngine } from './miotRpc';
+import { dlnaEngine } from './dlnaEngine.js';
 
 export interface TtsVoiceOption {
   id: string;
@@ -385,6 +386,27 @@ export class TtsEngine {
               details: { streamUrl: streamAudioUrl, miioPlayRes },
               triedChannels
             };
+          }
+        }
+
+        // 4. Try DLNA if targetDevice has IP and supports DLNA or platform is dlna
+        if (targetDevice.ip && (targetDevice.platform === 'dlna' || targetDevice.capabilities?.supportsDlna || !miotConfig.isLoggedIn)) {
+          try {
+            const dlnaRes = await dlnaEngine.castSong(targetDevice.ip, streamAudioUrl, {
+              title: cleanText.length > 20 ? cleanText.slice(0, 20) + '...' : cleanText,
+              artist: '小爱定时语音播报',
+              duration: 30
+            });
+            if (dlnaRes?.success) {
+              return {
+                success: true,
+                channel: '局域网 DLNA 高清语音串流',
+                details: { streamUrl: streamAudioUrl, dlnaRes },
+                triedChannels
+              };
+            }
+          } catch (dlnaErr: any) {
+            console.warn('[TTSEngine] DLNA TTS cast fallback failed:', dlnaErr.message);
           }
         }
       } catch (streamErr: any) {

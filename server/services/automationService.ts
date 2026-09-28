@@ -76,7 +76,7 @@ class AutomationService {
   private scenes: AutomationScene[] = [];
   private logs: AutomationLog[] = [];
   private timer: NodeJS.Timeout | null = null;
-  private actionHandler?: (scene: AutomationScene) => Promise<{ success: boolean; message: string }>;
+  private actionHandler?: (scene: AutomationScene, context?: { serverHost?: string }) => Promise<{ success: boolean; message: string }>;
 
   constructor() {
     this.init();
@@ -107,7 +107,7 @@ class AutomationService {
     this.startScheduler();
   }
 
-  public registerActionHandler(handler: (scene: AutomationScene) => Promise<{ success: boolean; message: string }>) {
+  public registerActionHandler(handler: (scene: AutomationScene, context?: { serverHost?: string }) => Promise<{ success: boolean; message: string }>) {
     this.actionHandler = handler;
   }
 
@@ -167,21 +167,21 @@ class AutomationService {
     return null;
   }
 
-  public async triggerSceneManually(id: string): Promise<{ success: boolean; message: string }> {
+  public async triggerSceneManually(id: string, context?: { serverHost?: string }): Promise<{ success: boolean; message: string }> {
     const scene = this.scenes.find(s => s.id === id);
     if (!scene) {
       return { success: false, message: '未找到指定自动化场景' };
     }
-    return await this.executeScene(scene, true);
+    return await this.executeScene(scene, true, context);
   }
 
-  private async executeScene(scene: AutomationScene, isManual = false): Promise<{ success: boolean; message: string }> {
+  private async executeScene(scene: AutomationScene, isManual = false, context?: { serverHost?: string }): Promise<{ success: boolean; message: string }> {
     const nowStr = new Date().toLocaleTimeString('zh-CN');
     let result = { success: true, message: '场景触发成功' };
 
     try {
       if (this.actionHandler) {
-        result = await this.actionHandler(scene);
+        result = await this.actionHandler(scene, context);
       } else {
         result = { success: true, message: `模拟触发场景「${scene.name}」` };
       }

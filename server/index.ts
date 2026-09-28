@@ -11,6 +11,7 @@ export * from './streaming/streamServer.js';
 export * from './xiaomi/deviceManager.js';
 export * from './xiaomi/xiaomiAdapter.js';
 export * from './xiaomi/adaptiveHeartbeatEngine.js';
+export * from './xiaomi/miotService.js';
 export * from './dlnaEngine.js';
 export * from './miotRpc.js';
 export * from './ttsEngine.js';

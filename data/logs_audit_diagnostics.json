@@ -73,5 +73,32 @@
       "operator": "self-service/init"
     },
     "clientIp": "127.0.0.1"
+  },
+  {
+    "id": "log_1790612254371_t1xby",
+    "timestamp": 1790612254371,
+    "timeFormatted": "16:17:34.371",
+    "category": "cast",
+    "level": "warn",
+    "title": "[定时自动化] 小爱音箱Pro 播报: “夜深了，为您调低音量，祝您晚安好梦。”",
+    "message": "协议:  | 场景: 「🌙 夜间睡前舒缓问候 & 自动调低音量」 | 状态: 所有通道均未能送达 (已尝试通道: 高清音频串流投播 (Audio Stream TTS))。请检查米家账号是否保持登录状态或在设置中重新扫码绑定。",
+    "traceId": "tr_d09bn5",
+    "details": {
+      "type": "tts"
+    }
+  },
+  {
+    "id": "log_1790612254376_6ym5u",
+    "timestamp": 1790612254376,
+    "timeFormatted": "16:17:34.376",
+    "category": "automation",
+    "level": "info",
+    "title": "自动化场景触发成功",
+    "message": "场景「🌙 夜间睡前舒缓问候 & 自动调低音量」(手动) 执行成功: 【小爱音箱响应】小爱音箱Pro: TTS提示 (所有通道均未能送达 (已尝试通道: 高清音频串流投播 (Audio Stream TTS))。请检查米家账号是否保持登录状态或在设置中重新扫码绑定。)",
+    "traceId": "tr_2xgn92",
+    "details": {
+      "sceneId": "scene_night_lullaby",
+      "actionType": "tts_announce"
+    }
   }
 ]
