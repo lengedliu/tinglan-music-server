@@ -46,11 +46,26 @@ export function isLosslessSong(song: Song): boolean {
 
 /**
  * Generates "常听榜" (Top Played)
- * Ranked strictly by playCount descending. Filters tracks with playCount > 0.
+ * Ranked strictly by playCount descending.
+ * Prefers high-frequency tracks (playCount > minPlayCount, default > 9).
+ * If fewer than minFallback threshold, falls back to any tracks with playCount > 0.
  */
-export function getTopPlayedSongs(songs: Song[], limit = 100): Song[] {
-  return songs
-    .filter(s => (s.playCount || 0) > 0)
+export function getTopPlayedSongs(songs: Song[], limit = 100, minPlayCount = 9): Song[] {
+  const played = songs.filter(s => (s.playCount || 0) > 0);
+  if (played.length === 0) return [];
+
+  // Filter high-frequency played songs (> 9 times)
+  const highFreq = played.filter(s => (s.playCount || 0) > minPlayCount);
+  
+  // If we have enough high-frequency played songs, return them sorted
+  if (highFreq.length >= 3) {
+    return highFreq
+      .sort((a, b) => (b.playCount || 0) - (a.playCount || 0))
+      .slice(0, limit);
+  }
+
+  // Smart Fallback: if not enough songs with > 9 plays, show all played songs sorted by playCount
+  return played
     .sort((a, b) => (b.playCount || 0) - (a.playCount || 0))
     .slice(0, limit);
 }

@@ -3,7 +3,9 @@ import {
   FolderSync, 
   UploadCloud, 
   Music, 
-  Server
+  Server,
+  Layers,
+  Zap
 } from 'lucide-react';
 import { Song, Playlist, XiaomiDevice, SongSortOption, LibrarySourceFilter } from '../types';
 import { useTheme } from '../context/ThemeContext';
@@ -17,6 +19,7 @@ import { SongTableHeader } from './library/SongTableHeader';
 import { LibraryPagination } from './library/LibraryPagination';
 import { LibraryEmptyState } from './library/LibraryEmptyState';
 import { LibraryModals } from './library/LibraryModals';
+import { ListeningInsightsPanel } from './library/ListeningInsightsPanel';
 import { useSongSelection } from './library/useSongSelection';
 import { VirtualList } from './VirtualList';
 import { 
@@ -101,6 +104,7 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
   const [sourceFilter, setSourceFilter] = useState<LibrarySourceFilter>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
+  const [showInsights, setShowInsights] = useState(false);
 
   // High-performance single-pass stats computation for tab badges
   const libraryStats = useMemo(() => {
@@ -112,10 +116,11 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
     for (let i = 0; i < songs.length; i++) {
       const s = songs[i];
       if (s.isFavorite) favCount++;
-      if ((s.playCount || 0) > 0) topCount++;
-      if (typeof s.lastPlayedAt === 'number' && s.lastPlayedAt > 0) recentCount++;
       if (isLosslessSong(s)) losslessCount++;
     }
+
+    topCount = getTopPlayedSongs(songs).length;
+    recentCount = getRecentlyPlayedSongs(songs).length;
 
     return { favCount, topCount, recentCount, losslessCount };
   }, [songs]);
@@ -512,7 +517,17 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
         />
       )}
 
-      {/* 4. Search, Filter, Sort & Export Toolbar */}
+      {/* 4. Listening Insights Analytics Panel */}
+      {showInsights && (
+        <ListeningInsightsPanel
+          songs={songs}
+          isLight={isLight}
+          onClose={() => setShowInsights(false)}
+          onPlaySong={onPlaySong}
+        />
+      )}
+
+      {/* 5. Search, Filter, Sort & Export Toolbar */}
       <LibraryToolbar
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
@@ -533,6 +548,8 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
         isLight={isLight}
         viewMode={viewMode}
         onViewModeChange={handleViewModeChange}
+        showInsights={showInsights}
+        onToggleInsights={() => setShowInsights(prev => !prev)}
       />
 
       {/* 5. Main Song Table Container */}
@@ -602,21 +619,40 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
               />
             )}
             {/* Virtual Stream Status Bar */}
-            <div className={`px-4 sm:px-6 py-3 border-t flex flex-wrap items-center justify-between gap-2 text-xs ${
+            <div className={`px-4 sm:px-6 py-3 border-t flex flex-wrap items-center justify-between gap-3 text-xs ${
               isLight ? 'bg-zinc-50 border-zinc-200 text-zinc-600' : 'bg-zinc-950/40 border-white/5 text-zinc-400'
             }`}>
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                 <span>极速虚拟流模式 · 仅渲染视口 DOM，丝滑畅滑海量曲库（共 <strong className="text-[#FF6700] font-semibold">{filteredSongs.length}</strong> 首）</span>
               </div>
-              <button
-                type="button"
-                id="btn-switch-to-pagination"
-                onClick={() => handleViewModeChange('paginated')}
-                className="text-[#FF6700] hover:underline font-semibold cursor-pointer"
-              >
-                切换为传统分页
-              </button>
+
+              {/* View Mode Tag Switcher right at bottom */}
+              <div className={`flex items-center p-0.5 rounded-xl border text-xs ${
+                isLight ? 'bg-zinc-200/80 border-zinc-300' : 'bg-zinc-900 border-white/10'
+              }`}>
+                <button
+                  type="button"
+                  id="btn-virtual-switch-paginated"
+                  onClick={() => handleViewModeChange('paginated')}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-lg transition font-semibold cursor-pointer ${
+                    isLight ? 'text-zinc-600 hover:text-zinc-950 hover:bg-zinc-200' : 'text-zinc-400 hover:text-white'
+                  }`}
+                  title="切换至传统分页"
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>分页</span>
+                </button>
+                <button
+                  type="button"
+                  id="btn-virtual-active"
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#FF6700] text-white font-bold shadow-sm"
+                  title="当前为极速虚拟流模式"
+                >
+                  <Zap className="w-3.5 h-3.5 text-amber-300" />
+                  <span>虚拟流</span>
+                </button>
+              </div>
             </div>
           </div>
         ) : (
@@ -677,6 +713,8 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
               isLight={isLight}
               onPageChange={setCurrentPage}
               onPageSizeChange={setPageSize}
+              viewMode={viewMode}
+              onViewModeChange={handleViewModeChange}
             />
           </>
         )}

@@ -8,7 +8,8 @@ import {
   Trash2, 
   SlidersHorizontal,
   Layers,
-  Zap
+  Zap,
+  BarChart3
 } from 'lucide-react';
 import { SongSortOption, LibrarySourceFilter } from '../../types';
 
@@ -29,6 +30,8 @@ export interface LibraryToolbarProps {
   isLight: boolean;
   viewMode?: 'paginated' | 'virtual';
   onViewModeChange?: (mode: 'paginated' | 'virtual') => void;
+  showInsights?: boolean;
+  onToggleInsights?: () => void;
 }
 
 export const LibraryToolbar: React.FC<LibraryToolbarProps> = memo(({
@@ -47,7 +50,9 @@ export const LibraryToolbar: React.FC<LibraryToolbarProps> = memo(({
   onClearAllSongs,
   isLight,
   viewMode = 'paginated',
-  onViewModeChange
+  onViewModeChange,
+  showInsights,
+  onToggleInsights
 }) => {
   const [showExportMenu, setShowExportMenu] = useState(false);
 
@@ -253,6 +258,26 @@ export const LibraryToolbar: React.FC<LibraryToolbarProps> = memo(({
               <span>虚拟流</span>
             </button>
           </div>
+        )}
+
+        {/* Listening Insights Analytics Button */}
+        {onToggleInsights && (
+          <button
+            type="button"
+            id="btn-toggle-insights"
+            onClick={onToggleInsights}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition border cursor-pointer ${
+              showInsights
+                ? 'bg-amber-500 text-zinc-950 font-bold shadow-sm border-amber-400'
+                : isLight
+                  ? 'bg-zinc-100/90 hover:bg-zinc-200/80 text-zinc-700 border-zinc-200'
+                  : 'bg-zinc-800/80 hover:bg-zinc-700/80 text-zinc-300 border-white/5'
+            }`}
+            title="查看听歌统计分析报告（歌手榜、无损占比、时间段分布）"
+          >
+            <BarChart3 className="w-3.5 h-3.5 text-amber-500" />
+            <span>听歌分析</span>
+          </button>
         )}
 
         {/* Batch Mode Toggle */}

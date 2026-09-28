@@ -56,11 +56,106 @@ export interface AutomationLog {
 interface SmartAutomationTabProps {
   devices: XiaomiDevice[];
   playlists: Playlist[];
+  onSendTts?: (did: string, text: string) => void;
+  activeDeviceDid?: string;
 }
+
+const SCENE_TEMPLATES: Array<{
+  name: string;
+  cronExpr: string;
+  description: string;
+  actionType: 'play_playlist' | 'play_radio' | 'tts_announce' | 'group_cast' | 'stop_playback';
+  targetType: 'single_device' | 'group' | 'all_devices';
+  payload: {
+    playlistId?: string;
+    radioUrl?: string;
+    radioTitle?: string;
+    ttsText?: string;
+    volume?: number;
+  };
+}> = [
+  {
+    name: '☀️ 智能早安晨曲唤醒 (渐进音量)',
+    cronExpr: '00 07 * * *',
+    description: '每天 07:00 自动开启全屋音箱，从 20% 渐进上升至 50% 音量，播报早安问候并播放常听金曲与晨间电台',
+    actionType: 'tts_announce',
+    targetType: 'all_devices',
+    payload: {
+      ttsText: '早上好！今天是全新的一天，为您播报早安问候与晨间舒缓曲目，祝您一天好心情！',
+      volume: 35
+    }
+  },
+  {
+    name: '🌙 晚安助眠与定时关机',
+    cronExpr: '30 22 * * *',
+    description: '每天 22:30 自动调低音量至 15%，播报柔和晚安问候并播放 Chill Lofi 助眠广播，半小时后自动打关机',
+    actionType: 'play_radio',
+    targetType: 'all_devices',
+    payload: {
+      radioUrl: 'https://stream.zeno.fm/f3wvbbqmdg8uv',
+      radioTitle: 'Lofi Sleep & Chill',
+      ttsText: '夜深了，为您降低音量并播放助眠旋律，祝您晚安好梦！',
+      volume: 15
+    }
+  },
+  {
+    name: '⏰ 每日高分音乐闹钟',
+    cronExpr: '30 06 * * *',
+    description: '每天 06:30 准时打响智能音乐闹钟，以渐进高保真音量播放常听榜首单曲，助您元气满满起床',
+    actionType: 'tts_announce',
+    targetType: 'all_devices',
+    payload: {
+      ttsText: '起床时间到！该刷牙洗脸准备迎新的一天啦！',
+      volume: 45
+    }
+  },
+  {
+    name: '🍱 午休放松与餐饮提示',
+    cronExpr: '00 12 * * *',
+    description: '每天 12:00 播报开饭广播，调至舒适音乐氛围，提醒大家好好享受午餐与午休',
+    actionType: 'tts_announce',
+    targetType: 'all_devices',
+    payload: {
+      ttsText: '午休时间到了！开饭啦，好好享用午餐，放松休息一下吧！',
+      volume: 30
+    }
+  }
+];
+
+const TTS_PRESET_CATEGORIES = [
+  {
+    category: '🍽️ 生活与用餐',
+    items: [
+      { text: '开饭啦，大家快来吃饭！', defaultCron: '00 12 * * *', name: '🍱 每日午餐提醒广播' },
+      { text: '快去接孩子放学啦！', defaultCron: '30 17 * * *', name: '🏫 每日接孩子提醒广播' },
+      { text: '出门记得带钥匙、手机与手环！', defaultCron: '10 08 * * *', name: '🔑 每日出门检查提醒' },
+      { text: '要下雨啦，赶紧收衣服吧！', defaultCron: '00 18 * * *', name: '🌧️ 收衣服提醒广播' }
+    ]
+  },
+  {
+    category: '🌙 作息与关怀',
+    items: [
+      { text: '该睡觉啦，手机放下，晚安好梦！', defaultCron: '30 22 * * *', name: '🌙 晚安睡前提醒' },
+      { text: '半小时后准备关灯，睡个好觉。', defaultCron: '00 23 * * *', name: '😴 睡前关灯打铃' },
+      { text: '工作久了，站起来活动活动筋骨吧！', defaultCron: '00 15 * * *', name: '🧘 下午伸展活动提醒' },
+      { text: '多喝水，保持身体水分充沛！', defaultCron: '30 10 * * *', name: '💧 补充水分关怀' }
+    ]
+  },
+  {
+    category: '⏰ 学习与工作',
+    items: [
+      { text: '番茄钟时间到，休息 5 分钟！', defaultCron: '25 * * * *', name: '🍅 番茄钟休息提醒' },
+      { text: '会议即将开始，请准备好发言材料。', defaultCron: '55 09 * * *', name: '💼 晨会准时提醒' },
+      { text: '快递已送到，记得出门拿取！', defaultCron: '00 16 * * *', name: '📦 快递领取播报' }
+    ]
+  }
+];
 
 export const SmartAutomationTab: React.FC<SmartAutomationTabProps> = ({
   devices,
-  playlists
+  playlists,
+  onSendTts,
+  activeDeviceDid
 }) => {
   const { currentTheme } = useTheme();
   const isLight = currentTheme === 'light';
@@ -256,10 +351,142 @@ export const SmartAutomationTab: React.FC<SmartAutomationTabProps> = ({
 
       {/* SubView 1: Scenes List */}
       {activeSubView === 'scenes' && (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
+        <div className="space-y-6">
+
+          {/* 1-Click Smart Scene Templates Shelf */}
+          <div className={`p-5 rounded-2xl border space-y-3.5 backdrop-blur-md ${
+            isLight ? 'bg-amber-50/60 border-amber-300/80 shadow-sm' : 'bg-zinc-900/90 border-white/10'
+          }`}>
+            <div className="flex items-center justify-between">
+              <h3 className={`text-xs font-bold uppercase tracking-wider flex items-center gap-2 ${
+                isLight ? 'text-amber-900' : 'text-amber-300'
+              }`}>
+                <Sparkles className="w-4 h-4 text-amber-500" />
+                <span>1-键加载经典智能场景模版 (早安唤醒 / 晚安助眠 / 音乐闹钟 / 午休提醒)</span>
+              </h3>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {SCENE_TEMPLATES.map((tmpl, idx) => (
+                <div
+                  key={idx}
+                  className={`p-3.5 rounded-xl border transition flex flex-col justify-between space-y-3 ${
+                    isLight ? 'bg-white border-zinc-200 hover:border-amber-400 shadow-xs' : 'bg-zinc-950 border-white/10 hover:border-amber-500/40'
+                  }`}
+                >
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-1">
+                      <h4 className={`text-xs font-bold truncate ${isLight ? 'text-zinc-900' : 'text-white'}`}>
+                        {tmpl.name}
+                      </h4>
+                      <span className="text-[10px] font-mono font-semibold shrink-0 px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 border border-amber-500/20">
+                        {tmpl.cronExpr}
+                      </span>
+                    </div>
+                    <p className={`text-[11px] leading-relaxed line-clamp-2 ${isLight ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                      {tmpl.description}
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      setEditingScene({
+                        ...tmpl,
+                        enabled: true
+                      });
+                      setIsModalOpen(true);
+                    }}
+                    className="w-full py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs transition cursor-pointer shadow-xs flex items-center justify-center gap-1"
+                  >
+                    <Zap className="w-3.5 h-3.5 fill-current" />
+                    <span>应用并创建场景</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Preset TTS Phrase Library & Scheduled Broadcast Conversion */}
+          <div className={`p-5 rounded-2xl border space-y-4 backdrop-blur-md ${
+            isLight ? 'bg-white border-zinc-200/80 shadow-sm' : 'bg-zinc-900/90 border-white/10'
+          }`}>
+            <div className="flex items-center justify-between">
+              <h3 className={`text-xs font-bold uppercase tracking-wider flex items-center gap-2 ${
+                isLight ? 'text-zinc-900' : 'text-white'
+              }`}>
+                <Volume2 className="w-4 h-4 text-amber-500" />
+                <span>常用 TTS 快捷语录预设库与 1-键转定时广播</span>
+              </h3>
+              {activeDeviceDid && (
+                <span className="text-[11px] text-amber-600 font-semibold font-mono">
+                  当前目标音箱: {activeDeviceDid}
+                </span>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {TTS_PRESET_CATEGORIES.map((cat, cIdx) => (
+                <div key={cIdx} className={`p-3.5 rounded-xl border space-y-3 ${
+                  isLight ? 'bg-zinc-50/80 border-zinc-200' : 'bg-zinc-950/80 border-white/5'
+                }`}>
+                  <h4 className={`text-xs font-bold ${isLight ? 'text-zinc-800' : 'text-zinc-200'}`}>
+                    {cat.category}
+                  </h4>
+                  <div className="space-y-2">
+                    {cat.items.map((item, iIdx) => (
+                      <div key={iIdx} className={`p-2.5 rounded-lg border flex flex-col gap-1.5 ${
+                        isLight ? 'bg-white border-zinc-200' : 'bg-zinc-900 border-white/5'
+                      }`}>
+                        <span className={`text-xs font-medium ${isLight ? 'text-zinc-900' : 'text-zinc-100'}`}>
+                          “{item.text}”
+                        </span>
+                        <div className="flex items-center justify-between pt-1 border-t border-dashed border-zinc-200 dark:border-white/5">
+                          <button
+                            onClick={() => {
+                              if (onSendTts && activeDeviceDid) {
+                                onSendTts(activeDeviceDid, item.text);
+                                alert(`已向当前音箱发送 TTS 播报: “${item.text}”`);
+                              } else {
+                                alert('请先在顶部选中一台小爱音箱设备');
+                              }
+                            }}
+                            className="text-[10px] px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800 hover:bg-amber-500 hover:text-zinc-950 font-semibold transition cursor-pointer flex items-center gap-1"
+                          >
+                            <Send className="w-3 h-3" />
+                            <span>▶ 立即播报</span>
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              setEditingScene({
+                                name: item.name,
+                                cronExpr: item.defaultCron,
+                                description: `定时自动广播语录: “${item.text}”`,
+                                actionType: 'tts_announce',
+                                targetType: 'all_devices',
+                                payload: { ttsText: item.text, volume: 40 },
+                                enabled: true
+                              });
+                              setIsModalOpen(true);
+                            }}
+                            className="text-[10px] px-2 py-1 rounded bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/30 hover:bg-amber-500 hover:text-zinc-950 font-semibold transition cursor-pointer flex items-center gap-1"
+                          >
+                            <Clock className="w-3 h-3" />
+                            <span>⏰ 定为定时广播</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Scenes Section Title */}
+          <div className="flex items-center justify-between pt-2">
             <span className={`text-xs font-bold uppercase tracking-wider ${isLight ? 'text-zinc-600' : 'text-zinc-400'}`}>
-              已启用的 Cron 规则清单
+              已启用的 Cron 规则清单 ({scenes.length})
             </span>
 
             <button
@@ -278,7 +505,7 @@ export const SmartAutomationTab: React.FC<SmartAutomationTabProps> = ({
               className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-amber-500 text-zinc-950 font-bold text-xs hover:bg-amber-400 transition cursor-pointer shadow-sm"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>新建自动化场景</span>
+              <span>新建自定义场景</span>
             </button>
           </div>
 

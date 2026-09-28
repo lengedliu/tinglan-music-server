@@ -55,10 +55,24 @@ export const LyricsView: React.FC<LyricsViewProps> = ({
   const [lyricsProviderInfo, setLyricsProviderInfo] = useState<string | null>(null);
   const [localLyrics, setLocalLyrics] = useState<string>(currentSong?.lyrics || '');
 
-  // Synchronize when currentSong changes
+  // Synchronize and restore persisted offset when currentSong changes
   useEffect(() => {
     setLocalLyrics(currentSong?.lyrics || '');
-    setLyricOffset(0);
+    if (currentSong?.id) {
+      try {
+        const savedOffset = localStorage.getItem(`tinglan_lyric_offset_${currentSong.id}`);
+        if (savedOffset !== null) {
+          setLyricOffset(parseFloat(savedOffset) || 0);
+        } else {
+          setLyricOffset(0);
+        }
+      } catch {
+        setLyricOffset(0);
+      }
+    } else {
+      setLyricOffset(0);
+    }
+
     // If the song has placeholder lyrics, auto search online in background
     if (
       currentSong && 
@@ -141,13 +155,18 @@ export const LyricsView: React.FC<LyricsViewProps> = ({
   }
 
   const updateAndPersistOffset = (newOffset: number) => {
-    setLyricOffset(newOffset);
+    const rounded = Math.round(newOffset * 10) / 10;
+    setLyricOffset(rounded);
     if (currentSong?.id) {
+      try {
+        localStorage.setItem(`tinglan_lyric_offset_${currentSong.id}`, String(rounded));
+      } catch {}
+
       apiFetch(`/api/songs/${encodeURIComponent(currentSong.id)}/lyrics/offset`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          offsetMs: Math.round(newOffset * 1000),
+          offsetMs: Math.round(rounded * 1000),
           rawLrc: localLyrics
         })
       }).catch(() => {});
@@ -179,33 +198,38 @@ export const LyricsView: React.FC<LyricsViewProps> = ({
         <div className="flex flex-wrap items-center gap-2">
           {/* Lyric Sync Offset Adjustment Controls */}
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-zinc-900 border border-white/10 text-xs font-mono">
-            <Clock className="w-3.5 h-3.5 text-zinc-400" />
-            <span className="text-zinc-300">
+            <Clock className="w-3.5 h-3.5 text-amber-500" />
+            <span className="text-zinc-300 font-bold min-w-[42px]">
               {lyricOffset > 0 ? `+${lyricOffset.toFixed(1)}s` : `${lyricOffset.toFixed(1)}s`}
             </span>
+
             <button
               onClick={() => updateAndPersistOffset(lyricOffset - 0.5)}
-              className="p-1 hover:bg-white/10 rounded text-zinc-400 hover:text-white"
-              title="歌词延后 0.5 秒 (已自动同步云端)"
+              className="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-amber-400 font-bold transition cursor-pointer text-[11px]"
+              title="歌词延后 0.5 秒 (支持每首歌单独记忆与同步)"
             >
-              <Minus className="w-3 h-3" />
+              -0.5s
             </button>
+
+            <button
+              onClick={() => updateAndPersistOffset(0)}
+              className={`px-2 py-0.5 rounded font-bold transition cursor-pointer text-[11px] ${
+                lyricOffset === 0
+                  ? 'bg-zinc-800 text-zinc-500 cursor-default'
+                  : 'bg-amber-500/20 text-amber-400 border border-amber-500/30 hover:bg-amber-500 hover:text-zinc-950'
+              }`}
+              title="重置歌词时间偏移量为 0s"
+            >
+              重置
+            </button>
+
             <button
               onClick={() => updateAndPersistOffset(lyricOffset + 0.5)}
-              className="p-1 hover:bg-white/10 rounded text-zinc-400 hover:text-white"
-              title="歌词提前 0.5 秒 (已自动同步云端)"
+              className="px-2 py-0.5 rounded bg-zinc-800 hover:bg-zinc-700 text-amber-400 font-bold transition cursor-pointer text-[11px]"
+              title="歌词提前 0.5 秒 (支持每首歌单独记忆与同步)"
             >
-              <Plus className="w-3 h-3" />
+              +0.5s
             </button>
-            {lyricOffset !== 0 && (
-              <button
-                onClick={() => updateAndPersistOffset(0)}
-                className="p-1 hover:bg-white/10 rounded text-[#FF6700]"
-                title="复位时间差"
-              >
-                <RotateCcw className="w-3 h-3" />
-              </button>
-            )}
           </div>
 
           {/* Auto Search Lyrics */}

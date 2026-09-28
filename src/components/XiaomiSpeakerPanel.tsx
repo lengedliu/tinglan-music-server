@@ -3291,6 +3291,8 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
         <SmartAutomationTab
           devices={devices}
           playlists={playlists}
+          onSendTts={onSendTts}
+          activeDeviceDid={activeDevice?.did}
         />
       )}
 

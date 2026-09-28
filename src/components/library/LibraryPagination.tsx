@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Layers, Zap } from 'lucide-react';
 
 export interface LibraryPaginationProps {
   currentPage: number;
@@ -10,6 +10,8 @@ export interface LibraryPaginationProps {
   isLight: boolean;
   onPageChange: (page: number | ((prev: number) => number)) => void;
   onPageSizeChange: (size: number) => void;
+  viewMode?: 'paginated' | 'virtual';
+  onViewModeChange?: (mode: 'paginated' | 'virtual') => void;
 }
 
 export const LibraryPagination: React.FC<LibraryPaginationProps> = ({
@@ -20,7 +22,9 @@ export const LibraryPagination: React.FC<LibraryPaginationProps> = ({
   pageNumbers,
   isLight,
   onPageChange,
-  onPageSizeChange
+  onPageSizeChange,
+  viewMode = 'paginated',
+  onViewModeChange
 }) => {
   if (totalItems <= 0) return null;
 
@@ -128,27 +132,65 @@ export const LibraryPagination: React.FC<LibraryPaginationProps> = ({
         </button>
       </div>
 
-      <div className="flex items-center gap-2">
-        <span>每页显示</span>
-        <select
-          id="select-page-size"
-          value={pageSize}
-          onChange={(e) => {
-            onPageSizeChange(Number(e.target.value));
-            onPageChange(1);
-          }}
-          className={`border rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-[#FF6700] transition ${
-            isLight
-              ? 'bg-white border-zinc-300 text-zinc-800'
-              : 'bg-zinc-900 border-white/10 text-zinc-200'
-          }`}
-        >
-          <option value={15}>15 条/页</option>
-          <option value={30}>30 条/页</option>
-          <option value={50}>50 条/页</option>
-          <option value={100}>100 条/页</option>
-          <option value={200}>200 条/页</option>
-        </select>
+      <div className="flex items-center gap-3">
+        {/* Mode Switcher: 分页 | 虚拟流 placed right before 每页显示 */}
+        {onViewModeChange && (
+          <div className={`flex items-center p-0.5 rounded-xl border text-xs ${
+            isLight ? 'bg-zinc-200/80 border-zinc-300' : 'bg-zinc-900 border-white/10'
+          }`}>
+            <button
+              type="button"
+              id="btn-view-mode-paginated"
+              onClick={() => onViewModeChange('paginated')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg transition font-semibold cursor-pointer ${
+                viewMode === 'paginated'
+                  ? 'bg-[#FF6700] text-white font-bold shadow-sm'
+                  : isLight ? 'text-zinc-600 hover:text-zinc-950 hover:bg-zinc-200' : 'text-zinc-400 hover:text-white'
+              }`}
+              title="传统分页模式"
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>分页</span>
+            </button>
+            <button
+              type="button"
+              id="btn-view-mode-virtual"
+              onClick={() => onViewModeChange('virtual')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded-lg transition font-semibold cursor-pointer ${
+                viewMode === 'virtual'
+                  ? 'bg-[#FF6700] text-white font-bold shadow-sm'
+                  : isLight ? 'text-zinc-600 hover:text-zinc-950 hover:bg-zinc-200' : 'text-zinc-400 hover:text-white'
+              }`}
+              title="极速虚拟流模式（60fps 丝滑滑行）"
+            >
+              <Zap className="w-3.5 h-3.5 text-amber-300" />
+              <span>虚拟流</span>
+            </button>
+          </div>
+        )}
+
+        <div className="flex items-center gap-1.5">
+          <span>每页显示</span>
+          <select
+            id="select-page-size"
+            value={pageSize}
+            onChange={(e) => {
+              onPageSizeChange(Number(e.target.value));
+              onPageChange(1);
+            }}
+            className={`border rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-[#FF6700] transition ${
+              isLight
+                ? 'bg-white border-zinc-300 text-zinc-800'
+                : 'bg-zinc-900 border-white/10 text-zinc-200'
+            }`}
+          >
+            <option value={15}>15 条/页</option>
+            <option value={30}>30 条/页</option>
+            <option value={50}>50 条/页</option>
+            <option value={100}>100 条/页</option>
+            <option value={200}>200 条/页</option>
+          </select>
+        </div>
       </div>
     </div>
   );

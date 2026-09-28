@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Radio as RadioIcon,
   Rss,
@@ -19,11 +19,26 @@ import {
   Volume2,
   X,
   Layers,
-  ChevronRight
+  ChevronRight,
+  RotateCcw,
+  RotateCw,
+  History,
+  FastForward,
+  Rewind
 } from 'lucide-react';
 import { XiaomiDevice, Song } from '../types';
 import { apiFetch } from '../utils/api';
 import { useTheme } from '../context/ThemeContext';
+import { usePlaybackTime, usePlaybackTimeActions } from '../context/PlaybackTimeContext';
+import {
+  getEpisodeProgress,
+  savePodcastProgress,
+  clearEpisodeProgress,
+  getInProgressEpisodes,
+  formatPodcastTime,
+  isNewEpisode,
+  PodcastEpisodeProgress
+} from '../utils/podcastProgress';
 
 interface RadioStation {
   id: string;
@@ -122,6 +137,41 @@ export const RadioPodcastTab: React.FC<RadioPodcastTabProps> = ({
 
   // Status Feedback
   const [actionMessage, setActionMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+  // Playback Context & Progress Tracking State
+  const playbackTime = usePlaybackTime();
+  const playbackActions = usePlaybackTimeActions();
+  const [inProgressEpisodes, setInProgressEpisodes] = useState<PodcastEpisodeProgress[]>([]);
+  const [episodeSearchQuery, setEpisodeSearchQuery] = useState('');
+
+  const refreshProgress = useCallback(() => {
+    setInProgressEpisodes(getInProgressEpisodes());
+  }, []);
+
+  useEffect(() => {
+    refreshProgress();
+  }, [subTab, refreshProgress]);
+
+  // Auto-save progress when playing a podcast episode
+  useEffect(() => {
+    if (!currentSong || !playbackTime) return;
+    if (currentSong.album === '播客单集' || currentSong.url.includes('/api/radio/proxy')) {
+      if (playbackTime.currentTime > 2 && playbackTime.duration > 0) {
+        savePodcastProgress({
+          episodeId: currentSong.id,
+          podcastTitle: currentSong.artist,
+          episodeTitle: currentSong.title,
+          audioUrl: currentSong.url,
+          coverUrl: currentSong.coverUrl,
+          currentTime: playbackTime.currentTime,
+          duration: playbackTime.duration,
+          lastPlayedAt: Date.now(),
+          completed: false
+        });
+        refreshProgress();
+      }
+    }
+  }, [currentSong, playbackTime?.currentTime, playbackTime?.duration, refreshProgress]);
 
   // Fetch initial radio stations & podcasts
   const fetchStations = async () => {
@@ -382,7 +432,7 @@ export const RadioPodcastTab: React.FC<RadioPodcastTabProps> = ({
     setActionMessage({ text: `已向【${activeDevice.name}】发送投播网络电台指令: ${st.name}`, type: 'success' });
   };
 
-  const handlePlayEpisodeInBrowser = (ep: PodcastEpisode, podTitle: string) => {
+  const handlePlayEpisodeInBrowser = (ep: PodcastEpisode, podTitle: string, forceFromStart = false) => {
     const streamUrl = `/api/radio/proxy?url=${encodeURIComponent(ep.audioUrl)}`;
     const virtualSong: Song = {
       id: ep.id,
@@ -392,10 +442,59 @@ export const RadioPodcastTab: React.FC<RadioPodcastTabProps> = ({
       duration: 0,
       url: streamUrl,
       filePath: streamUrl,
-      coverUrl: ep.coverUrl || 'https://images.unsplash.com/photo-1590602847861-f357a9332bbc?w=300&auto=format&fit=crop&q=80'
+      coverUrl: ep.coverUrl || selectedPodcast?.coverUrl || 'https://images.unsplash.com/photo-1590602847861-f357a9332bbc?w=300&auto=format&fit=crop&q=80'
     };
+
+    const savedProgress = getEpisodeProgress(ep.id);
     onPlaySongInBrowser(virtualSong);
-    setActionMessage({ text: `正在播放播客单集: ${ep.title}`, type: 'success' });
+
+    if (!forceFromStart && savedProgress && savedProgress.currentTime > 5 && !savedProgress.completed) {
+      setTimeout(() => {
+        if (playbackActions) {
+          playbackActions.seekTo(savedProgress.currentTime);
+        }
+      }, 450);
+      setActionMessage({
+        text: `已恢复播放《${ep.title}》，自动跳转至 ${formatPodcastTime(savedProgress.currentTime)}`,
+        type: 'success'
+      });
+    } else {
+      if (forceFromStart) {
+        clearEpisodeProgress(ep.id);
+      }
+      setActionMessage({ text: `正在播放播客单集: ${ep.title}`, type: 'success' });
+    }
+    refreshProgress();
+  };
+
+  const handlePlayEpisodeFromShelf = (prog: PodcastEpisodeProgress) => {
+    const virtualSong: Song = {
+      id: prog.episodeId,
+      title: prog.episodeTitle,
+      artist: prog.podcastTitle,
+      album: '播客单集',
+      duration: prog.duration,
+      url: prog.audioUrl,
+      filePath: prog.audioUrl,
+      coverUrl: prog.coverUrl || 'https://images.unsplash.com/photo-1590602847861-f357a9332bbc?w=300&auto=format&fit=crop&q=80'
+    };
+
+    onPlaySongInBrowser(virtualSong);
+    setTimeout(() => {
+      if (playbackActions) {
+        playbackActions.seekTo(prog.currentTime);
+      }
+    }, 450);
+    setActionMessage({
+      text: `已续播《${prog.episodeTitle}》，已播放至 ${formatPodcastTime(prog.currentTime)} / ${formatPodcastTime(prog.duration)}`,
+      type: 'success'
+    });
+  };
+
+  const handleJumpTime = (seconds: number) => {
+    if (!playbackTime || !playbackActions) return;
+    const newTime = Math.max(0, Math.min(playbackTime.currentTime + seconds, playbackTime.duration));
+    playbackActions.seekTo(newTime);
   };
 
   const handleCastEpisodeToSpeaker = (ep: PodcastEpisode, podTitle: string) => {
@@ -418,6 +517,16 @@ export const RadioPodcastTab: React.FC<RadioPodcastTabProps> = ({
     }
     return true;
   });
+
+  // Filter podcast episodes by search query
+  const filteredPodcastEpisodes = useMemo(() => {
+    if (!selectedPodcast?.episodes) return [];
+    if (!episodeSearchQuery.trim()) return selectedPodcast.episodes;
+    const q = episodeSearchQuery.toLowerCase();
+    return selectedPodcast.episodes.filter(ep =>
+      ep.title.toLowerCase().includes(q) || (ep.description || '').toLowerCase().includes(q)
+    );
+  }, [selectedPodcast?.episodes, episodeSearchQuery]);
 
   return (
     <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-6 space-y-6">
@@ -700,6 +809,132 @@ export const RadioPodcastTab: React.FC<RadioPodcastTabProps> = ({
       {/* --- SUBTAB 2: PODCAST RSS AGGREGATOR --- */}
       {subTab === 'podcasts' && (
         <div className="space-y-6">
+
+          {/* Podcast Mini Jump Controller when actively listening to a podcast episode */}
+          {currentSong && (currentSong.album === '播客单集' || currentSong.url.includes('/api/radio/proxy')) && (
+            <div className={`p-3.5 rounded-2xl border flex items-center justify-between gap-3 shadow-md ${
+              isLight ? 'bg-amber-50 border-amber-300 text-zinc-900' : 'bg-zinc-900/90 border-amber-500/40 text-white'
+            }`}>
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/30 flex items-center justify-center shrink-0">
+                  <Headphones className="w-4 h-4 animate-pulse" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-[10px] text-amber-500 font-bold uppercase tracking-wider">正在收听播客</p>
+                  <p className="text-xs font-bold truncate">{currentSong.title}</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => handleJumpTime(-15)}
+                  className={`flex items-center gap-1 px-3 py-1.5 rounded-xl border text-xs font-semibold transition cursor-pointer ${
+                    isLight ? 'bg-white hover:bg-zinc-100 border-zinc-300 text-zinc-800' : 'bg-zinc-800 hover:bg-zinc-700 border-white/10 text-zinc-200'
+                  }`}
+                  title="快退 15 秒"
+                >
+                  <RotateCcw className="w-3.5 h-3.5 text-amber-500" />
+                  <span>-15s</span>
+                </button>
+                <button
+                  onClick={() => handleJumpTime(30)}
+                  className={`flex items-center gap-1 px-3 py-1.5 rounded-xl border text-xs font-semibold transition cursor-pointer ${
+                    isLight ? 'bg-white hover:bg-zinc-100 border-zinc-300 text-zinc-800' : 'bg-zinc-800 hover:bg-zinc-700 border-white/10 text-zinc-200'
+                  }`}
+                  title="快进 30 秒"
+                >
+                  <RotateCw className="w-3.5 h-3.5 text-amber-500" />
+                  <span>+30s</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Continue Listening Resume Shelf */}
+          {inProgressEpisodes.length > 0 && (
+            <div className={`p-5 rounded-2xl border space-y-3.5 backdrop-blur-md ${
+              isLight ? 'bg-amber-50/60 border-amber-300/80 shadow-sm' : 'bg-zinc-900/90 border-amber-500/30'
+            }`}>
+              <div className="flex items-center justify-between">
+                <h3 className={`text-xs font-bold uppercase tracking-wider flex items-center gap-2 ${
+                  isLight ? 'text-amber-900' : 'text-amber-300'
+                }`}>
+                  <History className="w-4 h-4 text-amber-500 animate-pulse" />
+                  <span>播客断点续播 • 接着收听 ({inProgressEpisodes.length})</span>
+                </h3>
+                <button
+                  onClick={() => {
+                    if (window.confirm('确定要清空所有播客断点续播记录吗？')) {
+                      localStorage.removeItem('tinglan_podcast_progress_v1');
+                      refreshProgress();
+                    }
+                  }}
+                  className="text-[11px] text-zinc-400 hover:text-rose-400 transition cursor-pointer"
+                >
+                  清空记录
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {inProgressEpisodes.slice(0, 3).map((prog) => {
+                  const percent = Math.min(100, Math.round((prog.currentTime / prog.duration) * 100));
+                  return (
+                    <div
+                      key={prog.episodeId}
+                      className={`p-3.5 rounded-xl border transition flex flex-col justify-between gap-3 ${
+                        isLight ? 'bg-white border-amber-200 hover:border-amber-400 shadow-xs' : 'bg-zinc-950/90 border-white/10 hover:border-amber-500/40'
+                      }`}
+                    >
+                      <div className="flex items-start gap-3">
+                        <img
+                          src={prog.coverUrl || 'https://images.unsplash.com/photo-1590602847861-f357a9332bbc?w=150&auto=format&fit=crop&q=80'}
+                          alt={prog.episodeTitle}
+                          className="w-11 h-11 rounded-lg object-cover border border-black/10 shrink-0"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <h4 className={`text-xs font-bold line-clamp-1 ${isLight ? 'text-zinc-900' : 'text-white'}`}>
+                            {prog.episodeTitle}
+                          </h4>
+                          <p className="text-[10px] text-amber-600 font-semibold truncate mt-0.5">{prog.podcastTitle}</p>
+                          <p className="text-[10px] text-zinc-400 mt-0.5 font-mono">
+                            进度 {percent}% ({formatPodcastTime(prog.currentTime)} / {formatPodcastTime(prog.duration)})
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Progress Bar */}
+                      <div className="w-full bg-zinc-200 dark:bg-zinc-800 h-1.5 rounded-full overflow-hidden">
+                        <div
+                          className="bg-amber-500 h-full transition-all duration-300"
+                          style={{ width: `${percent}%` }}
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between pt-0.5">
+                        <button
+                          onClick={() => {
+                            clearEpisodeProgress(prog.episodeId);
+                            refreshProgress();
+                          }}
+                          className="text-[10px] text-zinc-400 hover:text-rose-500 transition cursor-pointer"
+                        >
+                          移除此记录
+                        </button>
+                        <button
+                          onClick={() => handlePlayEpisodeFromShelf(prog)}
+                          className="flex items-center gap-1 px-3 py-1 rounded-lg bg-amber-500 text-zinc-950 font-bold text-xs hover:bg-amber-400 transition cursor-pointer shadow-xs"
+                        >
+                          <Play className="w-3 h-3 fill-current" />
+                          <span>继续播放</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* RSS Input Bar */}
           <div className={`p-5 rounded-2xl border space-y-4 ${
             isLight ? 'bg-white border-zinc-200/80 shadow-sm' : 'bg-zinc-900/80 border-white/10'
@@ -911,68 +1146,151 @@ export const RadioPodcastTab: React.FC<RadioPodcastTabProps> = ({
                     </div>
                   </div>
 
-                  {/* Episodes Feed */}
-                  <h4 className={`text-xs font-bold ${isLight ? 'text-zinc-700' : 'text-zinc-300'}`}>
-                    单集节目列表 ({selectedPodcast.episodes.length})
-                  </h4>
+                  {/* Episodes Feed Header with Search */}
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pt-1">
+                    <h4 className={`text-xs font-bold ${isLight ? 'text-zinc-700' : 'text-zinc-300'}`}>
+                      单集节目列表 ({filteredPodcastEpisodes.length})
+                    </h4>
+                    <div className="relative w-full sm:w-56">
+                      <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-zinc-400" />
+                      <input
+                        type="text"
+                        placeholder="搜索本播客单集..."
+                        value={episodeSearchQuery}
+                        onChange={e => setEpisodeSearchQuery(e.target.value)}
+                        className={`w-full pl-8 pr-3 py-1.5 text-xs rounded-xl border transition focus:outline-none ${
+                          isLight
+                            ? 'bg-zinc-100 border-zinc-300 text-zinc-900 focus:border-amber-500 focus:bg-white'
+                            : 'bg-zinc-950 border-white/10 text-zinc-200 focus:border-amber-500'
+                        }`}
+                      />
+                      {episodeSearchQuery && (
+                        <button
+                          onClick={() => setEpisodeSearchQuery('')}
+                          className="absolute right-2.5 top-2 text-zinc-400 hover:text-zinc-200 cursor-pointer"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
 
                   {isLoadingEpisodes ? (
                     <div className="py-16 text-center text-zinc-500 text-xs">
                       <RefreshCw className="w-5 h-5 animate-spin text-amber-500 mx-auto mb-2" />
                       正在实时从 RSS 源更新节目单...
                     </div>
-                  ) : selectedPodcast.episodes.length === 0 ? (
-                    <div className="py-12 text-center text-zinc-500 text-xs">
-                      该播客暂无可播单集
+                  ) : filteredPodcastEpisodes.length === 0 ? (
+                    <div className="py-12 text-center text-zinc-500 text-xs border border-dashed rounded-xl border-white/10">
+                      {episodeSearchQuery ? '未查找到包含匹配关键字的单集' : '该播客暂无可播单集'}
                     </div>
                   ) : (
-                    <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
-                      {selectedPodcast.episodes.map(ep => (
-                        <div
-                          key={ep.id}
-                          className={`p-3.5 rounded-xl border transition flex items-center justify-between gap-3 ${
-                            isLight
-                              ? 'bg-zinc-50/80 hover:bg-amber-50/40 border-zinc-200/80'
-                              : 'bg-zinc-950/80 hover:bg-zinc-950 border-white/5 hover:border-white/20'
-                          }`}
-                        >
-                          <div className="min-w-0 flex-1">
-                            <h5 className={`text-xs font-bold line-clamp-1 ${isLight ? 'text-zinc-900' : 'text-zinc-100'}`}>
-                              {ep.title}
-                            </h5>
-                            <div className="flex items-center gap-3 text-[10px] text-zinc-500 mt-1">
-                              <span>{ep.pubDate}</span>
-                              {ep.duration && <span>{ep.duration}</span>}
+                    <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
+                      {filteredPodcastEpisodes.map(ep => {
+                        const prog = getEpisodeProgress(ep.id);
+                        const isNew = isNewEpisode(ep.pubDate);
+                        const hasProgress = prog && prog.currentTime > 5 && !prog.completed;
+                        const isFinished = prog && prog.completed;
+                        const pct = prog && prog.duration ? Math.min(100, Math.round((prog.currentTime / prog.duration) * 100)) : 0;
+
+                        return (
+                          <div
+                            key={ep.id}
+                            className={`p-3.5 rounded-xl border transition flex flex-col gap-2.5 ${
+                              isLight
+                                ? 'bg-zinc-50/80 hover:bg-amber-50/40 border-zinc-200/80'
+                                : 'bg-zinc-950/80 hover:bg-zinc-950 border-white/5 hover:border-white/20'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2 flex-wrap mb-1">
+                                  {isFinished && (
+                                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold flex items-center gap-1">
+                                      <CheckCircle2 className="w-3 h-3" />
+                                      已听完
+                                    </span>
+                                  )}
+                                  {hasProgress && (
+                                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30 font-semibold flex items-center gap-1">
+                                      <Clock className="w-3 h-3" />
+                                      在听 {pct}% ({formatPodcastTime(prog.currentTime)})
+                                    </span>
+                                  )}
+                                  {isNew && !isFinished && !hasProgress && (
+                                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-400 border border-rose-500/30 font-semibold flex items-center gap-1">
+                                      <Sparkles className="w-3 h-3" />
+                                      最新单集
+                                    </span>
+                                  )}
+                                  <h5 className={`text-xs font-bold line-clamp-1 ${isLight ? 'text-zinc-900' : 'text-zinc-100'}`}>
+                                    {ep.title}
+                                  </h5>
+                                </div>
+
+                                <div className="flex items-center gap-3 text-[10px] text-zinc-500">
+                                  <span>{ep.pubDate}</span>
+                                  {ep.duration && <span>时长 {ep.duration}</span>}
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                {/* Restart From Beginning if in progress */}
+                                {(hasProgress || isFinished) && (
+                                  <button
+                                    onClick={() => handlePlayEpisodeInBrowser(ep, selectedPodcast.title, true)}
+                                    className={`p-1.5 rounded-lg transition cursor-pointer text-[10px] font-semibold flex items-center gap-1 ${
+                                      isLight ? 'bg-zinc-200 hover:bg-zinc-300 text-zinc-700' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300'
+                                    }`}
+                                    title="从头重新播放"
+                                  >
+                                    <RotateCcw className="w-3 h-3 text-amber-500" />
+                                    <span className="hidden sm:inline">从头听</span>
+                                  </button>
+                                )}
+
+                                {/* Web Play / Resume */}
+                                <button
+                                  onClick={() => handlePlayEpisodeInBrowser(ep, selectedPodcast.title)}
+                                  className={`px-3 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1 text-xs font-semibold ${
+                                    hasProgress
+                                      ? 'bg-amber-500 text-zinc-950 shadow-sm hover:bg-amber-400'
+                                      : isLight ? 'bg-zinc-200 hover:bg-zinc-300 text-zinc-800' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200'
+                                  }`}
+                                  title={hasProgress ? '断点续播' : '网页试听'}
+                                >
+                                  <Play className="w-3.5 h-3.5 fill-current" />
+                                  <span>{hasProgress ? '续播' : '试听'}</span>
+                                </button>
+
+                                {/* Cast Episode */}
+                                <button
+                                  onClick={() => handleCastEpisodeToSpeaker(ep, selectedPodcast.title)}
+                                  className={`flex items-center gap-1 px-3 py-1.5 rounded-lg transition text-xs font-semibold cursor-pointer ${
+                                    isLight
+                                      ? 'bg-amber-500/20 text-amber-900 border border-amber-300 hover:bg-amber-500/30'
+                                      : 'bg-amber-500/10 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20'
+                                  }`}
+                                  title={`投播至 ${activeDevice?.name || '小爱音箱'}`}
+                                >
+                                  <Cast className="w-3.5 h-3.5" />
+                                  <span>投播</span>
+                                </button>
+                              </div>
                             </div>
-                          </div>
 
-                          <div className="flex items-center gap-2 shrink-0">
-                            {/* Web Play */}
-                            <button
-                              onClick={() => handlePlayEpisodeInBrowser(ep, selectedPodcast.title)}
-                              className={`p-1.5 rounded-lg transition cursor-pointer ${
-                                isLight ? 'bg-zinc-200 hover:bg-zinc-300 text-zinc-800' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200'
-                              }`}
-                              title="网页试听"
-                            >
-                              <Play className="w-3.5 h-3.5 fill-current" />
-                            </button>
-
-                            {/* Cast Episode */}
-                            <button
-                              onClick={() => handleCastEpisodeToSpeaker(ep, selectedPodcast.title)}
-                              className={`flex items-center gap-1 px-3 py-1.5 rounded-lg transition text-xs font-semibold cursor-pointer ${
-                                isLight
-                                  ? 'bg-amber-500 text-zinc-950 shadow-sm hover:bg-amber-400'
-                                  : 'bg-amber-500/10 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20'
-                              }`}
-                            >
-                              <Cast className="w-3.5 h-3.5" />
-                              <span>投播音箱</span>
-                            </button>
+                            {/* Episode Progress Bar */}
+                            {pct > 0 && (
+                              <div className="w-full bg-zinc-200 dark:bg-zinc-800 h-1 rounded-full overflow-hidden mt-0.5">
+                                <div
+                                  className={`h-full transition-all duration-300 ${isFinished ? 'bg-emerald-500' : 'bg-amber-500'}`}
+                                  style={{ width: `${pct}%` }}
+                                />
+                              </div>
+                            )}
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
