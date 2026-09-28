@@ -163,7 +163,18 @@ export const SmartAutomationTab: React.FC<SmartAutomationTabProps> = ({
   const [scenes, setScenes] = useState<AutomationScene[]>([]);
   const [logs, setLogs] = useState<AutomationLog[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [triggeringId, setTriggeringId] = useState<string | null>(null);
   const [activeSubView, setActiveSubView] = useState<'scenes' | 'logs' | 'backup'>('scenes');
+  
+  // Toast notification state
+  const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+
+  const showToast = (type: 'success' | 'error' | 'info', text: string) => {
+    setToastMessage({ type, text });
+    setTimeout(() => {
+      setToastMessage(null);
+    }, 4500);
+  };
   
   // Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -217,6 +228,7 @@ export const SmartAutomationTab: React.FC<SmartAutomationTabProps> = ({
       });
       if (res.ok) {
         setScenes(prev => prev.map(s => s.id === id ? { ...s, enabled: !currentEnabled } : s));
+        showToast('success', !currentEnabled ? '已开启场景规则' : '已禁用场景规则');
       }
     } catch (err) {
       console.error('Failed to toggle scene', err);
@@ -224,13 +236,21 @@ export const SmartAutomationTab: React.FC<SmartAutomationTabProps> = ({
   };
 
   const handleTriggerScene = async (id: string) => {
+    setTriggeringId(id);
+    showToast('info', '⌛ 正在向音箱与全屋服务下发测试指令...');
     try {
       const res = await apiFetch(`/api/automation/scenes/${id}/trigger`, { method: 'POST' });
       const data = await res.json();
       fetchAutomationData();
-      alert(data.message || '指令已下发');
+      if (data.success) {
+        showToast('success', `✅ ${data.message || '指令测试下发成功'}`);
+      } else {
+        showToast('error', `❌ 触发失败: ${data.error || data.message || '未知错误'}`);
+      }
     } catch (err: any) {
-      alert('触发失败: ' + err.message);
+      showToast('error', '❌ 触发时发生网络异常: ' + err.message);
+    } finally {
+      setTriggeringId(null);
     }
   };
 
@@ -240,6 +260,7 @@ export const SmartAutomationTab: React.FC<SmartAutomationTabProps> = ({
       const res = await apiFetch(`/api/automation/scenes/${id}`, { method: 'DELETE' });
       if (res.ok) {
         setScenes(prev => prev.filter(s => s.id !== id));
+        showToast('info', '场景规则已删除');
       }
     } catch (err) {
       console.error('Failed to delete scene', err);
@@ -259,9 +280,10 @@ export const SmartAutomationTab: React.FC<SmartAutomationTabProps> = ({
       if (res.ok) {
         setIsModalOpen(false);
         fetchAutomationData();
+        showToast('success', '场景规则已保存');
       }
     } catch (err: any) {
-      alert('保存场景失败: ' + err.message);
+      showToast('error', '保存场景失败: ' + err.message);
     }
   };
 
@@ -295,7 +317,30 @@ export const SmartAutomationTab: React.FC<SmartAutomationTabProps> = ({
   };
 
   return (
-    <div className="space-y-6 animate-fadeIn">
+    <div className="space-y-6 animate-fadeIn relative">
+      {/* Floating Toast Notification Banner */}
+      {toastMessage && (
+        <div className={`fixed top-6 right-6 z-50 px-4 py-3 rounded-2xl border shadow-2xl flex items-center gap-3 transition-all duration-300 backdrop-blur-xl ${
+          toastMessage.type === 'success'
+            ? 'bg-emerald-950/90 text-emerald-100 border-emerald-500/50 shadow-emerald-950/50'
+            : toastMessage.type === 'error'
+            ? 'bg-rose-950/90 text-rose-100 border-rose-500/50 shadow-rose-950/50'
+            : 'bg-amber-950/90 text-amber-100 border-amber-500/50 shadow-amber-950/50'
+        }`}>
+          <div className="p-1.5 rounded-xl bg-white/10 shrink-0">
+            {toastMessage.type === 'success' ? <CheckCircle2 className="w-5 h-5 text-emerald-300" /> :
+             toastMessage.type === 'error' ? <AlertCircle className="w-5 h-5 text-rose-300" /> :
+             <RefreshCw className="w-5 h-5 text-amber-300 animate-spin" />}
+          </div>
+          <span className="text-xs font-semibold leading-relaxed">{toastMessage.text}</span>
+          <button
+            onClick={() => setToastMessage(null)}
+            className="p-1 hover:bg-white/10 rounded-lg transition text-xs opacity-70 hover:opacity-100 cursor-pointer ml-2"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       {/* Top Banner & Navigation */}
       <div className={`p-5 rounded-2xl border shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4 transition ${
         isLight ? 'bg-white border-zinc-200/80 text-zinc-900 shadow-sm' : 'bg-zinc-900/90 border-white/10 text-white'
@@ -574,15 +619,25 @@ export const SmartAutomationTab: React.FC<SmartAutomationTabProps> = ({
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => handleTriggerScene(sc.id)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer flex items-center gap-1 ${
+                      disabled={triggeringId === sc.id}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition cursor-pointer flex items-center gap-1 disabled:opacity-60 ${
                         isLight
                           ? 'bg-amber-500 text-zinc-950 font-bold hover:bg-amber-400'
                           : 'bg-amber-500/10 text-amber-400 border border-amber-500/30 hover:bg-amber-500/20'
                       }`}
                       title="立即测试手动触发"
                     >
-                      <Play className="w-3 h-3 fill-current" />
-                      <span>测试触发</span>
+                      {triggeringId === sc.id ? (
+                        <>
+                          <RefreshCw className="w-3 h-3 animate-spin text-amber-500" />
+                          <span>下发中...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Play className="w-3 h-3 fill-current" />
+                          <span>测试触发</span>
+                        </>
+                      )}
                     </button>
                     <button
                       onClick={() => handleDeleteScene(sc.id)}
