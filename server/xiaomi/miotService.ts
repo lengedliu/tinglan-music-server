@@ -246,7 +246,7 @@ export function parseServiceTokenAndUserId(inputUid: string, inputToken: string,
   return { userId, serviceToken, passToken, cUserId: cUserId || undefined };
 }
 
-export async function validateMicoServiceToken(userId: string, serviceToken: string): Promise<{ valid: boolean; status?: number; error?: string }> {
+export async function validateMicoServiceToken(userId: string, serviceToken: string): Promise<{ valid: boolean; status?: number; devices?: any[]; error?: string }> {
   if (!userId || !serviceToken) return { valid: false, error: '缺少 userId 或 serviceToken' };
   try {
     const testUrl = 'https://api2.mina.mi.com/admin/v2/device_list?master=1';
@@ -270,6 +270,9 @@ export async function validateMicoServiceToken(userId: string, serviceToken: str
         const json = JSON.parse(text);
         if (json.code === 401 || json.code === 403 || json.code === -10017) {
           return { valid: false, status: json.code, error: json.message || `小米接口鉴权失败 (code: ${json.code})` };
+        }
+        if (json.code === 0 && Array.isArray(json.data)) {
+          return { valid: true, status: resp.status, devices: json.data };
         }
       } catch {}
       return { valid: true, status: resp.status };

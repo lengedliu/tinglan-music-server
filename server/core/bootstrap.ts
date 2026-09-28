@@ -94,28 +94,35 @@ export function restoreSessionAndDevicesOnStartup(options: BootstrapOptions): vo
       }
     }
 
-    // 3. 如果凭证可用，自动同步设备列表与 Mina WebSocket 长连接
+    // 3. 如果凭证可用，优先使用本地设备缓存，跳过云端频繁拉取；本地无设备时才触发云端解析
     if (isValid && miotConfig.isLoggedIn) {
       const activeMico = miotConfig.micoServiceToken || miotConfig.serviceToken;
       const activeMiot = miotConfig.miotServiceToken || miotConfig.xiaomiioServiceToken || miotConfig.serviceToken;
 
-      try {
-        const resolveResult = await xiaoaiResolverEngine.resolveDevices({
-          userId: miotConfig.userId,
-          micoServiceToken: activeMico || undefined,
-          miotServiceToken: activeMiot || undefined,
-          ssecurity: miotConfig.ssecurity,
-          existingDevices: deviceRepository.getAllDevices(),
-          activeStreamIps: Array.from(activeStreamIps)
-        });
-        if (resolveResult.xiaoAiDevices && resolveResult.xiaoAiDevices.length > 0) {
-          deviceRepository.setDevices(resolveResult.xiaoAiDevices);
-          ensureValidActiveDeviceId(miotConfig, (cfg) => saveMiotConfig(cfg));
-          saveMiotConfig(miotConfig);
-          console.log(`[Discovery] 启动成功恢复 ${deviceRepository.getAllDevices().length} 台小爱音箱`);
+      const cachedDevices = deviceRepository.getAllDevices();
+      if (cachedDevices && cachedDevices.length > 0) {
+        ensureValidActiveDeviceId(miotConfig, (cfg) => saveMiotConfig(cfg));
+        saveMiotConfig(miotConfig);
+        console.log(`[Discovery] 📁 启动加载优化：成功从本地磁盘缓存恢复 ${cachedDevices.length} 台小爱音箱（已跳过云端拉取）`);
+      } else {
+        try {
+          const resolveResult = await xiaoaiResolverEngine.resolveDevices({
+            userId: miotConfig.userId,
+            micoServiceToken: activeMico || undefined,
+            miotServiceToken: activeMiot || undefined,
+            ssecurity: miotConfig.ssecurity,
+            existingDevices: [],
+            activeStreamIps: Array.from(activeStreamIps)
+          });
+          if (resolveResult.xiaoAiDevices && resolveResult.xiaoAiDevices.length > 0) {
+            deviceRepository.setDevices(resolveResult.xiaoAiDevices);
+            ensureValidActiveDeviceId(miotConfig, (cfg) => saveMiotConfig(cfg));
+            saveMiotConfig(miotConfig);
+            console.log(`[Discovery] ☁️ 本地无缓存，首次启动从云端同步 ${deviceRepository.getAllDevices().length} 台小爱音箱`);
+          }
+        } catch (err: any) {
+          console.warn('[Discovery] 启动云端设备同步提醒:', err.message);
         }
-      } catch (err: any) {
-        console.warn('[Discovery] 启动云端设备同步提醒:', err.message);
       }
 
       if (activeMico) {
