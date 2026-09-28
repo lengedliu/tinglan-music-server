@@ -147,6 +147,7 @@ export const LibraryPagination: React.FC<LibraryPaginationProps> = ({
           <option value={30}>30 条/页</option>
           <option value={50}>50 条/页</option>
           <option value={100}>100 条/页</option>
+          <option value={200}>200 条/页</option>
         </select>
       </div>
     </div>

@@ -5,6 +5,7 @@ interface VirtualListProps<T> {
   itemHeight: number;
   overscan?: number;
   className?: string;
+  style?: React.CSSProperties;
   renderItem: (item: T, index: number) => React.ReactNode;
   emptyPlaceholder?: React.ReactNode;
   scrollRef?: React.RefObject<HTMLDivElement | null>;
@@ -15,6 +16,7 @@ export function VirtualList<T>({
   itemHeight,
   overscan = 5,
   className = '',
+  style,
   renderItem,
   emptyPlaceholder,
   scrollRef: externalScrollRef
@@ -35,29 +37,39 @@ export function VirtualList<T>({
     if (!el) return;
 
     const updateHeight = () => {
-      setContainerHeight(el.clientHeight || 600);
+      if (el.clientHeight > 0) {
+        setContainerHeight(el.clientHeight);
+      }
     };
 
     updateHeight();
     el.addEventListener('scroll', handleScroll, { passive: true });
     window.addEventListener('resize', updateHeight);
 
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => updateHeight());
+      ro.observe(el);
+    }
+
     return () => {
       el.removeEventListener('scroll', handleScroll);
       window.removeEventListener('resize', updateHeight);
+      if (ro) ro.disconnect();
     };
   }, [containerRef, handleScroll]);
 
   if (items.length === 0 && emptyPlaceholder) {
     return (
-      <div ref={containerRef as any} className={className}>
+      <div ref={containerRef as any} className={className} style={{ position: 'relative', ...style }}>
         {emptyPlaceholder}
       </div>
     );
   }
 
   const totalHeight = items.length * itemHeight;
-  const startIndex = Math.max(0, Math.floor(scrollTop / itemHeight) - overscan);
+  const safeScrollTop = Math.max(0, scrollTop);
+  const startIndex = Math.max(0, Math.floor(safeScrollTop / itemHeight) - overscan);
   const visibleCount = Math.ceil(containerHeight / itemHeight) + 2 * overscan;
   const endIndex = Math.min(items.length, startIndex + visibleCount);
 
@@ -68,7 +80,7 @@ export function VirtualList<T>({
     <div
       ref={containerRef as any}
       className={className}
-      style={{ overflowY: 'auto', position: 'relative' }}
+      style={{ overflowY: 'auto', position: 'relative', ...style }}
     >
       <div style={{ height: totalHeight, width: '100%', position: 'relative' }}>
         <div

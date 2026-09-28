@@ -2318,6 +2318,28 @@ export default function App() {
     return await res.json();
   };
 
+  const handleOpenUploadModal = useCallback(() => {
+    setIsUploadModalOpen(true);
+  }, []);
+
+  const handleOpenNavidromeModal = useCallback(() => {
+    setIsNavidromeModalOpen(true);
+  }, []);
+
+  const handleInspectSong = useCallback((song: Song) => {
+    setInspectorSong(song);
+  }, []);
+
+  const handleClearRecentHistoryInApp = useCallback(() => {
+    setSongs(prev => prev.map(s => ({ ...s, lastPlayedAt: undefined })));
+    setToastMessage({
+      id: Date.now(),
+      title: '已清空',
+      desc: '最近播放历史记录已成功清除',
+      type: 'success'
+    });
+  }, []);
+
   const isMandatoryAuth = Boolean(securityStatus?.authRequired && !user && !authToken);
 
   return (
@@ -2501,7 +2523,7 @@ export default function App() {
               onToggleFavorite={handleToggleFavorite}
               activeDevice={activeDevice}
               isCasting={isCasting}
-              onOpenUploadModal={() => setIsUploadModalOpen(true)}
+              onOpenUploadModal={handleOpenUploadModal}
               onScanMusicDir={handleScanMusicDir}
               isScanning={isScanning}
               onCreatePlaylist={handleCreatePlaylist}
@@ -2509,17 +2531,14 @@ export default function App() {
               onToggleSongInPlaylist={handleToggleSongInPlaylist}
               onDeletePlaylist={handleDeletePlaylist}
               onClearAllSongs={handleClearAllSongs}
-              onOpenNavidromeModal={() => setIsNavidromeModalOpen(true)}
+              onOpenNavidromeModal={handleOpenNavidromeModal}
               onBatchPlay={handleBatchPlay}
               onBatchCast={handleBatchCast}
               onBatchAddToQueue={handleBatchAddToQueue}
               onBatchAddToPlaylist={handleBatchAddToPlaylist}
               onBatchRemoveFromPlaylist={handleBatchRemoveFromPlaylist}
-              onInspectSong={(song) => setInspectorSong(song)}
-              onClearRecentHistory={() => {
-                setSongs(prev => prev.map(s => ({ ...s, lastPlayedAt: undefined })));
-                showToast('已清空', '最近播放历史记录已成功清除', 'success');
-              }}
+              onInspectSong={handleInspectSong}
+              onClearRecentHistory={handleClearRecentHistoryInApp}
             />
           )}
 

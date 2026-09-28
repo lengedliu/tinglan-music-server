@@ -96,7 +96,7 @@ export const SongRow: React.FC<SongRowProps> = memo(({
           }
         }}
         title={isBatchMode ? "点击选择/取消选择此歌曲" : (isCurrent ? "当前正在播放（双击可重新播放）" : "单击选中歌曲，双击开始播放")}
-        className={`group flex items-center justify-between px-3 sm:px-6 py-2.5 sm:py-3.5 transition-all duration-150 cursor-pointer select-none outline-none ${
+        className={`group flex items-center justify-between px-3 sm:px-6 h-[72px] box-border transition-all duration-150 cursor-pointer select-none outline-none ${
           isBatchChecked
             ? 'bg-cyan-500/10 hover:bg-cyan-500/15 border-l-2 border-l-cyan-400'
             : isSelected 
@@ -357,21 +357,23 @@ export const SongRow: React.FC<SongRowProps> = memo(({
       </div>
     </div>
 
-    {/* Mobile Song Action Bottom Sheet */}
-    <SongActionSheet
-      isOpen={isActionSheetOpen}
-      onClose={() => setIsActionSheetOpen(false)}
-      song={song}
-      activeDevice={activeDevice}
-      isSongCasting={isSongCasting}
-      selectedPlaylistId={selectedPlaylistId}
-      onPlaySong={onPlaySong}
-      onCastSongToXiaomi={onCastSongToXiaomi}
-      onToggleFavorite={onToggleFavorite}
-      onAddToPlaylist={onAddToPlaylist}
-      onToggleSongInPlaylist={onToggleSongInPlaylist}
-      onInspectSong={onInspectSong}
-    />
+    {/* Mobile Song Action Bottom Sheet - only mounted on demand to save DOM overhead */}
+    {isActionSheetOpen && (
+      <SongActionSheet
+        isOpen={isActionSheetOpen}
+        onClose={() => setIsActionSheetOpen(false)}
+        song={song}
+        activeDevice={activeDevice}
+        isSongCasting={isSongCasting}
+        selectedPlaylistId={selectedPlaylistId}
+        onPlaySong={onPlaySong}
+        onCastSongToXiaomi={onCastSongToXiaomi}
+        onToggleFavorite={onToggleFavorite}
+        onAddToPlaylist={onAddToPlaylist}
+        onToggleSongInPlaylist={onToggleSongInPlaylist}
+        onInspectSong={onInspectSong}
+      />
+    )}
   </>
   );
 });
