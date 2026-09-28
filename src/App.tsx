@@ -68,7 +68,7 @@ export default function App() {
     } catch {}
   }, [activeTab]);
 
-  // Music state
+  // Music state & Suspended Session for Radio/Podcast
   const [songs, setSongs] = useState<Song[]>(INITIAL_SONGS);
   const [playQueue, setPlayQueue] = useState<Song[]>(() => {
     try {
@@ -82,6 +82,10 @@ export default function App() {
     }
     return INITIAL_SONGS;
   });
+  // Preserved Music Queue state when interrupted by Live Radio or Podcast
+  const [savedMusicQueue, setSavedMusicQueue] = useState<Song[] | null>(null);
+  const [savedMusicSong, setSavedMusicSong] = useState<Song | null>(null);
+  const [savedMusicTime, setSavedMusicTime] = useState<number>(0);
   const [playlists, setPlaylists] = useState<Playlist[]>(INITIAL_PLAYLISTS);
   const [currentSong, setCurrentSong] = useState<Song | null>(() => {
     try {
@@ -1137,6 +1141,88 @@ export default function App() {
       handlePlaySong(startSong, targetSongs);
       showToast('开始播放列表全部', `已将 ${targetSongs.length} 首歌曲载入播放队列`, 'success');
     }
+  };
+
+  const handlePlayRadioOrPodcast = (mediaItem: Song, targetSpeaker?: XiaomiDevice) => {
+    // 1. Snapshot current music queue and current song if we were playing music
+    const isCurrentRadio = Boolean(
+      currentSong && (
+        currentSong.url?.includes('/api/radio/') ||
+        currentSong.id?.startsWith('st_') ||
+        currentSong.id?.startsWith('ep_') ||
+        currentSong.id?.startsWith('radio_') ||
+        currentSong.album === '网络广播/播客' ||
+        currentSong.album === 'RADIO' ||
+        currentSong.album === 'PODCAST'
+      )
+    );
+
+    if (!isCurrentRadio && playQueue.length > 0) {
+      setSavedMusicQueue(playQueue);
+      setSavedMusicSong(currentSong);
+      setSavedMusicTime(timeActions.getCurrentTime());
+    }
+
+    // 2. Unlock Web Audio API context if present
+    if ((window as any).__tinglanAudioCtx && (window as any).__tinglanAudioCtx.state === 'suspended') {
+      (window as any).__tinglanAudioCtx.resume().catch(() => {});
+    }
+
+    setCurrentSong(mediaItem);
+    timeActions.setCurrentTime(0);
+    timeActions.setDuration(mediaItem.duration || 0);
+
+    // 3. Keep playQueue pristine: do NOT pollute music queue with radio stream!
+    // If playQueue doesn't have saved snapshot yet, save it now before replacing or isolate it
+    if (targetSpeaker) {
+      setIsCasting(true);
+      if (audioRef.current) audioRef.current.pause();
+      setIsPlaying(true);
+      castSongToDevice(mediaItem, targetSpeaker);
+    } else {
+      setIsCasting(false);
+      const playSrc = mediaItem.url;
+      const isHlsStream = /\.m3u8($|\?)/i.test(playSrc);
+
+      if (audioRef.current) {
+        audioRef.current.volume = volume;
+        audioRef.current.src = playSrc;
+        audioRef.current.currentTime = 0;
+        audioRef.current.play().then(() => {
+          setIsPlaying(true);
+        }).catch((e) => {
+          console.warn('Radio/Podcast audio play request error:', e);
+          setIsPlaying(true);
+        });
+      }
+    }
+  };
+
+  const handleRestoreMusicQueue = () => {
+    if (!savedMusicQueue || savedMusicQueue.length === 0) {
+      if (songs.length > 0) {
+        handlePlaySong(songs[0], songs);
+        showToast('恢复音乐播放', '已从音乐库开始播放', 'info');
+      }
+      return;
+    }
+
+    const songToResume = savedMusicSong && savedMusicQueue.some(s => s.id === savedMusicSong.id)
+      ? savedMusicSong
+      : savedMusicQueue[0];
+
+    setPlayQueue(savedMusicQueue);
+    handlePlaySong(songToResume, savedMusicQueue);
+
+    if (savedMusicTime > 0) {
+      setTimeout(() => {
+        handleSeek(savedMusicTime);
+      }, 300);
+    }
+
+    showToast('已恢复音乐歌单', `已无缝切回音乐队列 (${savedMusicQueue.length} 首): ${songToResume.title}`, 'success');
+    setSavedMusicQueue(null);
+    setSavedMusicSong(null);
   };
 
   const handleCastAllToXiaomi = (targetSongs: Song[]) => {
@@ -2550,10 +2636,8 @@ export default function App() {
               isPlaying={isPlaying}
               isCasting={isCasting}
               onPlaySongInBrowser={(song) => {
-                setIsCasting(false);
-                if (audioRef.current) audioRef.current.pause();
-                handlePlaySong(song);
-                showToast('播放在线广播/播客', `正在网页播放: ${song.title}`, 'info');
+                handlePlayRadioOrPodcast(song);
+                showToast('播放在线广播/播客', `正在独立通道播放: ${song.title}（音乐歌单已在后台妥善暂存）`, 'info');
               }}
               onCastToSpeaker={(deviceId, title, artist, audioUrl, coverUrl) => {
                 const targetDev = devices.find(d => d.did === deviceId) || activeDevice;
@@ -2570,14 +2654,13 @@ export default function App() {
                   id: `radio_${Date.now()}`,
                   title,
                   artist,
-                  album: '网络广播/播客',
+                  album: audioUrl.includes('/api/radio/stream') ? 'RADIO' : 'PODCAST',
                   duration: 0,
                   url: fullAudioUrl,
                   filePath: fullAudioUrl,
                   coverUrl
                 };
-                if (audioRef.current) audioRef.current.pause();
-                castSongToDevice(payload, targetDev);
+                handlePlayRadioOrPodcast(payload, targetDev);
               }}
             />
           )}
@@ -2786,6 +2869,8 @@ export default function App() {
           onCycleRepeat={handleCycleRepeat}
           onNext={handleNextSong}
           onPrev={handlePrevSong}
+          onRestoreMusic={handleRestoreMusicQueue}
+          savedMusicQueueCount={savedMusicQueue ? savedMusicQueue.length : 0}
         />
 
         {/* Subsonic & OpenSubsonic Gateway Dashboard Modal */}

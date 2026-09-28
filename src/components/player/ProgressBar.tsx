@@ -31,7 +31,27 @@ export const ProgressBar: React.FC<ProgressBarProps> = memo(({
     onSeek(percentage * duration);
   };
 
+  const isRadio = Boolean(
+    currentSong && (
+      currentSong.url?.includes('/api/radio/stream') ||
+      currentSong.id?.startsWith('st_') ||
+      currentSong.id?.startsWith('radio_') ||
+      currentSong.album === 'RADIO'
+    )
+  );
+
   const progressPercent = (currentSong && duration > 0) ? (currentTime / duration) * 100 : 0;
+
+  if (isRadio) {
+    return (
+      <div 
+        className="w-full h-1 bg-amber-950/40 relative overflow-hidden"
+        title="网络电台实时流（不支持快进/倒退）"
+      >
+        <div className="h-full w-full bg-gradient-to-r from-amber-500 via-orange-400 to-amber-300 animate-pulse shadow-[0_0_10px_rgba(245,158,11,0.8)]" />
+      </div>
+    );
+  }
 
   return (
     <div 

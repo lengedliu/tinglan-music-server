@@ -23,6 +23,8 @@ interface PlayQueueDrawerProps {
   onNext?: () => void;
   onPrev?: () => void;
   onDeviceChange?: (device: XiaomiDevice) => void;
+  onRestoreMusic?: () => void;
+  savedMusicQueueCount?: number;
 }
 
 export const PlayQueueDrawer: React.FC<PlayQueueDrawerProps> = ({
@@ -43,9 +45,23 @@ export const PlayQueueDrawer: React.FC<PlayQueueDrawerProps> = ({
   onNext,
   onPrev,
   onDeviceChange,
+  onRestoreMusic,
+  savedMusicQueueCount = 0
 }) => {
   const { themeConfig, isLight: ctxIsLight } = useTheme();
   const isLight = Boolean(ctxIsLight ?? themeConfig?.isLight);
+
+  const isCurrentRadioOrPodcast = Boolean(
+    currentSong && (
+      currentSong.url?.includes('/api/radio/') ||
+      currentSong.id?.startsWith('st_') ||
+      currentSong.id?.startsWith('ep_') ||
+      currentSong.id?.startsWith('radio_') ||
+      currentSong.album === '网络广播/播客' ||
+      currentSong.album === 'RADIO' ||
+      currentSong.album === 'PODCAST'
+    )
+  );
 
   const [showHandover, setShowHandover] = useState(false);
   const [candidates, setCandidates] = useState<any[]>([]);
@@ -236,6 +252,35 @@ export const PlayQueueDrawer: React.FC<PlayQueueDrawerProps> = ({
                   </button>
                 ))}
               </div>
+            )}
+          </div>
+        )}
+
+        {/* Radio/Podcast Isolated Session Notice with One-Click Resume Music */}
+        {isCurrentRadioOrPodcast && (
+          <div className={`px-5 py-3 border-b flex items-center justify-between gap-3 text-xs animate-in fade-in duration-150 ${
+            isLight ? 'bg-amber-500/10 border-amber-500/20 text-amber-900' : 'bg-amber-500/15 border-amber-500/30 text-amber-200'
+          }`}>
+            <div className="flex items-center gap-2 min-w-0">
+              <Radio className="w-4 h-4 text-amber-500 shrink-0 animate-pulse" />
+              <div className="min-w-0">
+                <span className="font-bold block truncate">
+                  当前处于【{currentSong?.album === 'PODCAST' ? '播客单集' : '网络电台'}】独占通道
+                </span>
+                <span className="text-[11px] opacity-80 truncate block">
+                  下方音乐歌单已在后台妥善暂存，互不干扰
+                </span>
+              </div>
+            </div>
+            {onRestoreMusic && (
+              <button
+                onClick={onRestoreMusic}
+                className="px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-zinc-950 font-bold shrink-0 text-xs shadow-md transition active:scale-95 cursor-pointer flex items-center gap-1"
+                title="立即恢复原音乐歌单继续播放"
+              >
+                <Play className="w-3 h-3 fill-current" />
+                <span>恢复歌单{savedMusicQueueCount > 0 ? ` (${savedMusicQueueCount})` : ''}</span>
+              </button>
             )}
           </div>
         )}

@@ -167,6 +167,7 @@ export const PlayerBar: React.FC<PlayerBarProps> = memo(({
             onPrev={onPrev}
             onToggleShuffle={onToggleShuffle}
             onCycleRepeat={onCycleRepeat}
+            onSeek={onSeek}
           />
 
           {/* Right: Action Buttons (Cast, EQ, Queue, Speed, Sleep, Shortcuts, Vinyl, Multiroom) & Volume Slider */}

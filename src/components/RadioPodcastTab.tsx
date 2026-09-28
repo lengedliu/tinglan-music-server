@@ -417,7 +417,7 @@ export const RadioPodcastTab: React.FC<RadioPodcastTabProps> = ({
                 </span>
               </h2>
               <p className="text-xs text-zinc-400 mt-0.5">
-                实时解构 AAC/M3U8 广播音频流，聚合全球播客 RSS 节点，一键无缝无损投播至小爱音箱集群
+                实时解构 AAC/M3U8 广播音频流，聚合全球播客 RSS 节点。独立通道播控，不打乱音乐队列，支持一键无损投播
               </p>
             </div>
           </div>

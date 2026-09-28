@@ -90,9 +90,27 @@ export const MobileMiniPlayer: React.FC<MobileMiniPlayerProps> = memo(({
   const playbackTime = usePlaybackTime();
   const [isActionsSheetOpen, setIsActionsSheetOpen] = useState(false);
 
+  const isRadio = Boolean(
+    currentSong && (
+      currentSong.url?.includes('/api/radio/stream') ||
+      currentSong.id?.startsWith('st_') ||
+      currentSong.id?.startsWith('radio_') ||
+      currentSong.album === 'RADIO'
+    )
+  );
+
+  const isPodcast = Boolean(
+    currentSong && (
+      currentSong.url?.includes('/api/radio/proxy') ||
+      currentSong.id?.startsWith('ep_') ||
+      currentSong.album === '网络广播/播客' ||
+      currentSong.album === 'PODCAST'
+    )
+  );
+
   const currentTime = propCurrentTime !== undefined ? propCurrentTime : playbackTime.currentTime;
   const duration = (propDuration !== undefined ? propDuration : playbackTime.duration) || currentSong?.duration || 200;
-  const progressPercent = duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0;
+  const progressPercent = isRadio ? 100 : (duration > 0 ? Math.min(100, Math.max(0, (currentTime / duration) * 100)) : 0);
 
   return (
     <>
@@ -107,8 +125,12 @@ export const MobileMiniPlayer: React.FC<MobileMiniPlayerProps> = memo(({
         {/* Top 2px micro progress bar */}
         <div className="w-full h-0.5 bg-zinc-700/30 overflow-hidden relative">
           <div 
-            className="h-full bg-gradient-to-r from-[#FF6700] to-orange-400 transition-all duration-150"
-            style={{ width: `${progressPercent}%` }}
+            className={`h-full transition-all duration-150 ${
+              isRadio 
+                ? 'w-full bg-gradient-to-r from-amber-500 via-orange-400 to-amber-300 animate-pulse' 
+                : 'bg-gradient-to-r from-[#FF6700] to-orange-400'
+            }`}
+            style={{ width: isRadio ? '100%' : `${progressPercent}%` }}
           />
         </div>
 
@@ -148,17 +170,26 @@ export const MobileMiniPlayer: React.FC<MobileMiniPlayerProps> = memo(({
                 <span className="text-xs font-bold truncate">
                   {currentSong ? currentSong.title : '听澜音乐中枢'}
                 </span>
-                {isCasting && (
+                {isRadio ? (
+                  <span className="text-[9px] px-1 py-0.2 rounded font-bold bg-amber-500/20 text-amber-400 border border-amber-500/40 shrink-0 flex items-center gap-0.5">
+                    <span className="w-1 h-1 rounded-full bg-amber-400 animate-pulse" />
+                    LIVE
+                  </span>
+                ) : isPodcast ? (
+                  <span className="text-[9px] px-1 py-0.2 rounded font-bold bg-cyan-500/20 text-cyan-400 border border-cyan-500/40 shrink-0">
+                    播客
+                  </span>
+                ) : isCasting ? (
                   <span className="text-[9px] px-1 py-0.2 rounded font-bold bg-[#FF6700]/20 text-[#FF6700] border border-[#FF6700]/40 shrink-0">
                     小爱
                   </span>
-                )}
+                ) : null}
               </div>
               <div className="text-[10px] text-zinc-400 truncate flex items-center gap-1 mt-0.5">
                 <span className="truncate">
                   {currentSong ? currentSong.artist : '点选曲库歌曲开始播放'}
                 </span>
-                {currentSong?.bitrate?.includes('FLAC') && (
+                {currentSong?.bitrate?.includes('FLAC') && !isRadio && (
                   <span className="text-[9px] font-mono text-cyan-400 font-bold shrink-0">
                     · Hi-Res
                   </span>
@@ -180,9 +211,11 @@ export const MobileMiniPlayer: React.FC<MobileMiniPlayerProps> = memo(({
               <div className={`w-8 h-8 rounded-full flex items-center justify-center shadow-md ${
                 !currentSong
                   ? 'bg-zinc-800 text-zinc-400'
-                  : isLight
-                    ? 'bg-zinc-900 text-white'
-                    : 'bg-white text-zinc-950'
+                  : isRadio
+                    ? 'bg-amber-400 text-zinc-950 shadow-[0_0_12px_rgba(251,191,36,0.5)]'
+                    : isLight
+                      ? 'bg-zinc-900 text-white'
+                      : 'bg-white text-zinc-950'
               }`}>
                 {isPlaying ? (
                   <Pause className="w-4 h-4 fill-current" />
@@ -192,21 +225,23 @@ export const MobileMiniPlayer: React.FC<MobileMiniPlayerProps> = memo(({
               </div>
             </button>
 
-            {/* Next Track Button */}
-            <button
-              id="btn-mobile-next-track"
-              type="button"
-              onClick={onNext}
-              disabled={!currentSong}
-              aria-label="下一首"
-              className={`min-w-[44px] min-h-[44px] flex items-center justify-center cursor-pointer active:scale-90 transition-transform ${
-                !currentSong 
-                  ? 'text-zinc-600 opacity-40 cursor-not-allowed' 
-                  : isLight ? 'text-zinc-700 hover:text-zinc-950' : 'text-zinc-300 hover:text-white'
-              }`}
-            >
-              <SkipForward className="w-5 h-5 fill-current" />
-            </button>
+            {/* Next Track / Skip Forward Button */}
+            {!isRadio && (
+              <button
+                id="btn-mobile-next-track"
+                type="button"
+                onClick={onNext}
+                disabled={!currentSong}
+                aria-label={isPodcast ? "快进15秒" : "下一首"}
+                className={`min-w-[44px] min-h-[44px] flex items-center justify-center cursor-pointer active:scale-90 transition-transform ${
+                  !currentSong 
+                    ? 'text-zinc-600 opacity-40 cursor-not-allowed' 
+                    : isLight ? 'text-zinc-700 hover:text-zinc-950' : 'text-zinc-300 hover:text-white'
+                }`}
+              >
+                <SkipForward className="w-5 h-5 fill-current" />
+              </button>
+            )}
 
             {/* More Advanced Controls Button (Opens Sheet) */}
             <button

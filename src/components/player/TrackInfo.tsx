@@ -25,11 +25,19 @@ export const TrackInfo: React.FC<TrackInfoProps> = memo(({
 
   const isRadio = Boolean(
     currentSong && (
-      currentSong.url?.includes('/api/radio/') ||
-      currentSong.id?.startsWith('radio_') ||
+      currentSong.url?.includes('/api/radio/stream') ||
       currentSong.id?.startsWith('st_') ||
-      currentSong.album === '网络广播/播客' ||
+      currentSong.id?.startsWith('radio_') ||
       currentSong.album === 'RADIO'
+    )
+  );
+
+  const isPodcast = Boolean(
+    currentSong && (
+      currentSong.url?.includes('/api/radio/proxy') ||
+      currentSong.id?.startsWith('ep_') ||
+      currentSong.album === '网络广播/播客' ||
+      currentSong.album === 'PODCAST'
     )
   );
 
@@ -126,6 +134,11 @@ export const TrackInfo: React.FC<TrackInfoProps> = memo(({
             <span className="text-[10px] font-bold border border-amber-500/40 bg-amber-500/10 text-amber-400 rounded px-1.5 py-0.5 leading-none font-mono flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
               LIVE 电台
+            </span>
+          ) : isPodcast ? (
+            <span className="text-[10px] font-bold border border-cyan-500/40 bg-cyan-500/10 text-cyan-400 rounded px-1.5 py-0.5 leading-none font-mono flex items-center gap-1">
+              <Mic2 className="w-2.5 h-2.5" />
+              播客单集
             </span>
           ) : (
             <button
