@@ -1361,6 +1361,8 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
           id: cleanSongId,
           title: songTitle || matchedSong?.title || '未知曲目',
           artist: songArtist || matchedSong?.artist || '未知歌手',
+          album: req.body.album || matchedSong?.album || (resolvedStreamUrl.includes('/api/radio/') ? 'RADIO' : undefined),
+          coverUrl: req.body.coverUrl || matchedSong?.coverUrl,
           duration: duration || matchedSong?.duration || 180,
           url: resolvedStreamUrl
         };

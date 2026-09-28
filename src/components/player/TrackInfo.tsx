@@ -26,9 +26,11 @@ export const TrackInfo: React.FC<TrackInfoProps> = memo(({
   const isRadio = Boolean(
     currentSong && (
       currentSong.url?.includes('/api/radio/stream') ||
+      currentSong.url?.includes('/api/radio/') ||
       currentSong.id?.startsWith('st_') ||
       currentSong.id?.startsWith('radio_') ||
-      currentSong.album === 'RADIO'
+      currentSong.album === 'RADIO' ||
+      currentSong.genre === '网络电台'
     )
   );
 

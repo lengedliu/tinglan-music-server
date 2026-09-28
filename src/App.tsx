@@ -1424,6 +1424,8 @@ export default function App() {
         songId: song.id,
         songTitle: song.title,
         songArtist: song.artist,
+        coverUrl: song.coverUrl,
+        album: song.album,
         duration: song.duration,
         streamUrl,
         queue: queueToSend,

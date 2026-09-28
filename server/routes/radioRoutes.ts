@@ -5,6 +5,7 @@ import { deviceRepository } from '../core/repositories/deviceRepository.js';
 import { xiaomiAdapter } from '../xiaomi/xiaomiAdapter.js';
 import { sendMiioCommand, callMinaCloudApi, addCastLog } from '../xiaomi/miotService.js';
 import { isSafeRemoteStreamUrl } from '../core/security.js';
+import { queueEngine } from '../core/queueEngine.js';
 
 export interface RadioRouterOptions {
   getMiotConfig: () => any;
@@ -294,6 +295,21 @@ export function createRadioRouter(options: RadioRouterOptions): Router {
       );
 
       if (castResult.success) {
+        const radioSongObj = {
+          id: `radio_${Date.now()}`,
+          title: title || '网络电台直播流',
+          artist: artist || '广播播客',
+          album: finalAudioUrl.includes('/api/radio/stream') ? 'RADIO' : 'PODCAST',
+          coverUrl,
+          duration: 0,
+          url: finalAudioUrl
+        };
+        try {
+          queueEngine.syncCurrentSong(radioSongObj as any, targetDevice.did, [radioSongObj as any], targetDevice.name);
+        } catch (qErr: any) {
+          console.warn('[RadioCast] Queue sync failed:', qErr.message);
+        }
+
         addCastLog({
           id: `log_radio_${Date.now()}`,
           timestamp: new Date().toLocaleTimeString(),

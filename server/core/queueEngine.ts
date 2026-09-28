@@ -99,9 +99,16 @@ export class QueueEngine extends EventEmitter {
   public isLiveStream(song?: Song | null): boolean {
     if (!song) return false;
     if (song.isLiveStream) return true;
-    if (typeof song.id === 'string' && (song.id.startsWith('station_') || song.id.includes('station_'))) return true;
-    if (song.genre === '网络电台' || song.genre === 'Live Radio' || song.album === '网络电台') return true;
-    if (typeof song.url === 'string' && (song.url.includes('.m3u8') || song.url.includes('/api/radio/stream/'))) return true;
+    if (typeof song.id === 'string' && (
+      song.id.startsWith('station_') ||
+      song.id.startsWith('radio_') ||
+      song.id.startsWith('st_') ||
+      song.id.startsWith('ep_') ||
+      song.id.includes('station_') ||
+      song.id.includes('radio_')
+    )) return true;
+    if (song.genre === '网络电台' || song.genre === 'Live Radio' || song.album === '网络电台' || song.album === 'RADIO' || song.album === 'PODCAST') return true;
+    if (typeof song.url === 'string' && (song.url.includes('.m3u8') || song.url.includes('/api/radio/'))) return true;
     return false;
   }
 
@@ -193,21 +200,31 @@ export class QueueEngine extends EventEmitter {
     this.clearTimer();
     this.isTransitioning = false;
 
+    const isLive = this.isLiveStream(song);
     const songs = allSongs && allSongs.length > 0 ? allSongs : (this.songProvider ? this.songProvider() : []);
-    if (songs.length > 0) {
+
+    if (isLive) {
+      // 网络电台 / 播客直播流应当单独作为单一的当前项目播放，不干扰或被音乐歌单覆盖
+      this.queue = [song];
+      this.currentIndex = 0;
+    } else if (songs.length > 0) {
       this.queue = [...songs];
       const cleanSongId = (song.id || '').replace(/\.(mp3|flac|wav|m4a|aac|ogg|opus)$/i, '');
       const matchIdx = this.queue.findIndex(s => {
         const cleanS = (s.id || '').replace(/\.(mp3|flac|wav|m4a|aac|ogg|opus)$/i, '');
         return cleanS === cleanSongId || s.id === song.id || s.title === song.title;
       });
-      this.currentIndex = matchIdx >= 0 ? matchIdx : 0;
+      if (matchIdx >= 0) {
+        this.currentIndex = matchIdx;
+      } else {
+        this.queue = [song, ...songs];
+        this.currentIndex = 0;
+      }
     } else {
       this.queue = [song];
       this.currentIndex = 0;
     }
 
-    const isLive = this.isLiveStream(song);
     this.isPlaying = true;
     this.currentSongStarted = false;
     this.songStartTime = Date.now();
