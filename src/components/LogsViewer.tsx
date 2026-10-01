@@ -227,17 +227,45 @@ export const LogsViewer: React.FC = () => {
   };
 
   const categoryBadges = {
-    cast: { label: '📡 投播/流诊断', bg: 'bg-sky-500/10 text-sky-400 border-sky-500/30' },
-    audit: { label: '🛡️ 安全/操作审计', bg: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' },
-    automation: { label: '⚙️ 自动化调度', bg: 'bg-amber-500/10 text-amber-400 border-amber-500/30' },
-    system: { label: '💻 系统核心', bg: 'bg-purple-500/10 text-purple-400 border-purple-500/30' }
+    cast: { 
+      label: '📡 投播/流诊断', 
+      bg: isLight ? 'bg-sky-50 text-sky-700 border-sky-200' : 'bg-sky-500/10 text-sky-400 border-sky-500/30' 
+    },
+    audit: { 
+      label: '🛡️ 安全/操作审计', 
+      bg: isLight ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' 
+    },
+    automation: { 
+      label: '⚙️ 自动化调度', 
+      bg: isLight ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-amber-500/10 text-amber-400 border-amber-500/30' 
+    },
+    system: { 
+      label: '💻 系统核心', 
+      bg: isLight ? 'bg-purple-50 text-purple-700 border-purple-200' : 'bg-purple-500/10 text-purple-400 border-purple-500/30' 
+    }
   };
 
   const levelBadges = {
-    info: { label: 'INFO', icon: <Info className="w-3.5 h-3.5 text-blue-400" />, badge: 'text-blue-400 bg-blue-500/10 border-blue-500/30' },
-    warn: { label: 'WARN', icon: <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />, badge: 'text-amber-400 bg-amber-500/10 border-amber-500/30' },
-    error: { label: 'ERROR', icon: <XCircle className="w-3.5 h-3.5 text-rose-400" />, badge: 'text-rose-400 bg-rose-500/10 border-rose-500/30' },
-    debug: { label: 'DEBUG', icon: <Terminal className="w-3.5 h-3.5 text-zinc-400" />, badge: 'text-zinc-400 bg-zinc-500/10 border-zinc-500/30' }
+    info: { 
+      label: 'INFO', 
+      icon: <Info className="w-3.5 h-3.5" />, 
+      badge: isLight ? 'text-blue-700 bg-blue-50 border-blue-200' : 'text-blue-400 bg-blue-500/10 border-blue-500/30' 
+    },
+    warn: { 
+      label: 'WARN', 
+      icon: <AlertTriangle className="w-3.5 h-3.5" />, 
+      badge: isLight ? 'text-amber-700 bg-amber-50 border-amber-200' : 'text-amber-400 bg-amber-500/10 border-amber-500/30' 
+    },
+    error: { 
+      label: 'ERROR', 
+      icon: <XCircle className="w-3.5 h-3.5" />, 
+      badge: isLight ? 'text-rose-700 bg-rose-50 border-rose-200' : 'text-rose-400 bg-rose-500/10 border-rose-500/30' 
+    },
+    debug: { 
+      label: 'DEBUG', 
+      icon: <Terminal className="w-3.5 h-3.5" />, 
+      badge: isLight ? 'text-zinc-700 bg-zinc-100 border-zinc-200' : 'text-zinc-400 bg-zinc-500/10 border-zinc-500/30' 
+    }
   };
 
   return (
@@ -267,29 +295,35 @@ export const LogsViewer: React.FC = () => {
       )}
 
       {/* Header Title & Mode Switcher */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-white/10 pb-3.5">
+      <div className={`flex flex-col md:flex-row md:items-center justify-between gap-3 border-b pb-3.5 ${
+        isLight ? 'border-zinc-200' : 'border-white/10'
+      }`}>
         <div>
-          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white flex items-center gap-2.5 flex-wrap">
+          <h1 className={`text-xl sm:text-2xl font-bold tracking-tight flex items-center gap-2.5 flex-wrap ${
+            isLight ? 'text-zinc-900' : 'text-white'
+          }`}>
             <Terminal className="w-6 h-6" style={{ color: themeConfig.primaryColor }} />
             <span>全链路诊断与日志中心</span>
-            <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-medium flex items-center gap-1.5" title="SQLite 3 (WASM) 数据库持久化存储与 B-Tree 索引加速">
-              <Database className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 font-medium flex items-center gap-1.5" title="SQLite 3 (WASM) 数据库持久化存储与 B-Tree 索引加速">
+              <Database className="w-3.5 h-3.5 text-emerald-500" />
               <span>SQLite 3 数据库驱动已生效 {stats.totalPersisted ? `(${stats.totalPersisted} 条持久化)` : ''}</span>
             </span>
           </h1>
-          <p className="text-xs text-zinc-400 mt-0.5">
+          <p className={`text-xs mt-0.5 ${isLight ? 'text-zinc-500' : 'text-zinc-400'}`}>
             融合全链路 SSE 诊断日志流、FFmpeg 转码信号量保护池、缓存 LRU 清理与智能音箱握手归因
           </p>
         </div>
 
         {/* View Mode Switcher Buttons */}
-        <div className="flex items-center gap-1.5 bg-zinc-900/90 p-1.5 rounded-2xl border border-white/10 backdrop-blur-md shrink-0">
+        <div className={`flex items-center gap-1.5 p-1.5 rounded-2xl border backdrop-blur-md shrink-0 ${
+          isLight ? 'bg-zinc-100 border-zinc-200' : 'bg-zinc-900/90 border-white/10'
+        }`}>
           <button
             onClick={() => setViewMode('stream')}
             className={`flex items-center gap-2 px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
               viewMode === 'stream'
                 ? 'bg-emerald-500 text-zinc-950 shadow-md'
-                : 'text-zinc-400 hover:text-white hover:bg-white/5'
+                : isLight ? 'text-zinc-600 hover:text-zinc-900 hover:bg-white/60' : 'text-zinc-400 hover:text-white hover:bg-white/5'
             }`}
           >
             <Activity className="w-4 h-4" />
@@ -304,7 +338,7 @@ export const LogsViewer: React.FC = () => {
             className={`flex items-center gap-2 px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
               viewMode === 'speaker_terminal'
                 ? 'bg-emerald-500 text-zinc-950 shadow-md'
-                : 'text-zinc-400 hover:text-white hover:bg-white/5'
+                : isLight ? 'text-zinc-600 hover:text-zinc-900 hover:bg-white/60' : 'text-zinc-400 hover:text-white hover:bg-white/5'
             }`}
           >
             <HardDrive className="w-4 h-4" />
@@ -317,15 +351,17 @@ export const LogsViewer: React.FC = () => {
       {viewMode === 'stream' && (
         <div className="space-y-3">
           {/* Action Toolbar */}
-          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 bg-zinc-900/60 p-2 rounded-2xl border border-white/5 backdrop-blur-md">
+          <div className={`flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 p-2 rounded-2xl border backdrop-blur-md transition-colors ${
+            isLight ? 'bg-white/90 border-zinc-200 shadow-sm' : 'bg-zinc-900/60 border-white/5'
+          }`}>
             {/* Category Buttons */}
             <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
               <button
                 onClick={() => setActiveCategory('all')}
                 className={`px-3.5 py-1.5 rounded-xl text-xs font-medium transition whitespace-nowrap cursor-pointer ${
                   activeCategory === 'all'
-                    ? 'bg-zinc-800 text-white shadow-sm border border-zinc-700'
-                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
+                    ? isLight ? 'bg-zinc-900 text-white shadow-sm' : 'bg-zinc-800 text-white shadow-sm border border-zinc-700'
+                    : isLight ? 'text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
                 }`}
               >
                 全部 ({stats.total})
@@ -334,33 +370,33 @@ export const LogsViewer: React.FC = () => {
                 onClick={() => setActiveCategory('cast')}
                 className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-medium transition whitespace-nowrap cursor-pointer ${
                   activeCategory === 'cast'
-                    ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40'
-                    : 'text-zinc-400 hover:text-sky-400 hover:bg-zinc-800/50'
+                    ? isLight ? 'bg-sky-50 text-sky-700 border border-sky-300 font-semibold' : 'bg-sky-500/20 text-sky-300 border border-sky-500/40'
+                    : isLight ? 'text-zinc-600 hover:text-sky-600 hover:bg-sky-50/50' : 'text-zinc-400 hover:text-sky-400 hover:bg-zinc-800/50'
                 }`}
               >
-                <Radio className="w-3.5 h-3.5 text-sky-400" />
+                <Radio className="w-3.5 h-3.5 text-sky-500" />
                 <span>投播与流诊断 ({stats.cast})</span>
               </button>
               <button
                 onClick={() => setActiveCategory('audit')}
                 className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-medium transition whitespace-nowrap cursor-pointer ${
                   activeCategory === 'audit'
-                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                    : 'text-zinc-400 hover:text-emerald-400 hover:bg-zinc-800/50'
+                    ? isLight ? 'bg-emerald-50 text-emerald-700 border border-emerald-300 font-semibold' : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                    : isLight ? 'text-zinc-600 hover:text-emerald-600 hover:bg-emerald-50/50' : 'text-zinc-400 hover:text-emerald-400 hover:bg-zinc-800/50'
                 }`}
               >
-                <Shield className="w-3.5 h-3.5 text-emerald-400" />
+                <Shield className="w-3.5 h-3.5 text-emerald-500" />
                 <span>安全审计 ({stats.audit})</span>
               </button>
               <button
                 onClick={() => setActiveCategory('automation')}
                 className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-medium transition whitespace-nowrap cursor-pointer ${
                   activeCategory === 'automation'
-                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                    : 'text-zinc-400 hover:text-amber-400 hover:bg-zinc-800/50'
+                    ? isLight ? 'bg-amber-50 text-amber-700 border border-amber-300 font-semibold' : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                    : isLight ? 'text-zinc-600 hover:text-amber-600 hover:bg-amber-50/50' : 'text-zinc-400 hover:text-amber-400 hover:bg-zinc-800/50'
                 }`}
               >
-                <Cpu className="w-3.5 h-3.5 text-amber-400" />
+                <Cpu className="w-3.5 h-3.5 text-amber-500" />
                 <span>自动化调度 ({stats.automation})</span>
               </button>
             </div>
@@ -371,18 +407,20 @@ export const LogsViewer: React.FC = () => {
                 onClick={() => setAutoScroll(!autoScroll)}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer ${
                   autoScroll
-                    ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40'
-                    : 'bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-700'
+                    ? isLight ? 'bg-emerald-50 text-emerald-700 border-emerald-300 font-semibold' : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/40'
+                    : isLight ? 'bg-zinc-100 text-zinc-700 border-zinc-200 hover:bg-zinc-200' : 'bg-zinc-800 text-zinc-300 border-zinc-700 hover:bg-zinc-700'
                 }`}
                 title={autoScroll ? '实时流模式 (新日志将自动展示)' : '已暂停自动更新'}
               >
-                {autoScroll ? <Play className="w-3.5 h-3.5 fill-emerald-400" /> : <Pause className="w-3.5 h-3.5" />}
+                {autoScroll ? <Play className="w-3.5 h-3.5 fill-emerald-500 text-emerald-500" /> : <Pause className="w-3.5 h-3.5" />}
                 <span>{autoScroll ? '实时接收' : '暂停'}</span>
               </button>
 
               <button
                 onClick={fetchLogs}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-zinc-900 text-zinc-300 border border-zinc-700/80 hover:bg-zinc-800 transition cursor-pointer"
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer ${
+                  isLight ? 'bg-white text-zinc-700 border-zinc-200 hover:bg-zinc-50' : 'bg-zinc-900 text-zinc-300 border-zinc-700/80 hover:bg-zinc-800'
+                }`}
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
                 <span>刷新</span>
@@ -390,7 +428,9 @@ export const LogsViewer: React.FC = () => {
 
               <button
                 onClick={handleExportDiagnostics}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-sky-500/15 text-sky-400 border border-sky-500/30 hover:bg-sky-500/25 transition cursor-pointer"
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer ${
+                  isLight ? 'bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100' : 'bg-sky-500/15 text-sky-400 border-sky-500/30 hover:bg-sky-500/25'
+                }`}
               >
                 <Download className="w-3.5 h-3.5" />
                 <span>导出报告</span>
@@ -398,7 +438,9 @@ export const LogsViewer: React.FC = () => {
 
               <button
                 onClick={handlePruneLogs}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-amber-500/15 text-amber-400 border border-amber-500/30 hover:bg-amber-500/25 transition cursor-pointer"
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer ${
+                  isLight ? 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100' : 'bg-amber-500/15 text-amber-400 border-amber-500/30 hover:bg-amber-500/25'
+                }`}
                 title="修剪老旧日志，保留最近 2000 条"
               >
                 <Scissors className="w-3.5 h-3.5" />
@@ -407,7 +449,9 @@ export const LogsViewer: React.FC = () => {
 
               <button
                 onClick={handleClearLogs}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-rose-500/10 text-rose-400 border border-rose-500/30 hover:bg-rose-500/20 transition cursor-pointer"
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition cursor-pointer ${
+                  isLight ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100' : 'bg-rose-500/10 text-rose-400 border-rose-500/30 hover:bg-rose-500/20'
+                }`}
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>清空</span>
@@ -417,33 +461,41 @@ export const LogsViewer: React.FC = () => {
 
           {/* Level Filter & Search Bar */}
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-            <div className="flex items-center bg-zinc-950 p-1 rounded-xl border border-zinc-800 text-xs w-fit">
+            <div className={`flex items-center p-1 rounded-xl border text-xs w-fit ${
+              isLight ? 'bg-white border-zinc-200 shadow-sm' : 'bg-zinc-950 border-zinc-800'
+            }`}>
               <Filter className="w-3.5 h-3.5 text-zinc-500 ml-2 mr-1" />
               <select
                 value={activeLevel}
                 onChange={(e) => setActiveLevel(e.target.value as any)}
-                className="bg-transparent text-zinc-300 focus:outline-none pr-2 cursor-pointer font-medium"
+                className={`bg-transparent focus:outline-none pr-2 cursor-pointer font-medium ${
+                  isLight ? 'text-zinc-800' : 'text-zinc-300'
+                }`}
               >
-                <option value="all" className="bg-zinc-900">全部级别</option>
-                <option value="info" className="bg-zinc-900 text-blue-400">INFO 信息</option>
-                <option value="warn" className="bg-zinc-900 text-amber-400">WARN 警告</option>
-                <option value="error" className="bg-zinc-900 text-rose-400">ERROR 错误</option>
+                <option value="all" className={isLight ? 'bg-white text-zinc-900' : 'bg-zinc-900'}>全部级别</option>
+                <option value="info" className={isLight ? 'bg-white text-blue-600' : 'bg-zinc-900 text-blue-400'}>INFO 信息</option>
+                <option value="warn" className={isLight ? 'bg-white text-amber-600' : 'bg-zinc-900 text-amber-400'}>WARN 警告</option>
+                <option value="error" className={isLight ? 'bg-white text-rose-600' : 'bg-zinc-900 text-rose-400'}>ERROR 错误</option>
               </select>
             </div>
 
             <div className="relative flex-1 sm:max-w-md">
-              <Search className="w-3.5 h-3.5 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" />
+              <Search className="w-3.5 h-3.5 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="搜索 Trace ID、IP、音箱名或关键字..."
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-8 pr-3 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-700"
+                className={`w-full border rounded-xl pl-8 pr-3 py-1.5 text-xs focus:outline-none transition-colors ${
+                  isLight
+                    ? 'bg-white border-zinc-200 text-zinc-900 placeholder-zinc-400 focus:border-zinc-400 shadow-sm'
+                    : 'bg-zinc-950 border-zinc-800 text-zinc-200 placeholder-zinc-500 focus:border-zinc-700'
+                }`}
               />
               {searchQuery && (
                 <button
                   onClick={() => setSearchQuery('')}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
+                  className={`absolute right-2 top-1/2 -translate-y-1/2 ${isLight ? 'text-zinc-400 hover:text-zinc-600' : 'text-zinc-500 hover:text-zinc-300'}`}
                 >
                   ×
                 </button>
@@ -451,31 +503,47 @@ export const LogsViewer: React.FC = () => {
             </div>
           </div>
 
-          {/* Log Console Window */}
-          <div className="bg-zinc-950 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl flex flex-col">
+          {/* Log Console Window - Matches LogTerminalTab styling */}
+          <div className={`rounded-2xl overflow-hidden border flex flex-col transition-colors duration-200 ${
+            isLight
+              ? 'bg-white/90 border-zinc-200 shadow-sm'
+              : 'bg-zinc-900/40 border-white/10 shadow-2xl backdrop-blur-md'
+          }`}>
             {/* Terminal Header Bar */}
-            <div className="bg-zinc-900/80 px-4 py-2 border-b border-zinc-800/80 flex items-center justify-between text-xs text-zinc-400 shrink-0">
+            <div className={`px-4 py-2.5 border-b flex items-center justify-between text-xs shrink-0 transition-colors ${
+              isLight
+                ? 'bg-zinc-50/90 border-zinc-200 text-zinc-600'
+                : 'bg-zinc-900/80 border-white/10 text-zinc-400'
+            }`}>
               <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-full bg-rose-500/80 inline-block" />
-                <span className="w-3 h-3 rounded-full bg-amber-500/80 inline-block" />
-                <span className="w-3 h-3 rounded-full bg-emerald-500/80 inline-block" />
-                <span className="font-mono text-zinc-400 ml-2 font-semibold">/var/log/tinglan_diagnostics.log</span>
+                <span className="w-3 h-3 rounded-full bg-rose-500/80 inline-block shadow-sm" />
+                <span className="w-3 h-3 rounded-full bg-amber-500/80 inline-block shadow-sm" />
+                <span className="w-3 h-3 rounded-full bg-emerald-500/80 inline-block shadow-sm" />
+                <span className={`font-mono ml-2 font-semibold ${isLight ? 'text-zinc-700' : 'text-zinc-300'}`}>
+                  /var/log/tinglan_diagnostics.log
+                </span>
               </div>
-              <div className="font-mono text-[11px] text-zinc-500">
+              <div className={`font-mono text-[11px] ${isLight ? 'text-zinc-500 font-medium' : 'text-zinc-500'}`}>
                 显示 {filteredLogs.length} 条日志
               </div>
             </div>
 
             {/* Logs List Container - Stretches dynamically down to bottom player */}
-            <div ref={listContainerRef} className="p-2 sm:p-3 space-y-2.5 h-[calc(100vh-365px)] min-h-[480px] overflow-y-auto font-sans text-xs">
+            <div ref={listContainerRef} className={`p-2 sm:p-3 space-y-2.5 h-[calc(100vh-365px)] min-h-[480px] overflow-y-auto font-sans text-xs ${
+              isLight ? 'bg-zinc-50/50' : 'bg-transparent'
+            }`}>
               {loading && logs.length === 0 ? (
-                <div className="h-full min-h-[300px] flex flex-col items-center justify-center py-16 text-center text-zinc-500">
-                  <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-zinc-600" />
+                <div className={`h-full min-h-[300px] flex flex-col items-center justify-center py-16 text-center ${
+                  isLight ? 'text-zinc-500' : 'text-zinc-500'
+                }`}>
+                  <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-zinc-400" />
                   <span>正在装载全链路诊断日志流...</span>
                 </div>
               ) : filteredLogs.length === 0 ? (
-                <div className="h-full min-h-[300px] flex flex-col items-center justify-center py-16 text-center text-zinc-500">
-                  <FileText className="w-8 h-8 mx-auto mb-2 text-zinc-700" />
+                <div className={`h-full min-h-[300px] flex flex-col items-center justify-center py-16 text-center ${
+                  isLight ? 'text-zinc-500' : 'text-zinc-500'
+                }`}>
+                  <FileText className="w-8 h-8 mx-auto mb-2 text-zinc-400" />
                   <span>暂无匹配的运行诊断与审计日志</span>
                 </div>
               ) : (
@@ -491,13 +559,21 @@ export const LogsViewer: React.FC = () => {
                     log.level === 'debug' ? 'bg-purple-500 shadow-[0_0_8px_rgba(168,85,247,0.6)]' :
                     'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]';
 
-                  // Card styling
+                  // Card styling - light and dark modes
                   const cardBg = isExpanded
-                    ? 'bg-zinc-900/90 border-amber-500/40 shadow-lg ring-1 ring-amber-500/20'
+                    ? isLight
+                      ? 'bg-amber-500/5 border-amber-500/40 shadow-md ring-1 ring-amber-500/20'
+                      : 'bg-zinc-900/90 border-amber-500/40 shadow-lg ring-1 ring-amber-500/20'
                     : log.level === 'error'
-                    ? 'bg-rose-950/15 border-rose-500/30 hover:border-rose-500/50 hover:bg-rose-950/25'
+                    ? isLight
+                      ? 'bg-rose-50/80 border-rose-200 hover:border-rose-400 hover:bg-rose-50 shadow-sm'
+                      : 'bg-rose-950/15 border-rose-500/30 hover:border-rose-500/50 hover:bg-rose-950/25'
                     : log.level === 'warn'
-                    ? 'bg-amber-950/15 border-amber-500/30 hover:border-amber-500/50 hover:bg-amber-950/25'
+                    ? isLight
+                      ? 'bg-amber-50/80 border-amber-200 hover:border-amber-400 hover:bg-amber-50 shadow-sm'
+                      : 'bg-amber-950/15 border-amber-500/30 hover:border-amber-500/50 hover:bg-amber-950/25'
+                    : isLight
+                    ? 'bg-white border-zinc-200 hover:border-zinc-300 hover:shadow-md shadow-sm'
                     : 'bg-zinc-900/50 border-white/5 hover:bg-zinc-900/80 hover:border-white/10';
 
                   // Structured parameter pills parsing from message
@@ -517,11 +593,17 @@ export const LogsViewer: React.FC = () => {
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                         {/* Left: Time, Level, Category, TraceID */}
                         <div className="flex items-center gap-2 flex-wrap font-mono">
-                          <span className="text-zinc-400 text-xs font-medium select-none flex items-center gap-1">
-                            <Clock className="w-3 h-3 text-zinc-500 shrink-0" />
-                            <span className="text-zinc-200">{log.timeFormatted.split('.')[0] || log.timeFormatted}</span>
+                          <span className={`text-xs font-medium select-none flex items-center gap-1 ${
+                            isLight ? 'text-zinc-500' : 'text-zinc-400'
+                          }`}>
+                            <Clock className={`w-3 h-3 shrink-0 ${isLight ? 'text-zinc-400' : 'text-zinc-500'}`} />
+                            <span className={isLight ? 'text-zinc-700 font-semibold' : 'text-zinc-200'}>
+                              {log.timeFormatted.split('.')[0] || log.timeFormatted}
+                            </span>
                             {log.timeFormatted.includes('.') && (
-                              <span className="text-zinc-500 text-[10px]">.{log.timeFormatted.split('.')[1]}</span>
+                              <span className={`text-[10px] ${isLight ? 'text-zinc-400' : 'text-zinc-500'}`}>
+                                .{log.timeFormatted.split('.')[1]}
+                              </span>
                             )}
                           </span>
                           
@@ -541,7 +623,11 @@ export const LogsViewer: React.FC = () => {
                                 setSearchQuery(log.traceId!);
                               }}
                               title="点击按此 Trace ID 过滤同一请求全链路日志"
-                              className="px-2 py-0.5 text-[10px] rounded bg-zinc-950/80 text-zinc-400 hover:text-amber-300 hover:border-amber-500/50 border border-zinc-800 font-mono transition cursor-pointer"
+                              className={`px-2 py-0.5 text-[10px] rounded border font-mono transition cursor-pointer ${
+                                isLight
+                                  ? 'bg-zinc-100 text-zinc-600 hover:text-amber-600 hover:border-amber-400 border-zinc-200'
+                                  : 'bg-zinc-950/80 text-zinc-400 hover:text-amber-300 hover:border-amber-500/50 border-zinc-800'
+                              }`}
                             >
                               #{log.traceId}
                             </span>
@@ -551,12 +637,16 @@ export const LogsViewer: React.FC = () => {
                         {/* Right: Device Name, IP, Quick Copy & Expand Chevron */}
                         <div className="flex items-center gap-2 text-xs text-zinc-400 shrink-0">
                           {log.deviceName && (
-                            <span className="bg-zinc-950/80 border border-white/5 text-zinc-300 px-2.5 py-0.5 rounded text-[11px] font-medium flex items-center gap-1">
+                            <span className={`border px-2.5 py-0.5 rounded text-[11px] font-medium flex items-center gap-1 ${
+                              isLight ? 'bg-zinc-100 border-zinc-200 text-zinc-700' : 'bg-zinc-950/80 border-white/5 text-zinc-300'
+                            }`}>
                               📱 {log.deviceName}
                             </span>
                           )}
                           {log.clientIp && (
-                            <span className="bg-zinc-950/80 border border-white/5 text-zinc-400 px-2 py-0.5 rounded text-[10px] font-mono">
+                            <span className={`border px-2 py-0.5 rounded text-[10px] font-mono ${
+                              isLight ? 'bg-zinc-100 border-zinc-200 text-zinc-600' : 'bg-zinc-950/80 border-white/5 text-zinc-400'
+                            }`}>
                               🌐 {log.clientIp}
                             </span>
                           )}
@@ -570,17 +660,23 @@ export const LogsViewer: React.FC = () => {
                               showToast('success', '已复制日志到剪贴板');
                             }}
                             title="复制本条日志"
-                            className="p-1 rounded hover:bg-white/10 text-zinc-500 hover:text-zinc-200 transition opacity-70 group-hover:opacity-100 cursor-pointer"
+                            className={`p-1 rounded transition opacity-70 group-hover:opacity-100 cursor-pointer ${
+                              isLight ? 'hover:bg-zinc-100 text-zinc-400 hover:text-zinc-700' : 'hover:bg-white/10 text-zinc-500 hover:text-zinc-200'
+                            }`}
                           >
                             <Copy className="w-3.5 h-3.5" />
                           </button>
 
-                          <ChevronRight className={`w-4 h-4 text-zinc-500 transition-transform duration-200 ${isExpanded ? 'rotate-90 text-amber-400' : 'group-hover:translate-x-0.5'}`} />
+                          <ChevronRight className={`w-4 h-4 transition-transform duration-200 ${
+                            isExpanded ? 'rotate-90 text-amber-500' : isLight ? 'text-zinc-400 group-hover:text-zinc-700' : 'text-zinc-500 group-hover:text-zinc-300'
+                          }`} />
                         </div>
                       </div>
 
                       {/* Tier 2: Event Title */}
-                      <div className="mt-2 text-sm font-semibold text-zinc-100 tracking-tight flex items-center gap-2">
+                      <div className={`mt-2 text-sm tracking-tight flex items-center gap-2 ${
+                        isLight ? 'text-zinc-900 font-semibold' : 'text-zinc-100 font-semibold'
+                      }`}>
                         <span>{log.title}</span>
                       </div>
 
@@ -593,10 +689,10 @@ export const LogsViewer: React.FC = () => {
                             const isWarning = pill.includes('重试') || pill.includes('警告') || pill.includes('提示');
                             
                             const pillStyle = 
-                              isFailure ? 'bg-rose-500/10 border-rose-500/30 text-rose-300' :
-                              isWarning ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' :
-                              isSuccess ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' :
-                              'bg-zinc-950/70 border-white/5 text-zinc-300';
+                              isFailure ? (isLight ? 'bg-rose-50 border-rose-200 text-rose-700' : 'bg-rose-500/10 border-rose-500/30 text-rose-300') :
+                              isWarning ? (isLight ? 'bg-amber-50 border-amber-200 text-amber-700' : 'bg-amber-500/10 border-amber-500/30 text-amber-300') :
+                              isSuccess ? (isLight ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300') :
+                              (isLight ? 'bg-zinc-100 border-zinc-200 text-zinc-700' : 'bg-zinc-950/70 border-white/5 text-zinc-300');
 
                             return (
                               <span
@@ -609,15 +705,19 @@ export const LogsViewer: React.FC = () => {
                           })}
                         </div>
                       ) : (
-                        <p className="mt-2 text-zinc-300 font-sans leading-relaxed text-xs">
+                        <p className={`mt-2 font-sans leading-relaxed text-xs ${
+                          isLight ? 'text-zinc-600' : 'text-zinc-300'
+                        }`}>
                           {log.message}
                         </p>
                       )}
 
                       {/* Expanded JSON Context Drawer */}
                       {isExpanded && log.details && (
-                        <div className="mt-3.5 pt-3 border-t border-white/5 animate-fade-in">
-                          <div className="p-3 bg-black/90 rounded-xl border border-zinc-800 text-[11px] text-emerald-400 overflow-x-auto relative">
+                        <div className={`mt-3.5 pt-3 border-t animate-fade-in ${isLight ? 'border-zinc-200' : 'border-white/5'}`}>
+                          <div className={`p-3 rounded-xl border text-[11px] overflow-x-auto relative ${
+                            isLight ? 'bg-zinc-900 text-emerald-400 border-zinc-800' : 'bg-black/90 text-emerald-400 border-zinc-800'
+                          }`}>
                             <div className="flex items-center justify-between text-zinc-500 text-[10px] mb-1.5 font-semibold uppercase tracking-wider">
                               <span>DEBUG METADATA / CONTEXT:</span>
                               <button
