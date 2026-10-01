@@ -23,7 +23,9 @@ import {
   Database,
   Scissors,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Clock,
+  Copy
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useAppEvents } from '../context/AppEventsContext';
@@ -465,7 +467,7 @@ export const LogsViewer: React.FC = () => {
             </div>
 
             {/* Logs List Container - Stretches dynamically down to bottom player */}
-            <div ref={listContainerRef} className="divide-y divide-zinc-900/80 h-[calc(100vh-365px)] min-h-[480px] overflow-y-auto font-mono text-xs">
+            <div ref={listContainerRef} className="p-2 sm:p-3 space-y-2.5 h-[calc(100vh-365px)] min-h-[480px] overflow-y-auto font-sans text-xs">
               {loading && logs.length === 0 ? (
                 <div className="h-full min-h-[300px] flex flex-col items-center justify-center py-16 text-center text-zinc-500">
                   <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-zinc-600" />
@@ -482,24 +484,53 @@ export const LogsViewer: React.FC = () => {
                   const levelInfo = levelBadges[log.level] || levelBadges.info;
                   const isExpanded = expandedLogId === log.id;
 
+                  // Left accent indicator color
+                  const accentColor = 
+                    log.level === 'error' ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.6)]' :
+                    log.level === 'warn' ? 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.6)]' :
+                    log.level === 'debug' ? 'bg-purple-500 shadow-[0_0_8px_rgba(168,85,247,0.6)]' :
+                    'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]';
+
+                  // Card styling
+                  const cardBg = isExpanded
+                    ? 'bg-zinc-900/90 border-amber-500/40 shadow-lg ring-1 ring-amber-500/20'
+                    : log.level === 'error'
+                    ? 'bg-rose-950/15 border-rose-500/30 hover:border-rose-500/50 hover:bg-rose-950/25'
+                    : log.level === 'warn'
+                    ? 'bg-amber-950/15 border-amber-500/30 hover:border-amber-500/50 hover:bg-amber-950/25'
+                    : 'bg-zinc-900/50 border-white/5 hover:bg-zinc-900/80 hover:border-white/10';
+
+                  // Structured parameter pills parsing from message
+                  const hasPipes = log.message.includes(' | ');
+                  const pills = hasPipes ? log.message.split(' | ').map(p => p.trim()).filter(Boolean) : [];
+
                   return (
                     <div 
                       key={log.id} 
-                      className={`p-3 hover:bg-zinc-900/60 transition cursor-pointer ${
-                        isExpanded ? 'bg-zinc-900/80' : ''
-                      }`}
+                      className={`relative rounded-xl border transition-all duration-200 cursor-pointer overflow-hidden group p-3.5 sm:p-4 pl-4 sm:pl-5 ${cardBg}`}
                       onClick={() => setExpandedLogId(isExpanded ? null : log.id)}
                     >
+                      {/* 1. Left Vertical Status Accent Bar */}
+                      <div className={`absolute left-0 top-0 bottom-0 w-1 sm:w-1.5 ${accentColor}`} />
+
+                      {/* Tier 1: Meta Header Row */}
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                        {/* Left: Time, Level, Category, Title */}
+                        {/* Left: Time, Level, Category, TraceID */}
                         <div className="flex items-center gap-2 flex-wrap font-mono">
-                          <span className="text-zinc-500 text-[11px] select-none">{log.timeFormatted}</span>
+                          <span className="text-zinc-400 text-xs font-medium select-none flex items-center gap-1">
+                            <Clock className="w-3 h-3 text-zinc-500 shrink-0" />
+                            <span className="text-zinc-200">{log.timeFormatted.split('.')[0] || log.timeFormatted}</span>
+                            {log.timeFormatted.includes('.') && (
+                              <span className="text-zinc-500 text-[10px]">.{log.timeFormatted.split('.')[1]}</span>
+                            )}
+                          </span>
                           
-                          <span className={`px-1.5 py-0.5 text-[10px] rounded font-bold border ${levelInfo.badge}`}>
-                            {levelInfo.label}
+                          <span className={`px-2 py-0.5 text-[10px] rounded font-bold border flex items-center gap-1 ${levelInfo.badge}`}>
+                            {levelInfo.icon}
+                            <span>{levelInfo.label}</span>
                           </span>
 
-                          <span className={`px-2 py-0.5 text-[10px] rounded font-medium border ${categoryInfo.bg}`}>
+                          <span className={`px-2.5 py-0.5 text-[10px] rounded font-medium border ${categoryInfo.bg}`}>
                             {categoryInfo.label}
                           </span>
 
@@ -510,45 +541,102 @@ export const LogsViewer: React.FC = () => {
                                 setSearchQuery(log.traceId!);
                               }}
                               title="点击按此 Trace ID 过滤同一请求全链路日志"
-                              className="px-1.5 py-0.5 text-[10px] rounded bg-zinc-900 text-zinc-400 hover:text-amber-300 hover:border-amber-500/50 border border-zinc-800 font-mono transition cursor-pointer"
+                              className="px-2 py-0.5 text-[10px] rounded bg-zinc-950/80 text-zinc-400 hover:text-amber-300 hover:border-amber-500/50 border border-zinc-800 font-mono transition cursor-pointer"
                             >
                               #{log.traceId}
                             </span>
                           )}
-
-                          <span className="font-semibold text-zinc-200 ml-1">{log.title}</span>
                         </div>
 
-                        {/* Right: Meta Info Pills (Device, IP) & Accordion Chevron */}
-                        <div className="flex items-center gap-2 text-[11px] text-zinc-400">
+                        {/* Right: Device Name, IP, Quick Copy & Expand Chevron */}
+                        <div className="flex items-center gap-2 text-xs text-zinc-400 shrink-0">
                           {log.deviceName && (
-                            <span className="bg-zinc-900 border border-zinc-800 text-zinc-300 px-2 py-0.5 rounded text-[10px]">
+                            <span className="bg-zinc-950/80 border border-white/5 text-zinc-300 px-2.5 py-0.5 rounded text-[11px] font-medium flex items-center gap-1">
                               📱 {log.deviceName}
                             </span>
                           )}
                           {log.clientIp && (
-                            <span className="bg-zinc-900 border border-zinc-800 text-zinc-400 px-2 py-0.5 rounded text-[10px]">
+                            <span className="bg-zinc-950/80 border border-white/5 text-zinc-400 px-2 py-0.5 rounded text-[10px] font-mono">
                               🌐 {log.clientIp}
                             </span>
                           )}
-                          <ChevronRight className={`w-3.5 h-3.5 text-zinc-500 transition-transform ${isExpanded ? 'rotate-90 text-amber-400' : ''}`} />
+
+                          {/* Quick Copy Button on Hover */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigator.clipboard?.writeText(`[${log.timeFormatted}] [${log.level.toUpperCase()}] ${log.title}\n${log.message}`);
+                              showToast('success', '已复制日志到剪贴板');
+                            }}
+                            title="复制本条日志"
+                            className="p-1 rounded hover:bg-white/10 text-zinc-500 hover:text-zinc-200 transition opacity-70 group-hover:opacity-100 cursor-pointer"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                          </button>
+
+                          <ChevronRight className={`w-4 h-4 text-zinc-500 transition-transform duration-200 ${isExpanded ? 'rotate-90 text-amber-400' : 'group-hover:translate-x-0.5'}`} />
                         </div>
                       </div>
 
-                      {/* Message body */}
-                      <p className="mt-1.5 text-zinc-300 font-sans leading-relaxed text-xs pl-1">
-                        {log.message}
-                      </p>
+                      {/* Tier 2: Event Title */}
+                      <div className="mt-2 text-sm font-semibold text-zinc-100 tracking-tight flex items-center gap-2">
+                        <span>{log.title}</span>
+                      </div>
 
-                      {/* Expanded JSON details */}
+                      {/* Tier 3: Body & Structured Parameter Pills */}
+                      {hasPipes ? (
+                        <div className="mt-2.5 flex flex-wrap gap-1.5 items-center">
+                          {pills.map((pill, idx) => {
+                            const isSuccess = pill.includes('成功') || pill.includes('200') || pill.includes('OK');
+                            const isFailure = pill.includes('失败') || pill.includes('异常') || pill.includes('错误') || pill.includes('超时');
+                            const isWarning = pill.includes('重试') || pill.includes('警告') || pill.includes('提示');
+                            
+                            const pillStyle = 
+                              isFailure ? 'bg-rose-500/10 border-rose-500/30 text-rose-300' :
+                              isWarning ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' :
+                              isSuccess ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' :
+                              'bg-zinc-950/70 border-white/5 text-zinc-300';
+
+                            return (
+                              <span
+                                key={idx}
+                                className={`px-2.5 py-1 rounded-lg border text-[11px] font-mono leading-tight ${pillStyle}`}
+                              >
+                                {pill}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <p className="mt-2 text-zinc-300 font-sans leading-relaxed text-xs">
+                          {log.message}
+                        </p>
+                      )}
+
+                      {/* Expanded JSON Context Drawer */}
                       {isExpanded && log.details && (
-                        <div className="mt-3 p-3 bg-black/80 rounded-xl border border-zinc-800 text-[11px] text-emerald-400 overflow-x-auto">
-                          <div className="text-zinc-500 text-[10px] mb-1 font-semibold uppercase tracking-wider">
-                            DEBUG METADATA / CONTEXT:
+                        <div className="mt-3.5 pt-3 border-t border-white/5 animate-fade-in">
+                          <div className="p-3 bg-black/90 rounded-xl border border-zinc-800 text-[11px] text-emerald-400 overflow-x-auto relative">
+                            <div className="flex items-center justify-between text-zinc-500 text-[10px] mb-1.5 font-semibold uppercase tracking-wider">
+                              <span>DEBUG METADATA / CONTEXT:</span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigator.clipboard?.writeText(JSON.stringify(log.details, null, 2));
+                                  showToast('success', '已复制 JSON 元数据');
+                                }}
+                                className="hover:text-zinc-200 transition text-[10px] flex items-center gap-1 font-mono cursor-pointer"
+                              >
+                                <Copy className="w-3 h-3" />
+                                <span>复制 JSON</span>
+                              </button>
+                            </div>
+                            <pre className="font-mono whitespace-pre-wrap leading-relaxed">
+                              {JSON.stringify(log.details, null, 2)}
+                            </pre>
                           </div>
-                          <pre className="font-mono whitespace-pre-wrap leading-relaxed">
-                            {JSON.stringify(log.details, null, 2)}
-                          </pre>
                         </div>
                       )}
                     </div>
