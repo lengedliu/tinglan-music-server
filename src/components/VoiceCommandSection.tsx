@@ -27,10 +27,13 @@ import {
   ListMusic,
   CloudLightning,
   VolumeX,
-  Info
+  Info,
+  Database,
+  Download
 } from 'lucide-react';
 import { XiaomiDevice, VoiceListenerConfig, VoiceListenerStatus, VoiceDialogueLog, VoiceCommandRule, Playlist } from '../types';
 import { apiFetch } from '../utils/api';
+import { useTheme } from '../context/ThemeContext';
 
 interface VoiceCommandSectionProps {
   devices: XiaomiDevice[];
@@ -45,6 +48,7 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
   onSelectDevice,
   playlists = []
 }) => {
+  const { isLight } = useTheme();
   const [status, setStatus] = useState<VoiceListenerStatus | null>(null);
   const [config, setConfig] = useState<VoiceListenerConfig | null>(null);
   const [logs, setLogs] = useState<VoiceDialogueLog[]>([]);
@@ -788,21 +792,31 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
       </div>
 
       {/* ---------------- 4. Real-time Dialogue Logs Stream ---------------- */}
-      <div className="p-6 rounded-3xl bg-zinc-900/40 border border-white/10 backdrop-blur-md space-y-4">
-        <div className="flex items-center justify-between">
+      <div className={`p-6 rounded-3xl border backdrop-blur-md space-y-4 transition-colors ${
+        isLight ? 'bg-white/90 border-zinc-200 shadow-sm' : 'bg-zinc-900/40 border-white/10'
+      }`}>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
-            <Terminal className="w-5 h-5 text-purple-400" />
-            <h4 className="text-base font-bold text-white">
-              小爱音箱语音对话捕获日志 ({logs.length})
-            </h4>
+            <Terminal className="w-5 h-5 text-purple-500" />
+            <div className="flex items-center gap-2 flex-wrap">
+              <h4 className={`text-base font-bold ${isLight ? 'text-zinc-900' : 'text-white'}`}>
+                小爱音箱语音对话捕获日志 ({logs.length})
+              </h4>
+              <span className="text-[11px] px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 font-medium flex items-center gap-1" title="小爱语音对话记录已自动持久化保存到磁盘 (data/voice-dialogues.json)，服务重启不会丢失">
+                <Database className="w-3 h-3 text-emerald-500" />
+                <span>自动持久化已启用</span>
+              </span>
+            </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <button
               type="button"
               onClick={handlePollNow}
               disabled={isPollingNow}
-              className="p-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white transition text-xs flex items-center gap-1.5"
+              className={`p-2 rounded-xl border transition text-xs flex items-center gap-1.5 cursor-pointer ${
+                isLight ? 'bg-zinc-100 hover:bg-zinc-200 text-zinc-700 border-zinc-200' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white border-white/5'
+              }`}
               title="立即向小爱云端发起同步"
             >
               <RefreshCw className={`w-3.5 h-3.5 text-[#FF6700] ${isPollingNow ? 'animate-spin' : ''}`} />
@@ -811,15 +825,31 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
             <button
               type="button"
               onClick={fetchVoiceStatus}
-              className="p-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition text-xs flex items-center gap-1.5"
+              className={`p-2 rounded-xl border transition text-xs flex items-center gap-1.5 cursor-pointer ${
+                isLight ? 'bg-zinc-100 hover:bg-zinc-200 text-zinc-700 border-zinc-200' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white border-white/5'
+              }`}
             >
               <RefreshCw className="w-3.5 h-3.5" />
               <span>刷新</span>
             </button>
+            <a
+              href="/api/miot/voice/logs/export"
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`p-2 rounded-xl border transition text-xs flex items-center gap-1.5 cursor-pointer ${
+                isLight ? 'bg-purple-50 hover:bg-purple-100 text-purple-700 border-purple-200' : 'bg-zinc-800 hover:bg-zinc-700 text-purple-300 hover:text-white border-white/5'
+              }`}
+              title="导出完整语音对话记录 (JSON)"
+            >
+              <Download className="w-3.5 h-3.5 text-purple-500" />
+              <span>导出</span>
+            </a>
             <button
               type="button"
               onClick={handleClearLogs}
-              className="p-2 rounded-xl bg-zinc-800/80 hover:bg-rose-500/20 text-zinc-400 hover:text-rose-300 transition text-xs flex items-center gap-1.5"
+              className={`p-2 rounded-xl border transition text-xs flex items-center gap-1.5 cursor-pointer ${
+                isLight ? 'bg-rose-50 hover:bg-rose-100 text-rose-600 border-rose-200' : 'bg-zinc-800/80 hover:bg-rose-500/20 text-zinc-400 hover:text-rose-300 border-white/5'
+              }`}
             >
               <Trash2 className="w-3.5 h-3.5" />
               <span>清空</span>
@@ -829,53 +859,61 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
 
         <div className="max-h-[380px] overflow-y-auto space-y-2.5 pr-1">
           {logs.length === 0 ? (
-            <div className="text-center py-12 text-zinc-500 text-xs space-y-2">
-              <Mic className="w-8 h-8 text-zinc-600 mx-auto" />
-              <p>暂无捕获到的语音对话记录</p>
-              <p className="text-[11px] text-zinc-600 max-w-md mx-auto">
-                您可对真实小爱音箱说出：“小爱同学，来首稻香”，或点击上方的快捷测试按钮模拟对话。
+            <div className={`text-center py-12 text-xs space-y-2 ${isLight ? 'text-zinc-500' : 'text-zinc-500'}`}>
+              <Mic className="w-8 h-8 text-zinc-400 mx-auto" />
+              <p className={isLight ? 'text-zinc-700 font-medium' : 'text-zinc-300 font-medium'}>暂无捕获到的语音对话记录</p>
+              <p className={`text-[11px] max-w-md mx-auto ${isLight ? 'text-zinc-400' : 'text-zinc-500'}`}>
+                您可对真实小爱音箱说出：“小爱同学，来首稻香”，或点击上方的快捷测试按钮模拟对话。记录已自动持久化落盘，重启不丢失。
               </p>
             </div>
           ) : (
             logs.map((log) => (
               <div
                 key={log.id}
-                className="p-3.5 rounded-2xl bg-zinc-950/70 border border-white/5 text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 hover:border-white/10 transition"
+                className={`p-3.5 rounded-2xl border text-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 transition ${
+                  isLight
+                    ? 'bg-zinc-50/80 border-zinc-200 hover:border-zinc-300 shadow-sm'
+                    : 'bg-zinc-950/70 border-white/5 hover:border-white/10'
+                }`}
               >
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
-                    <span className="font-bold text-white font-mono text-sm">
+                    <span className={`font-bold font-mono text-sm ${isLight ? 'text-zinc-900' : 'text-white'}`}>
                       “{log.queryText}”
                     </span>
                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                       log.status === 'matched'
-                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                        ? isLight ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                         : log.status === 'error'
-                        ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                        : 'bg-zinc-800 text-zinc-400'
+                        ? isLight ? 'bg-rose-50 text-rose-700 border border-rose-200' : 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
+                        : isLight ? 'bg-zinc-200/80 text-zinc-600' : 'bg-zinc-800 text-zinc-400'
                     }`}>
                       {log.status === 'matched' ? '已命中口令' : log.status === 'error' ? '执行失败' : '未命中规则'}
                     </span>
 
                     {/* Source Tag */}
-                    <span className="px-1.5 py-0.5 rounded text-[9px] bg-white/5 text-zinc-400 border border-white/5">
+                    <span className={`px-1.5 py-0.5 rounded text-[9px] border ${
+                      isLight ? 'bg-zinc-100 text-zinc-500 border-zinc-200' : 'bg-white/5 text-zinc-400 border-white/5'
+                    }`}>
                       {log.source === 'speaker_mina_poll' ? '云端轮询捕获' :
                        log.source === 'speaker_mina_ws' ? '长连实时推送' : '模拟测试'}
                     </span>
                   </div>
 
-                  <div className="text-zinc-400 text-[11px] flex flex-wrap items-center gap-x-3">
+                  <div className={`text-[11px] flex flex-wrap items-center gap-x-3 ${isLight ? 'text-zinc-600' : 'text-zinc-400'}`}>
                     <span>{log.actionSummary || '无动作'}</span>
                     {log.matchedRuleName && (
-                      <span className="text-purple-300 font-medium">规则: {log.matchedRuleName}</span>
+                      <span className={isLight ? 'text-purple-600 font-medium' : 'text-purple-300 font-medium'}>
+                        规则: {log.matchedRuleName}
+                      </span>
                     )}
                     {log.deviceName && (
-                      <span className="text-zinc-500">设备: {log.deviceName}</span>
+                      <span className={isLight ? 'text-zinc-400' : 'text-zinc-500'}>设备: {log.deviceName}</span>
                     )}
                   </div>
                 </div>
 
-                <div className="text-right text-[10px] font-mono text-zinc-500 shrink-0">
+                <div className={`text-right text-[10px] font-mono shrink-0 ${isLight ? 'text-zinc-400' : 'text-zinc-500'}`}>
                   {new Date(log.timestamp).toLocaleTimeString()}
                 </div>
               </div>

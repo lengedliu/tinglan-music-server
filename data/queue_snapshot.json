@@ -1,0 +1,12 @@
+{
+  "queue": [],
+  "currentIndex": 0,
+  "loopMode": "all",
+  "targetDid": "",
+  "targetDeviceName": "",
+  "isPlaying": false,
+  "songStartTime": 0,
+  "currentDuration": 180,
+  "currentSongStarted": false,
+  "savedAt": 1790864437090
+}

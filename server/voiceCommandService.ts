@@ -54,6 +54,7 @@ export interface VoiceListenerConfig {
 
 const VOICE_CONFIG_FILE = path.join(process.cwd(), 'data', 'voice-config.json');
 const VOICE_SLANG_FILE = path.join(process.cwd(), 'data', 'voice-slang.json');
+const VOICE_LOGS_FILE = path.join(process.cwd(), 'data', 'voice-dialogues.json');
 
 const DEFAULT_SLANG_RULES: VoiceSlangRule[] = [
   {
@@ -227,9 +228,12 @@ export class VoiceCommandService {
 
   private slangRules: VoiceSlangRule[] = DEFAULT_SLANG_RULES;
 
+  private saveDialogueLogsTimeout: NodeJS.Timeout | null = null;
+
   private constructor() {
     this.loadConfig();
     this.loadSlangRules();
+    this.loadDialogueLogs();
   }
 
   public static getInstance(): VoiceCommandService {
@@ -237,6 +241,39 @@ export class VoiceCommandService {
       VoiceCommandService.instance = new VoiceCommandService();
     }
     return VoiceCommandService.instance;
+  }
+
+  private loadDialogueLogs() {
+    try {
+      if (fs.existsSync(VOICE_LOGS_FILE)) {
+        const raw = fs.readFileSync(VOICE_LOGS_FILE, 'utf8');
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          this.dialogueLogs = parsed;
+          console.log(`[VoiceCommandService] Successfully loaded ${parsed.length} persisted voice dialogue logs.`);
+        }
+      }
+    } catch (err: any) {
+      console.warn('[VoiceCommandService] Failed to load voice-dialogues.json:', err.message);
+    }
+  }
+
+  private scheduleSaveDialogueLogs() {
+    if (this.saveDialogueLogsTimeout) return;
+    this.saveDialogueLogsTimeout = setTimeout(() => {
+      this.saveDialogueLogsTimeout = null;
+      this.saveDialogueLogs();
+    }, 400);
+  }
+
+  private saveDialogueLogs() {
+    try {
+      const dir = path.dirname(VOICE_LOGS_FILE);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(VOICE_LOGS_FILE, JSON.stringify(this.dialogueLogs.slice(0, 500), null, 2), 'utf8');
+    } catch (err: any) {
+      console.warn('[VoiceCommandService] Failed to save voice-dialogues.json:', err.message);
+    }
   }
 
   private loadConfig() {
@@ -452,12 +489,13 @@ export class VoiceCommandService {
     }
   }
 
-  public getDialogueLogs(): VoiceDialogueLog[] {
-    return this.dialogueLogs.slice(0, 50);
+  public getDialogueLogs(limit = 100): VoiceDialogueLog[] {
+    return this.dialogueLogs.slice(0, limit);
   }
 
   public clearLogs() {
     this.dialogueLogs = [];
+    this.saveDialogueLogs();
   }
 
   public start() {
@@ -1082,9 +1120,10 @@ export class VoiceCommandService {
 
   private addLog(log: VoiceDialogueLog) {
     this.dialogueLogs.unshift(log);
-    if (this.dialogueLogs.length > 100) {
-      this.dialogueLogs.pop();
+    if (this.dialogueLogs.length > 500) {
+      this.dialogueLogs.length = 500;
     }
+    this.scheduleSaveDialogueLogs();
   }
 }
 

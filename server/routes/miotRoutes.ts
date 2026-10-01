@@ -1949,6 +1949,13 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
     res.json({ success: true, logs: voiceCommandService.getDialogueLogs() });
   });
 
+  router.get('/voice/logs/export', (req: Request, res: Response) => {
+    const logs = voiceCommandService.getDialogueLogs(500);
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="tinglan-voice-dialogues-${Date.now()}.json"`);
+    res.send(JSON.stringify(logs, null, 2));
+  });
+
   router.post('/voice/logs/clear', (req: Request, res: Response) => {
     if (!checkMiotControlPermission(req, res)) return;
     voiceCommandService.clearLogs();
