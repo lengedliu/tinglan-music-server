@@ -1056,6 +1056,14 @@ app.use('/api/navidrome', createNavidromeRouter({
   setStoredPlaylists: (pls) => musicRepository.setPlaylists(pls)
 }));
 
+// 12. API 404 JSON Fallback (prevents SPA HTML index.html fallback for /api requests)
+app.all('/api/*', (req: Request, res: Response) => {
+  res.status(404).json({
+    success: false,
+    error: `API endpoint not found: ${req.method} ${req.path}`
+  });
+});
+
 // Server bootstrap & entry point
 async function startServer() {
   restoreSessionAndDevicesOnStartup({

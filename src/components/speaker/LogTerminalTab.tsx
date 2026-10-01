@@ -480,7 +480,7 @@ export const LogTerminalTab: React.FC<LogTerminalTabProps> = ({
       </div>
 
       {/* Detailed Log Entries Stream */}
-      <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
+      <div className="space-y-3 h-[calc(100vh-420px)] min-h-[460px] overflow-y-auto pr-1">
         {filteredLogs.length === 0 ? (
           <div className={`p-12 text-center rounded-2xl border space-y-2 ${
             isLight ? 'bg-zinc-50 border-zinc-200' : 'bg-zinc-950/40 border-white/5'

@@ -247,6 +247,14 @@ export default function App() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const preloadAudioRef = useRef<HTMLAudioElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const mainContentRef = useRef<HTMLElement | null>(null);
+
+  // Smoothly reset scroll position to top when switching tabs
+  useEffect(() => {
+    if (mainContentRef.current) {
+      mainContentRef.current.scrollTo({ top: 0, behavior: 'instant' });
+    }
+  }, [activeTab]);
 
   // Seamless HLS (.m3u8) + Standard Audio Dual-Engine Controller
   useEffect(() => {
@@ -2431,7 +2439,7 @@ export default function App() {
   const isMandatoryAuth = Boolean(securityStatus?.authRequired && !user && !authToken);
 
   return (
-    <div className={`min-h-screen ${themeConfig.bgClass} ${themeConfig.isLight ? 'text-zinc-900' : 'text-zinc-100'} flex flex-col font-sans relative overflow-x-hidden transition-colors duration-300`}>
+    <div className={`h-screen max-h-screen ${themeConfig.bgClass} ${themeConfig.isLight ? 'text-zinc-900' : 'text-zinc-100'} flex flex-col font-sans relative overflow-hidden transition-colors duration-300`}>
       
       {/* Immersive UI Background Ambient Glows */}
       <div 
@@ -2444,7 +2452,7 @@ export default function App() {
       />
 
       {/* Main Page Layout Wrapper - Gets blurred & interaction locked when mandatory authentication is required */}
-      <div className={`flex-1 flex flex-col min-h-screen transition-all duration-300 ${isMandatoryAuth ? 'pointer-events-none select-none filter blur-md opacity-30 grayscale-[40%]' : ''}`}>
+      <div className={`flex-1 flex flex-col h-full min-h-0 overflow-hidden transition-all duration-300 ${isMandatoryAuth ? 'pointer-events-none select-none filter blur-md opacity-30 grayscale-[40%]' : ''}`}>
         
         {/* Hidden Audio Engine */}
         <audio
@@ -2559,46 +2567,53 @@ export default function App() {
           aria-hidden="true"
         />
 
-        {/* Top Warning Ribbon for Default Admin Password */}
-        {isUsingDefaultAdminPassword && (
-          <div className="bg-gradient-to-r from-amber-600 via-rose-600 to-amber-600 text-white text-xs px-4 py-2 flex items-center justify-between shadow-md relative z-50 animate-fade-in">
-            <div className="max-w-7xl mx-auto w-full flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 flex-1 min-w-0">
-                <span className="p-1 rounded bg-black/20 text-amber-200 flex-shrink-0 animate-pulse">⚠️</span>
-                <span className="font-semibold truncate">
-                  首次部署安全强提醒：当前管理员账号 (admin) 仍在使用默认弱密码 admin123，极易遭遇公网爆破。
-                </span>
-              </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setIsForcePasswordModalOpen(true)}
-                  className="px-3 py-1 rounded-lg bg-white text-zinc-900 font-bold hover:bg-amber-100 transition shadow-sm cursor-pointer"
-                >
-                  立即修改密码
-                </button>
+        {/* Fixed Top Area (Warning Ribbon + Header Navigation) */}
+        <header className="shrink-0 z-40 w-full shadow-sm">
+          {/* Top Warning Ribbon for Default Admin Password */}
+          {isUsingDefaultAdminPassword && (
+            <div className="bg-gradient-to-r from-amber-600 via-rose-600 to-amber-600 text-white text-xs px-4 py-2 flex items-center justify-between shadow-md relative z-50 animate-fade-in shrink-0">
+              <div className="max-w-7xl mx-auto w-full flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 flex-1 min-w-0">
+                  <span className="p-1 rounded bg-black/20 text-amber-200 flex-shrink-0 animate-pulse">⚠️</span>
+                  <span className="font-semibold truncate">
+                    首次部署安全强提醒：当前管理员账号 (admin) 仍在使用默认弱密码 admin123，极易遭遇公网爆破。
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setIsForcePasswordModalOpen(true)}
+                    className="px-3 py-1 rounded-lg bg-white text-zinc-900 font-bold hover:bg-amber-100 transition shadow-sm cursor-pointer"
+                  >
+                    立即修改密码
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Header Navigation */}
-        <Navbar
-          activeTab={activeTab}
-          setActiveTab={setActiveTab}
-          activeDevice={activeDevice}
-          miotConfig={miotConfig}
-          isCasting={isCasting}
-          songCount={songs.length}
-          user={user}
-          securityAuthEnabled={Boolean(securityStatus?.globalRequireAuth ?? securityStatus?.authRequired)}
-          onOpenAuthModal={() => setIsAuthModalOpen(true)}
-          onLogout={handleLogout}
-        />
+          {/* Header Navigation */}
+          <Navbar
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
+            activeDevice={activeDevice}
+            miotConfig={miotConfig}
+            isCasting={isCasting}
+            songCount={songs.length}
+            user={user}
+            securityAuthEnabled={Boolean(securityStatus?.globalRequireAuth ?? securityStatus?.authRequired)}
+            onOpenAuthModal={() => setIsAuthModalOpen(true)}
+            onLogout={handleLogout}
+          />
+        </header>
 
-        {/* Main Content Area */}
-        <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 pt-4 sm:pt-6 relative z-10 pb-36 md:pb-28">
-          {activeTab === 'library' && (
+        {/* Scrollable Main Content Area - Only this container scrolls */}
+        <main 
+          ref={mainContentRef}
+          className="flex-1 min-h-0 w-full overflow-y-auto overflow-x-hidden relative z-10 scroll-smooth"
+        >
+          <div className="max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 pt-4 sm:pt-6 pb-36 md:pb-28">
+            {activeTab === 'library' && (
             <MusicLibrary
               songs={songs}
               playlists={playlists}
@@ -2743,6 +2758,7 @@ export default function App() {
               onShowToast={(title, desc, type) => showToast(title, desc, type)}
             />
           )}
+          </div>
         </main>
 
         {/* Global Sticky Player Bar */}

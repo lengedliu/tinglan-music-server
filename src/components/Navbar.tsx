@@ -48,7 +48,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   const { themeConfig, setIsThemeModalOpen, toggleDarkLight } = useTheme();
 
   return (
-    <header className="sticky top-0 z-40 bg-zinc-950/80 backdrop-blur-md border-b border-white/5 text-zinc-100">
+    <nav className="w-full bg-zinc-950/80 backdrop-blur-md border-b border-white/5 text-zinc-100">
       {/* Top Row: Brand on left, status indicators & user controls on right */}
       <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-14 flex items-center justify-between gap-2 sm:gap-3 overflow-x-hidden">
         
@@ -315,7 +315,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </nav>
         </div>
       </div>
-    </header>
+    </nav>
   );
 };
 

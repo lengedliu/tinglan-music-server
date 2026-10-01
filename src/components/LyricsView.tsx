@@ -174,7 +174,7 @@ export const LyricsView: React.FC<LyricsViewProps> = ({
   };
 
   return (
-    <div className="space-y-4 sm:space-y-6 pb-36 sm:pb-28">
+    <div className="space-y-4 sm:space-y-6 pb-2">
       
       {/* Top Status Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 p-3.5 sm:p-5 rounded-2xl sm:rounded-3xl bg-zinc-950/80 border border-white/10 backdrop-blur-md shadow-xl">

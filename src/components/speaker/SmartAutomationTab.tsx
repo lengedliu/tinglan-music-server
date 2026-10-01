@@ -199,17 +199,28 @@ export const SmartAutomationTab: React.FC<SmartAutomationTabProps> = ({
         apiFetch('/api/automation/scenes'),
         apiFetch('/api/automation/logs')
       ]);
-      const scenesData = await scenesRes.json();
-      const logsData = await logsRes.json();
 
-      if (scenesData.success && Array.isArray(scenesData.scenes)) {
-        setScenes(scenesData.scenes);
+      if (scenesRes.ok) {
+        const scenesContentType = scenesRes.headers.get('content-type') || '';
+        if (scenesContentType.includes('application/json')) {
+          const scenesData = await scenesRes.json();
+          if (scenesData.success && Array.isArray(scenesData.scenes)) {
+            setScenes(scenesData.scenes);
+          }
+        }
       }
-      if (logsData.success && Array.isArray(logsData.logs)) {
-        setLogs(logsData.logs);
+
+      if (logsRes.ok) {
+        const logsContentType = logsRes.headers.get('content-type') || '';
+        if (logsContentType.includes('application/json')) {
+          const logsData = await logsRes.json();
+          if (logsData.success && Array.isArray(logsData.logs)) {
+            setLogs(logsData.logs);
+          }
+        }
       }
     } catch (err) {
-      console.error('Failed to fetch automation data:', err);
+      console.warn('Failed to fetch automation data:', err);
     } finally {
       setIsLoading(false);
     }

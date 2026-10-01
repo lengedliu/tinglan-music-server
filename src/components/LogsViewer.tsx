@@ -239,7 +239,7 @@ export const LogsViewer: React.FC = () => {
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-6 space-y-6 pb-24 relative">
+    <div className="w-full space-y-3.5 pb-2 relative">
       {/* Toast Notification Banner */}
       {toastMessage && (
         <div className={`fixed top-6 right-6 z-50 px-4 py-3 rounded-2xl border shadow-2xl flex items-center gap-3 transition-all duration-300 backdrop-blur-xl ${
@@ -265,9 +265,9 @@ export const LogsViewer: React.FC = () => {
       )}
 
       {/* Header Title & Mode Switcher */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/10 pb-5">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-white/10 pb-3.5">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2.5 flex-wrap">
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white flex items-center gap-2.5 flex-wrap">
             <Terminal className="w-6 h-6" style={{ color: themeConfig.primaryColor }} />
             <span>全链路诊断与日志中心</span>
             <span className="text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-medium flex items-center gap-1.5" title="SQLite 3 (WASM) 数据库持久化存储与 B-Tree 索引加速">
@@ -275,16 +275,16 @@ export const LogsViewer: React.FC = () => {
               <span>SQLite 3 数据库驱动已生效 {stats.totalPersisted ? `(${stats.totalPersisted} 条持久化)` : ''}</span>
             </span>
           </h1>
-          <p className="text-xs text-zinc-400 mt-1">
+          <p className="text-xs text-zinc-400 mt-0.5">
             融合全链路 SSE 诊断日志流、FFmpeg 转码信号量保护池、缓存 LRU 清理与智能音箱握手归因
           </p>
         </div>
 
         {/* View Mode Switcher Buttons */}
-        <div className="flex items-center gap-1.5 bg-zinc-900/90 p-1.5 rounded-2xl border border-white/10 backdrop-blur-md">
+        <div className="flex items-center gap-1.5 bg-zinc-900/90 p-1.5 rounded-2xl border border-white/10 backdrop-blur-md shrink-0">
           <button
             onClick={() => setViewMode('stream')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+            className={`flex items-center gap-2 px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
               viewMode === 'stream'
                 ? 'bg-emerald-500 text-zinc-950 shadow-md'
                 : 'text-zinc-400 hover:text-white hover:bg-white/5'
@@ -299,7 +299,7 @@ export const LogsViewer: React.FC = () => {
               setViewMode('speaker_terminal');
               fetchSpeakerTerminalData();
             }}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
+            className={`flex items-center gap-2 px-3.5 py-1.5 sm:px-4 sm:py-2 rounded-xl text-xs font-bold transition cursor-pointer ${
               viewMode === 'speaker_terminal'
                 ? 'bg-emerald-500 text-zinc-950 shadow-md'
                 : 'text-zinc-400 hover:text-white hover:bg-white/5'
@@ -313,9 +313,9 @@ export const LogsViewer: React.FC = () => {
 
       {/* VIEW MODE 1: Full-link Stream Logs */}
       {viewMode === 'stream' && (
-        <div className="space-y-6">
+        <div className="space-y-3">
           {/* Action Toolbar */}
-          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 bg-zinc-900/60 p-2.5 rounded-2xl border border-white/5 backdrop-blur-md">
+          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 bg-zinc-900/60 p-2 rounded-2xl border border-white/5 backdrop-blur-md">
             {/* Category Buttons */}
             <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
               <button
@@ -450,9 +450,9 @@ export const LogsViewer: React.FC = () => {
           </div>
 
           {/* Log Console Window */}
-          <div className="bg-zinc-950 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl">
+          <div className="bg-zinc-950 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl flex flex-col">
             {/* Terminal Header Bar */}
-            <div className="bg-zinc-900/80 px-4 py-2.5 border-b border-zinc-800/80 flex items-center justify-between text-xs text-zinc-400">
+            <div className="bg-zinc-900/80 px-4 py-2 border-b border-zinc-800/80 flex items-center justify-between text-xs text-zinc-400 shrink-0">
               <div className="flex items-center gap-2">
                 <span className="w-3 h-3 rounded-full bg-rose-500/80 inline-block" />
                 <span className="w-3 h-3 rounded-full bg-amber-500/80 inline-block" />
@@ -464,15 +464,15 @@ export const LogsViewer: React.FC = () => {
               </div>
             </div>
 
-            {/* Logs List Container */}
-            <div ref={listContainerRef} className="divide-y divide-zinc-900/80 max-h-[680px] overflow-y-auto font-mono text-xs">
+            {/* Logs List Container - Stretches dynamically down to bottom player */}
+            <div ref={listContainerRef} className="divide-y divide-zinc-900/80 h-[calc(100vh-365px)] min-h-[480px] overflow-y-auto font-mono text-xs">
               {loading && logs.length === 0 ? (
-                <div className="py-16 text-center text-zinc-500">
+                <div className="h-full min-h-[300px] flex flex-col items-center justify-center py-16 text-center text-zinc-500">
                   <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2 text-zinc-600" />
                   <span>正在装载全链路诊断日志流...</span>
                 </div>
               ) : filteredLogs.length === 0 ? (
-                <div className="py-16 text-center text-zinc-500">
+                <div className="h-full min-h-[300px] flex flex-col items-center justify-center py-16 text-center text-zinc-500">
                   <FileText className="w-8 h-8 mx-auto mb-2 text-zinc-700" />
                   <span>暂无匹配的运行诊断与审计日志</span>
                 </div>

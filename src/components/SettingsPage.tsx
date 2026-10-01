@@ -753,7 +753,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const activeUsersCount = usersList.filter(u => u.status !== 'disabled').length;
 
   return (
-    <div className="space-y-6 sm:space-y-8 pb-36 sm:pb-28 max-w-5xl mx-auto">
+    <div className="space-y-6 sm:space-y-8 pb-4 max-w-5xl mx-auto">
       
       {/* Top Header Banner */}
       <div className="p-4 sm:p-8 rounded-2xl sm:rounded-3xl bg-zinc-900/40 backdrop-blur-md border border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-4 sm:gap-6">
