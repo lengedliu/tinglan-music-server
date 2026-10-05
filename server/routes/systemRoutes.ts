@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import os from 'os';
 import fs from 'fs';
-import { GoogleGenAI } from '@google/genai';
+import { aiService } from '../core/aiService.js';
 import { Song } from '../core/musicEngine.js';
 import { interactionRepository } from '../core/repositories/interactionRepository.js';
 
@@ -100,32 +100,19 @@ export function createSystemRouter(options: SystemRouterOptions): Router {
     }
   });
 
-  // AI Music Insight & Recommendation (server-side Gemini)
+  // AI Music Insight & Recommendation (Powered by AiService)
   router.post('/ai/music-insight', async (req: Request, res: Response) => {
     try {
       const { title, artist, genre } = req.body;
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) {
-        return res.json({
-          success: true,
-          insight: `《${title || '曲目'}》是一首经典的${genre || '音乐'}作品。如需获取专属 AI 鉴赏与风格解析，请在环境变量或系统设置中配置 GEMINI_API_KEY。`
-        });
-      }
-
-      const ai = new GoogleGenAI({ apiKey });
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: `为歌曲《${title || '未命名'}》${artist ? `（艺术家：${artist}）` : ''}${genre ? `（流派：${genre}）` : ''}写一段简短优美（80字以内）的鉴赏语与情绪共鸣分析。`,
-      });
-
+      const insight = await aiService.generateMusicInsight(title, artist, genre);
       return res.json({
         success: true,
-        insight: response.text || '暂无解析'
+        insight: insight || `《${title || '曲目'}》是一首经典的${genre || '音乐'}作品。`
       });
     } catch (err: any) {
       return res.json({
         success: false,
-        insight: 'AI 乐评生成暂不可用',
+        insight: `《${req.body?.title || '曲目'}》是一首经典的${req.body?.genre || '音乐'}作品。`,
         error: err.message
       });
     }

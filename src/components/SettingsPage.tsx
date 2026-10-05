@@ -43,12 +43,14 @@ import {
   Heart,
   Coffee,
   ExternalLink,
-  QrCode
+  QrCode,
+  Bot
 } from 'lucide-react';
 import { SecurityStatus, User, DbEngine, DbStatusInfo } from '../types';
 import { apiFetch } from '../utils/api';
 import { getUserAvatar } from '../utils/avatar';
 import { useTheme, THEMES, ThemeId } from '../context/ThemeContext';
+import { AiModelSettingsTab } from './AiModelSettingsTab';
 
 interface SettingsPageProps {
   currentUser: User | null;
@@ -66,7 +68,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   onNavigateToSponsor
 }) => {
   const { theme, setTheme, themeConfig } = useTheme();
-  const [subTab, setSubTab] = useState<'all' | 'theme' | 'users' | 'security' | 'database' | 'system' | 'sponsor'>('all');
+  const [subTab, setSubTab] = useState<'all' | 'theme' | 'ai' | 'users' | 'security' | 'database' | 'system' | 'sponsor'>('all');
 
   // --- Security State ---
   const [secLoading, setSecLoading] = useState(false);
@@ -753,7 +755,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   const activeUsersCount = usersList.filter(u => u.status !== 'disabled').length;
 
   return (
-    <div className="space-y-6 sm:space-y-8 pb-4 max-w-5xl mx-auto">
+    <div className="space-y-6 sm:space-y-8 pb-4 max-w-6xl mx-auto">
       
       {/* Top Header Banner */}
       <div className="p-4 sm:p-8 rounded-2xl sm:rounded-3xl bg-zinc-900/40 backdrop-blur-md border border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-4 sm:gap-6">
@@ -860,6 +862,21 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           <span>UI 主题外观</span>
           <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300 font-mono">
             {THEMES.length}
+          </span>
+        </button>
+
+        <button
+          onClick={() => setSubTab('ai')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap cursor-pointer ${
+            subTab === 'ai'
+              ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40'
+              : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
+          }`}
+        >
+          <Bot className="w-3.5 h-3.5 text-purple-400" />
+          <span>AI 大模型中枢</span>
+          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-purple-500/20 text-purple-300 font-mono">
+            4+1
           </span>
         </button>
 
@@ -1010,6 +1027,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
               })}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ================= SECTION: AI MODEL HUB ================= */}
+      {(subTab === 'all' || subTab === 'ai') && (
+        <div className="space-y-6 pt-2">
+          <AiModelSettingsTab onShowToast={onShowToast} />
         </div>
       )}
 

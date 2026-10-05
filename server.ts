@@ -85,6 +85,12 @@ import { createRadioRouter } from './server/routes/radioRoutes.js';
 import { createAutomationRouter } from './server/routes/automationRoutes.js';
 import { createSystemBackupRouter } from './server/routes/systemBackupRoutes.js';
 import { createLogRouter } from './server/routes/logRoutes.js';
+import { createAiRoutes } from './server/routes/aiRoutes.js';
+import { createMetadataRouter } from './server/routes/metadataRoutes.js';
+import playlistImportRouter from './server/routes/playlistImportRoutes.js';
+import nasRouter from './server/routes/nasRoutes.js';
+import familyUserRouter from './server/routes/familyUserRoutes.js';
+import { libraryWatcherService } from './server/core/libraryWatcherService.js';
 import { automationService } from './server/services/automationService.js';
 
 const app = express();
@@ -787,8 +793,9 @@ const {
 });
 app.use(streamRouter);
 
-// 4. TTS Engine & Radio & Phase 3 Automation & System Backup
+// 4. TTS Engine & Radio & Phase 3 Automation & System Backup & AI Hub
 app.use('/api/tts', createTtsRouter());
+app.use('/api/ai', createAiRoutes());
 app.use('/api/radio', createRadioRouter({
   getMiotConfig: () => miotConfig,
   setMiotConfig: (cfg) => {
@@ -797,7 +804,7 @@ app.use('/api/radio', createRadioRouter({
   }
 }));
 app.use('/api/automation', createAutomationRouter());
-app.use('/api/system/cluster-backup', createSystemBackupRouter());
+app.use('/api/system', createSystemBackupRouter());
 
 // 5. Songs & Playlists
 app.use('/api/songs', createSongsRouter({
@@ -829,6 +836,18 @@ app.use('/api/playlists', createPlaylistsRouter({
   getSongs: () => musicRepository.getAllSongs(),
   dynamicPlaylistEngine
 }));
+
+// 5.5 External Playlist Smart Import API
+app.use('/api/playlists/import', playlistImportRouter);
+
+// 5.6 NAS & WebDAV Remote Storage API
+app.use('/api/nas', nasRouter);
+
+// 5.7 Multi-User Family Space API
+app.use('/api/family', familyUserRouter);
+
+// 5.8 Library Health, Metadata Scraper & Duplicate Management API
+app.use('/api/library', createMetadataRouter());
 
 // 6. MIoT & Xiaomi Speaker
 app.use('/api/miot', createMiotRouter({
@@ -1081,6 +1100,9 @@ async function startServer() {
     serverPort: PORT,
     jwtSecret: JWT_SECRET
   });
+
+  // Start Real-time Music Directory Auto-Watcher
+  libraryWatcherService.init(MUSIC_DIR, true);
 
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

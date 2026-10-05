@@ -1,0 +1,148 @@
+{
+  "version": "3.5.0",
+  "exportedAt": "2026-10-05T13:42:12.633Z",
+  "config": {
+    "miUser": "",
+    "isLoggedIn": false,
+    "serverHost": "",
+    "activeDeviceId": "did-1789129459008",
+    "autoCast": false,
+    "ttsAnnouncement": false,
+    "ttsPrefix": "正在为您播放",
+    "volumeSync": true,
+    "userId": "",
+    "serviceToken": "",
+    "bindMode": "account"
+  },
+  "devices": [
+    {
+      "did": "did-1789129459008",
+      "name": "小爱音箱Pro",
+      "model": "xiaomi.wifispeaker.sound",
+      "hardware": "L16A",
+      "ip": "192.168.31.25",
+      "mac": "00:1A:7D:A22047",
+      "platform": "dlna",
+      "source": "lan",
+      "capabilities": {
+        "hasPlayControl": true,
+        "hasTts": true,
+        "hasVolumeControl": true,
+        "hasClock": false,
+        "supportsDlna": true,
+        "supportsLocalMiio": true
+      },
+      "online": false,
+      "isOnline": false,
+      "status": {
+        "playing": false,
+        "volume": 45,
+        "muted": false,
+        "updatedAt": "2026-09-11T15:53:24.533Z"
+      },
+      "hardwareProfile": {
+        "isTouchscreen": false,
+        "supportsMicoUbus": true,
+        "supportsDlna": true,
+        "requiresAppIos": true,
+        "optimalPlayType": 1
+      },
+      "lastSeen": "2026-09-24T06:12:54.603Z"
+    }
+  ],
+  "groups": [],
+  "slangRules": [],
+  "podcasts": [],
+  "radios": [],
+  "automationScenes": [
+    {
+      "id": "scene_morning_alarm",
+      "name": "☀️ 智能早安唤醒晨曲",
+      "description": "每天早晨 07:30 自动向全屋音箱推送轻柔广播电台与唤醒语音，迎美好一天",
+      "cronExpr": "30 07 * * *",
+      "enabled": true,
+      "actionType": "play_radio",
+      "targetType": "all_devices",
+      "payload": {
+        "radioUrl": "https://stream.zeno.fm/f3wvbbqmdg8uv",
+        "radioTitle": "Lofi Chill Morning Beats",
+        "ttsText": "早上好！为你播报早安问候与晨间舒缓音频，祝你新一天愉快。",
+        "volume": 35
+      },
+      "createdAt": "2026-10-05T11:22:44.717Z"
+    },
+    {
+      "id": "scene_night_lullaby",
+      "name": "🌙 夜间睡前舒缓问候 & 自动调低音量",
+      "description": "每晚 23:00 自动调低客厅与卧室音箱音量至 20%，播报睡前晚安问候语音",
+      "cronExpr": "00 23 * * *",
+      "enabled": true,
+      "actionType": "tts_announce",
+      "targetType": "all_devices",
+      "payload": {
+        "ttsText": "夜深了，为您调低音量，祝您晚安好梦。",
+        "volume": 20
+      },
+      "createdAt": "2026-10-05T11:22:44.717Z"
+    }
+  ],
+  "familyUsers": [
+    {
+      "id": "user-admin",
+      "name": "爸爸 (全家主主控)",
+      "avatar": "👨‍💼",
+      "role": "admin",
+      "createdAt": 1791207679666
+    },
+    {
+      "id": "user-mom",
+      "name": "妈妈",
+      "avatar": "👩‍💼",
+      "role": "member",
+      "createdAt": 1791207679666
+    },
+    {
+      "id": "user-kid",
+      "name": "宝贝",
+      "avatar": "👧",
+      "role": "kid",
+      "createdAt": 1791207679666
+    }
+  ],
+  "userFavorites": {},
+  "playlists": [
+    {
+      "id": "pl-default-1",
+      "name": "我喜欢的音乐",
+      "description": "默认红心收藏歌单",
+      "coverUrl": "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?auto=format&fit=crop&w=600&q=80",
+      "songIds": [
+        "song-1",
+        "song-2"
+      ],
+      "createdAt": "2026-09-24"
+    },
+    {
+      "id": "pl-default-2",
+      "name": "清晨唤醒·舒缓原声",
+      "description": "适合在客厅小爱音箱上定时播放的晨间轻音乐",
+      "coverUrl": "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=600&q=80",
+      "songIds": [
+        "song-3",
+        "song-4"
+      ],
+      "createdAt": "2026-09-24"
+    },
+    {
+      "id": "playlist-import-1791204605218",
+      "name": "港乐流行精选",
+      "description": "导入测试",
+      "coverUrl": "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?auto=format&fit=crop&w=600&q=80",
+      "songIds": [
+        "song-1"
+      ],
+      "createdAt": "2026-10-05T12:50:05.218Z"
+    }
+  ],
+  "nasConfig": {}
+}

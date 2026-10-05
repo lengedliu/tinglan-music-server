@@ -25,7 +25,10 @@ import {
   CheckCircle2,
   AlertCircle,
   Clock,
-  Copy
+  Copy,
+  Bot,
+  Sparkles,
+  X
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useAppEvents } from '../context/AppEventsContext';
@@ -226,6 +229,41 @@ export const LogsViewer: React.FC = () => {
     window.open('/api/logs/export', '_blank');
   };
 
+  // AI Log Diagnosis state
+  const [aiDiagnosing, setAiDiagnosing] = useState(false);
+  const [aiDiagnosisResult, setAiDiagnosisResult] = useState<{
+    summary: string;
+    rootCause: string;
+    recommendations: string[];
+    severity: 'normal' | 'warning' | 'critical';
+    modelUsed: string;
+    latencyMs: number;
+  } | null>(null);
+  const [showAiModal, setShowAiModal] = useState(false);
+
+  const handleAiDiagnose = async () => {
+    setAiDiagnosing(true);
+    try {
+      const res = await apiFetch('/api/ai/diagnose', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ logs: filteredLogs.slice(0, 30) })
+      });
+      const data = await res.json();
+      if (res.ok && data.success && data.diagnosis) {
+        setAiDiagnosisResult(data.diagnosis);
+        setShowAiModal(true);
+        showToast('success', `AI 诊断完成 (模型: ${data.diagnosis.modelUsed})`);
+      } else {
+        showToast('error', data.error || 'AI 诊断失败，请检查 AI 大模型配置');
+      }
+    } catch (err: any) {
+      showToast('error', err.message || 'AI 诊断通讯超时');
+    } finally {
+      setAiDiagnosing(false);
+    }
+  };
+
   const categoryBadges = {
     cast: { 
       label: '📡 投播/流诊断', 
@@ -424,6 +462,20 @@ export const LogsViewer: React.FC = () => {
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
                 <span>刷新</span>
+              </button>
+
+              <button
+                onClick={handleAiDiagnose}
+                disabled={aiDiagnosing}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border transition cursor-pointer shadow-sm ${
+                  isLight
+                    ? 'bg-purple-50 hover:bg-purple-100 text-purple-700 border-purple-200'
+                    : 'bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border-purple-500/40'
+                }`}
+                title="调用当前生效的 AI 大模型 (DeepSeek/Qwen/GLM/Gemini) 智能分析最近异常日志并给出人话建议"
+              >
+                <Bot className={`w-3.5 h-3.5 text-purple-500 ${aiDiagnosing ? 'animate-spin' : ''}`} />
+                <span>{aiDiagnosing ? 'AI 诊断中...' : 'AI 智能故障诊断'}</span>
               </button>
 
               <button
@@ -757,6 +809,102 @@ export const LogsViewer: React.FC = () => {
             onOpenSnapshotModal={() => setIsSnapshotModalOpen(true)}
             onSwitchToDevicesTab={() => setViewMode('stream')}
           />
+        </div>
+      )}
+
+      {/* AI Log Diagnosis Modal */}
+      {showAiModal && aiDiagnosisResult && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
+          <div className={`w-full max-w-2xl rounded-3xl border p-6 sm:p-7 shadow-2xl space-y-5 transition-all ${
+            isLight ? 'bg-white border-zinc-200' : 'bg-zinc-900 border-white/10'
+          }`}>
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-100 dark:border-white/5">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-purple-500/10 text-purple-500 border border-purple-500/20">
+                  <Bot className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className={`text-base font-bold flex items-center gap-2 ${isLight ? 'text-zinc-900' : 'text-white'}`}>
+                    AI 智能故障归因诊断报告
+                  </h3>
+                  <p className={`text-xs mt-0.5 ${isLight ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                    模型: <span className="font-mono text-purple-500 font-semibold">{aiDiagnosisResult.modelUsed}</span> · 诊断耗时: <span className="font-mono">{aiDiagnosisResult.latencyMs}ms</span>
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowAiModal(false)}
+                className={`p-2 rounded-xl border transition cursor-pointer ${
+                  isLight ? 'bg-zinc-100 hover:bg-zinc-200 text-zinc-600 border-zinc-200' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-white/5'
+                }`}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Severity & Summary Banner */}
+            <div className={`p-4 rounded-2xl border ${
+              aiDiagnosisResult.severity === 'critical'
+                ? 'bg-rose-500/10 border-rose-500/30 text-rose-700 dark:text-rose-300'
+                : aiDiagnosisResult.severity === 'warning'
+                ? 'bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-300'
+                : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300'
+            }`}>
+              <div className="flex items-start gap-2.5">
+                <Sparkles className="w-4 h-4 shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-bold text-xs">健康状态结论</div>
+                  <div className="text-xs mt-1 leading-relaxed">{aiDiagnosisResult.summary}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Root Cause */}
+            <div className="space-y-1.5">
+              <h4 className={`text-xs font-bold uppercase tracking-wider ${isLight ? 'text-zinc-700' : 'text-zinc-300'}`}>
+                🔍 核心根因技术分析
+              </h4>
+              <div className={`p-3.5 rounded-xl border font-sans text-xs leading-relaxed ${
+                isLight ? 'bg-zinc-50 border-zinc-200 text-zinc-800' : 'bg-zinc-950/80 border-white/5 text-zinc-200'
+              }`}>
+                {aiDiagnosisResult.rootCause}
+              </div>
+            </div>
+
+            {/* Recommendations */}
+            <div className="space-y-2">
+              <h4 className={`text-xs font-bold uppercase tracking-wider ${isLight ? 'text-zinc-700' : 'text-zinc-300'}`}>
+                🛠️ 推荐修复与优化建议
+              </h4>
+              <div className="space-y-2">
+                {aiDiagnosisResult.recommendations.map((rec, i) => (
+                  <div
+                    key={i}
+                    className={`p-3 rounded-xl border text-xs flex items-start gap-2.5 ${
+                      isLight ? 'bg-zinc-50 border-zinc-200 text-zinc-700' : 'bg-zinc-950/60 border-white/5 text-zinc-300'
+                    }`}
+                  >
+                    <span className="w-5 h-5 rounded-full bg-purple-500/15 text-purple-600 dark:text-purple-300 font-bold text-[11px] flex items-center justify-center shrink-0">
+                      {i + 1}
+                    </span>
+                    <span className="leading-relaxed">{rec}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowAiModal(false)}
+                className="px-5 py-2.5 rounded-xl text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white transition cursor-pointer shadow-md"
+              >
+                已了解
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

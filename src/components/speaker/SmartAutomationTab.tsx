@@ -17,7 +17,8 @@ import {
   Sparkles, 
   Terminal, 
   FileJson,
-  Layers
+  Layers,
+  Bot
 } from 'lucide-react';
 import { XiaomiDevice, Playlist } from '../../types';
 import { useTheme } from '../../context/ThemeContext';
@@ -187,6 +188,62 @@ export const SmartAutomationTab: React.FC<SmartAutomationTabProps> = ({
     payload: { ttsText: '早上好！今天也是元气满满的一天。', volume: 40 },
     enabled: true
   });
+
+  // AI Automation Wizard State (Item 5)
+  const [isAiWizardOpen, setIsAiWizardOpen] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState('工作日早上 7 点 30 分客厅音箱以 35% 音量播放清晨轻柔唤醒音乐');
+  const [isAiGenerating, setIsAiGenerating] = useState(false);
+  const [aiGeneratedScene, setAiGeneratedScene] = useState<any>(null);
+
+  const handleGenerateAiAutomation = async (overridePrompt?: string) => {
+    const promptText = overridePrompt || aiPrompt;
+    if (!promptText.trim()) return;
+    setIsAiGenerating(true);
+    setAiGeneratedScene(null);
+    try {
+      const res = await apiFetch('/api/ai/generate-automation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: promptText.trim() })
+      });
+      const data = await res.json();
+      if (res.ok && data.success && data.generated) {
+        setAiGeneratedScene(data.generated);
+        showToast('success', '✨ AI 自动化场景策略已生成！请确认后保存。');
+      } else {
+        showToast('error', data.error || 'AI 自动化生成失败');
+      }
+    } catch (e: any) {
+      showToast('error', '请求失败: ' + e.message);
+    } finally {
+      setIsAiGenerating(false);
+    }
+  };
+
+  const handleApplyAiScene = async () => {
+    if (!aiGeneratedScene) return;
+    try {
+      const res = await apiFetch('/api/automation/scenes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...aiGeneratedScene,
+          enabled: true
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        showToast('success', `🎉 已成功创建场景: ${data.scene?.name || '自动化场景'}`);
+        setIsAiWizardOpen(false);
+        setAiGeneratedScene(null);
+        fetchAutomationData();
+      } else {
+        showToast('error', data.error || '保存场景失败');
+      }
+    } catch (e: any) {
+      showToast('error', e.message);
+    }
+  };
 
   // Backup & Restore state
   const [isRestoring, setIsRestoring] = useState(false);
@@ -541,32 +598,46 @@ export const SmartAutomationTab: React.FC<SmartAutomationTabProps> = ({
             </div>
           </div>
 
-          {/* Scenes Section Title */}
-          <div className="flex items-center justify-between pt-2">
+          {/* Scenes Section Title & Action Buttons */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
             <span className={`text-xs font-bold uppercase tracking-wider ${isLight ? 'text-zinc-600' : 'text-zinc-400'}`}>
               已启用的 Cron 规则清单 ({scenes.length})
             </span>
 
-            <button
-              onClick={() => {
-                const targetDid = activeDeviceDid || (devices.length > 0 ? devices[0].did : undefined);
-                setEditingScene({
-                  name: '☀️ 智能早安晨曲唤醒',
-                  cronExpr: '00 07 * * *',
-                  description: '每天 07:00 自动播报早安语音并播放晨间电台',
-                  actionType: 'tts_announce',
-                  targetType: targetDid ? 'single_device' : 'all_devices',
-                  targetId: targetDid,
-                  payload: { ttsText: '早上好，为你播报今日晨间旋律！', volume: 35 },
-                  enabled: true
-                });
-                setIsModalOpen(true);
-              }}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-amber-500 text-zinc-950 font-bold text-xs hover:bg-amber-400 transition cursor-pointer shadow-sm"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>新建自定义场景</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAiWizardOpen(true);
+                  setAiGeneratedScene(null);
+                }}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs transition cursor-pointer shadow-md shadow-purple-600/20"
+              >
+                <Bot className="w-3.5 h-3.5 text-purple-200" />
+                <span>✨ AI 智能自然语言编排</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  const targetDid = activeDeviceDid || (devices.length > 0 ? devices[0].did : undefined);
+                  setEditingScene({
+                    name: '☀️ 智能早安晨曲唤醒',
+                    cronExpr: '00 07 * * *',
+                    description: '每天 07:00 自动播报早安语音并播放晨间电台',
+                    actionType: 'tts_announce',
+                    targetType: targetDid ? 'single_device' : 'all_devices',
+                    targetId: targetDid,
+                    payload: { ttsText: '早上好，为你播报今日晨间旋律！', volume: 35 },
+                    enabled: true
+                  });
+                  setIsModalOpen(true);
+                }}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-amber-500 text-zinc-950 font-bold text-xs hover:bg-amber-400 transition cursor-pointer shadow-sm"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>新建自定义场景</span>
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -969,6 +1040,163 @@ export const SmartAutomationTab: React.FC<SmartAutomationTabProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* AI Automation Wizard Modal (Item 5) */}
+      {isAiWizardOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-fadeIn">
+          <div className={`w-full max-w-2xl rounded-3xl border shadow-2xl p-6 sm:p-7 space-y-5 transition ${
+            isLight ? 'bg-white border-zinc-200 text-zinc-900' : 'bg-zinc-900 border-white/10 text-white'
+          }`}>
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-100 dark:border-white/5">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">
+                  <Bot className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold flex items-center gap-2">
+                    <span>AI 智能自然语言编排场景</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-600 dark:text-purple-300 border border-purple-500/30 font-semibold">
+                      No-Code AI
+                    </span>
+                  </h3>
+                  <p className={`text-xs mt-0.5 ${isLight ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                    用自然语言描述您的作息、音乐与播报需求，AI 自动转化为高精度 Cron 定时策略与音箱动作
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAiWizardOpen(false)}
+                className="p-1 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 rounded-lg text-sm cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Quick Presets */}
+            <div className="space-y-1.5">
+              <span className={`text-[11px] font-semibold ${isLight ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                快速参考模版 (点击自动填充):
+              </span>
+              <div className="flex flex-wrap gap-2 text-xs">
+                {[
+                  '工作日早上 7 点 30 分客厅音箱以 35% 音量播放清晨轻柔唤醒音乐',
+                  '每天晚上 11 点停止全屋所有音箱播放并休眠',
+                  '每天中午 12 点播放开饭提醒广播与舒缓轻音乐',
+                  '工作日下午 3 点提醒站起来活动活动筋骨',
+                  '周末下午 2 点随机播放我的红心收藏歌单'
+                ].map((preset, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => {
+                      setAiPrompt(preset);
+                      handleGenerateAiAutomation(preset);
+                    }}
+                    className={`px-2.5 py-1 rounded-lg border text-[11px] transition cursor-pointer ${
+                      isLight
+                        ? 'bg-zinc-50 hover:bg-purple-50 hover:border-purple-200 text-zinc-700'
+                        : 'bg-zinc-800/80 hover:bg-purple-950/40 hover:border-purple-500/40 text-zinc-300 border-white/5'
+                    }`}
+                  >
+                    {preset}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Prompt input */}
+            <div className="space-y-2">
+              <textarea
+                rows={3}
+                value={aiPrompt}
+                onChange={(e) => setAiPrompt(e.target.value)}
+                placeholder="例如：工作日早上 7 点 30 分主卧音箱播放早安轻音乐，音量 30%..."
+                className={`w-full p-3.5 rounded-2xl text-xs border focus:outline-none transition ${
+                  isLight
+                    ? 'bg-zinc-50 border-zinc-200 text-zinc-900 focus:border-purple-500 focus:bg-white'
+                    : 'bg-zinc-950/80 border-white/10 text-zinc-200 focus:border-purple-500'
+                }`}
+              />
+
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => handleGenerateAiAutomation()}
+                  disabled={isAiGenerating || !aiPrompt.trim()}
+                  className="px-5 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs transition flex items-center gap-2 cursor-pointer shadow-md shadow-purple-600/20 disabled:opacity-50"
+                >
+                  <Sparkles className={`w-3.5 h-3.5 ${isAiGenerating ? 'animate-spin' : ''}`} />
+                  <span>{isAiGenerating ? 'AI 场景提炼中...' : '🪄 开始 AI 智能解析与场景构建'}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Generated Preview Card */}
+            {aiGeneratedScene && (
+              <div className={`p-5 rounded-2xl border space-y-3.5 animate-fadeIn ${
+                isLight ? 'bg-purple-50/50 border-purple-200' : 'bg-purple-950/20 border-purple-500/30'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-purple-600 dark:text-purple-300 flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>AI 场景编排已就绪</span>
+                  </span>
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-purple-500/15 text-purple-600 dark:text-purple-300 font-bold">
+                    Cron: {aiGeneratedScene.cronExpr}
+                  </span>
+                </div>
+
+                <div className="space-y-1.5">
+                  <h4 className={`text-sm font-bold ${isLight ? 'text-zinc-900' : 'text-white'}`}>
+                    {aiGeneratedScene.name}
+                  </h4>
+                  <p className={`text-xs ${isLight ? 'text-zinc-600' : 'text-zinc-300'}`}>
+                    {aiGeneratedScene.description}
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                  <div className={`p-2.5 rounded-xl border ${isLight ? 'bg-white border-zinc-200' : 'bg-zinc-900 border-white/5'}`}>
+                    <span className="text-[10px] text-zinc-400 block font-semibold">⏰ 触发周期</span>
+                    <span className="font-medium">{aiGeneratedScene.cronExplanation || aiGeneratedScene.cronExpr}</span>
+                  </div>
+
+                  <div className={`p-2.5 rounded-xl border ${isLight ? 'bg-white border-zinc-200' : 'bg-zinc-900 border-white/5'}`}>
+                    <span className="text-[10px] text-zinc-400 block font-semibold">🔊 动作类型 & 音量</span>
+                    <span className="font-medium">
+                      {aiGeneratedScene.actionType === 'play_radio' ? '📻 播放电台' :
+                       aiGeneratedScene.actionType === 'play_playlist' ? '🎵 播放歌单' :
+                       aiGeneratedScene.actionType === 'stop_playback' ? '⏸️ 停止播放' : '🗣️ TTS 播报'}
+                      {aiGeneratedScene.payload?.volume ? ` (音量 ${aiGeneratedScene.payload.volume}%)` : ''}
+                    </span>
+                  </div>
+                </div>
+
+                {aiGeneratedScene.payload?.ttsText && (
+                  <div className={`p-2.5 rounded-xl border text-xs flex items-center gap-2 ${
+                    isLight ? 'bg-white border-purple-100 text-zinc-700' : 'bg-zinc-900 border-purple-500/20 text-zinc-300'
+                  }`}>
+                    <Volume2 className="w-3.5 h-3.5 text-purple-500 shrink-0" />
+                    <span>播报语音: “{aiGeneratedScene.payload.ttsText}”</span>
+                  </div>
+                )}
+
+                <div className="flex justify-end pt-2">
+                  <button
+                    type="button"
+                    onClick={handleApplyAiScene}
+                    className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs transition flex items-center gap-1.5 cursor-pointer shadow-md shadow-emerald-600/20"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>🎉 一键保存并应用此自动化场景</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

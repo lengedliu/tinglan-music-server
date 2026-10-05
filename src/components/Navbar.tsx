@@ -14,7 +14,9 @@ import {
   Speaker,
   Laptop,
   Rss,
-  Terminal
+  Terminal,
+  Users,
+  ShieldCheck
 } from 'lucide-react';
 import { XiaomiDevice, MiotConfig, User } from '../types';
 import { UserHeader } from './UserHeader';
@@ -31,6 +33,8 @@ interface NavbarProps {
   securityAuthEnabled?: boolean;
   onOpenAuthModal: () => void;
   onLogout: () => void;
+  onOpenFamilyModal?: () => void;
+  onOpenBackupModal?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -43,14 +47,16 @@ export const Navbar: React.FC<NavbarProps> = ({
   user,
   securityAuthEnabled,
   onOpenAuthModal,
-  onLogout
+  onLogout,
+  onOpenFamilyModal,
+  onOpenBackupModal
 }) => {
   const { themeConfig, setIsThemeModalOpen, toggleDarkLight } = useTheme();
 
   return (
     <nav className="w-full bg-zinc-950/80 backdrop-blur-md border-b border-white/5 text-zinc-100">
       {/* Top Row: Brand on left, status indicators & user controls on right */}
-      <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-14 flex items-center justify-between gap-2 sm:gap-3 overflow-x-hidden">
+      <div className="max-w-[1480px] mx-auto px-3 sm:px-6 lg:px-8 h-14 flex items-center justify-between gap-2 sm:gap-3 overflow-x-hidden">
         
         {/* Brand */}
         <div className="flex items-center gap-2 sm:gap-3 flex-shrink-0">
@@ -169,6 +175,32 @@ export const Navbar: React.FC<NavbarProps> = ({
             <ChevronRight className="w-3.5 h-3.5 text-zinc-400 hidden sm:inline" />
           </button>
 
+          {/* Family Space Profile Switcher Button */}
+          {onOpenFamilyModal && (
+            <button
+              id="btn-open-family-modal"
+              onClick={onOpenFamilyModal}
+              title="多用户家庭空间：无缝切换成员身份（爸爸/妈妈/宝贝）"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-zinc-900/90 hover:bg-zinc-800/90 border border-white/10 text-xs font-semibold text-zinc-200 transition cursor-pointer backdrop-blur-sm shadow-sm"
+            >
+              <Users className="w-3.5 h-3.5 text-orange-400" />
+              <span className="hidden md:inline text-[11px]">家庭空间</span>
+            </button>
+          )}
+
+          {/* Disaster Recovery Cloud Backup Button */}
+          {onOpenBackupModal && (
+            <button
+              id="btn-open-backup-modal"
+              onClick={onOpenBackupModal}
+              title="全量云端灾备：一键导出与还原音箱、家庭成员与歌单"
+              className="hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-zinc-900/90 hover:bg-zinc-800/90 border border-white/10 text-xs font-semibold text-zinc-200 transition cursor-pointer backdrop-blur-sm shadow-sm"
+            >
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="text-[11px]">全量灾备</span>
+            </button>
+          )}
+
           {/* User Auth Header Controls */}
           <UserHeader
             user={user}
@@ -183,7 +215,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
       {/* Bottom Row (中枢导航): 仅在平板和桌面端展示，手机端采用触控底部导航栏 */}
       <div className="hidden md:block border-t border-white/5 bg-transparent backdrop-blur-md">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-12 flex items-center justify-between">
+        <div className="max-w-[1480px] mx-auto px-4 sm:px-6 lg:px-8 h-12 flex items-center justify-between">
           <nav className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar py-1">
             <button
               id="nav-tab-library"

@@ -120,7 +120,7 @@ export const SponsorPage: React.FC<SponsorPageProps> = ({ onShowToast }) => {
   ];
 
   return (
-    <div className="space-y-6 sm:space-y-8 pb-36 sm:pb-28 max-w-5xl mx-auto animate-in fade-in duration-300">
+    <div className="space-y-6 sm:space-y-8 pb-36 sm:pb-28 max-w-6xl mx-auto animate-in fade-in duration-300">
       
       {/* Top Hero Banner */}
       <div 

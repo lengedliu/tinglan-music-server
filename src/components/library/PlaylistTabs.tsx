@@ -1,5 +1,5 @@
 import React, { useRef, useState, memo } from 'react';
-import { Music, Heart, ListMusic, Plus, ChevronLeft, ChevronRight, Flame, Clock, Sparkles } from 'lucide-react';
+import { Music, Heart, ListMusic, Plus, ChevronLeft, ChevronRight, Flame, Clock, Sparkles, Link2 } from 'lucide-react';
 import { Playlist } from '../../types';
 
 export interface PlaylistTabsProps {
@@ -7,6 +7,7 @@ export interface PlaylistTabsProps {
   selectedPlaylistId: string;
   onSelectPlaylist: (id: string) => void;
   onOpenNewPlaylistModal: () => void;
+  onOpenImportPlaylistModal?: () => void;
   isLight: boolean;
   totalSongCount: number;
   favoriteSongCount: number;
@@ -20,6 +21,7 @@ export const PlaylistTabs: React.FC<PlaylistTabsProps> = memo(({
   selectedPlaylistId,
   onSelectPlaylist,
   onOpenNewPlaylistModal,
+  onOpenImportPlaylistModal,
   isLight,
   totalSongCount,
   favoriteSongCount,
@@ -285,7 +287,7 @@ export const PlaylistTabs: React.FC<PlaylistTabsProps> = memo(({
           onClick={() => {
             if (!hasDragged) onOpenNewPlaylistModal();
           }}
-          className={`flex items-center gap-1.5 px-4 py-2 rounded-full text-xs font-medium border border-dashed transition-all flex-shrink-0 shadow-sm ${
+          className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-medium border border-dashed transition-all flex-shrink-0 shadow-sm cursor-pointer ${
             isLight
               ? 'text-zinc-700 hover:text-zinc-950 bg-white hover:bg-zinc-50 border-zinc-300 hover:border-[#FF6700]'
               : 'text-zinc-300 hover:text-white bg-zinc-900/80 hover:bg-zinc-800 border-zinc-600 hover:border-[#FF6700]'
@@ -295,6 +297,25 @@ export const PlaylistTabs: React.FC<PlaylistTabsProps> = memo(({
           <Plus className="w-3.5 h-3.5 text-[#FF6700]" />
           <span>新建歌单</span>
         </button>
+
+        {/* Import External Playlist Pill Button */}
+        {onOpenImportPlaylistModal && (
+          <button
+            id="btn-import-external-playlist"
+            onClick={() => {
+              if (!hasDragged) onOpenImportPlaylistModal();
+            }}
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-medium border border-dashed transition-all flex-shrink-0 shadow-sm cursor-pointer ${
+              isLight
+                ? 'text-zinc-700 hover:text-zinc-950 bg-white hover:bg-zinc-50 border-zinc-300 hover:border-emerald-500'
+                : 'text-zinc-300 hover:text-white bg-zinc-900/80 hover:bg-zinc-800 border-zinc-600 hover:border-emerald-500'
+            }`}
+            title="导入网易云/QQ音乐/文本歌单"
+          >
+            <Link2 className="w-3.5 h-3.5 text-emerald-400" />
+            <span>导入外部歌单</span>
+          </button>
+        )}
       </div>
 
       {/* Scroll Right Button (desktop only) */}

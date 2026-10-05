@@ -142,7 +142,7 @@ export const PlayerBar: React.FC<PlayerBarProps> = memo(({
           onSeek={onSeek}
         />
 
-        <div className="max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-2 flex items-center justify-between gap-2 sm:gap-4 flex-1">
+        <div className="max-w-[1480px] w-full mx-auto px-4 sm:px-6 lg:px-8 py-2 flex items-center justify-between gap-2 sm:gap-4 flex-1">
           
           {/* Left: Track Info & ID3 Audio Spec Badge */}
           <TrackInfo

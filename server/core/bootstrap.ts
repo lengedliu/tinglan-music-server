@@ -157,6 +157,14 @@ export function bindVoiceCommandCallbacks(options: BootstrapOptions): void {
       });
       return res.success;
     },
+    playSongsQueue: async (songs, startIndex, deviceId) => {
+      const miotConfig = getMiotConfig();
+      const allDevs = deviceRepository.getAllDevices();
+      const targetDev = (deviceId && deviceRepository.getDeviceByDid(deviceId)) || (miotConfig.activeDeviceId && deviceRepository.getDeviceByDid(miotConfig.activeDeviceId)) || allDevs[0];
+      if (!targetDev || !songs || songs.length === 0) return false;
+      const res = await queueEngine.playQueue(songs as any, startIndex || 0, targetDev.did, targetDev.name);
+      return res.success;
+    },
     playPlaylist: async (playlistId, deviceId) => {
       const miotConfig = getMiotConfig();
       const allDevs = deviceRepository.getAllDevices();

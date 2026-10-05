@@ -1,0 +1,76 @@
+{
+  "enabled": true,
+  "activeProvider": "gemini",
+  "providers": {
+    "deepseek": {
+      "id": "deepseek",
+      "name": "DeepSeek (深度求索)",
+      "baseUrl": "https://api.deepseek.com/v1",
+      "model": "deepseek-chat",
+      "apiKey": "",
+      "defaultModel": "deepseek-chat",
+      "defaultBaseUrl": "https://api.deepseek.com/v1",
+      "description": "超高性价比与中文强意图推理，支持 deepseek-chat 及 deepseek-reasoner",
+      "badge": "深度求索",
+      "isConfigured": false,
+      "isFromEnv": false
+    },
+    "qwen": {
+      "id": "qwen",
+      "name": "通义千问 (Qwen)",
+      "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "model": "qwen-plus",
+      "apiKey": "",
+      "defaultModel": "qwen-plus",
+      "defaultBaseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "description": "阿里云通义千问，极强中文流行音乐与口语习惯理解，支持 qwen-plus / qwen-turbo",
+      "badge": "通义千问",
+      "isConfigured": false,
+      "isFromEnv": false
+    },
+    "zhipu": {
+      "id": "zhipu",
+      "name": "智谱 GLM",
+      "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+      "model": "glm-4-flash",
+      "apiKey": "",
+      "defaultModel": "glm-4-flash",
+      "defaultBaseUrl": "https://open.bigmodel.cn/api/paas/v4",
+      "description": "智谱清言大模型，支持 glm-4-flash / glm-4-plus，响应迅速、免费额度充沛",
+      "badge": "智谱清言",
+      "isConfigured": false,
+      "isFromEnv": false
+    },
+    "gemini": {
+      "id": "gemini",
+      "name": "Google Gemini",
+      "baseUrl": "https://generativelanguage.googleapis.com",
+      "model": "gemini-3.8-flash",
+      "apiKey": "",
+      "defaultModel": "gemini-3.8-flash",
+      "defaultBaseUrl": "https://generativelanguage.googleapis.com",
+      "description": "Google 原生大语言模型，极速推理 (~200ms)，支持 gemini-3.8-flash",
+      "badge": "Gemini",
+      "isConfigured": true,
+      "isFromEnv": true
+    },
+    "custom": {
+      "id": "custom",
+      "name": "自定义接入 / 本地 Ollama",
+      "baseUrl": "http://localhost:11434/v1",
+      "model": "qwen2.5:7b",
+      "apiKey": "",
+      "defaultModel": "qwen2.5:7b",
+      "defaultBaseUrl": "http://localhost:11434/v1",
+      "description": "家庭 NAS / 局域网本地私有化模型或任何 OpenAI 协议兼容端点（如 LM Studio, vLLM, OneAPI）",
+      "badge": "自定义/私有",
+      "isConfigured": false,
+      "isFromEnv": false
+    }
+  },
+  "temperature": 0.3,
+  "timeoutMs": 6000,
+  "enableSemanticVoiceSearch": true,
+  "enableLogDiagnostics": true,
+  "enableMusicInsight": true
+}

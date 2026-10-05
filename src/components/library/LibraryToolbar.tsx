@@ -9,7 +9,8 @@ import {
   SlidersHorizontal,
   Layers,
   Zap,
-  BarChart3
+  BarChart3,
+  Activity
 } from 'lucide-react';
 import { SongSortOption, LibrarySourceFilter } from '../../types';
 
@@ -32,6 +33,7 @@ export interface LibraryToolbarProps {
   onViewModeChange?: (mode: 'paginated' | 'virtual') => void;
   showInsights?: boolean;
   onToggleInsights?: () => void;
+  onOpenHealthDoctor?: () => void;
 }
 
 export const LibraryToolbar: React.FC<LibraryToolbarProps> = memo(({
@@ -52,7 +54,8 @@ export const LibraryToolbar: React.FC<LibraryToolbarProps> = memo(({
   viewMode = 'paginated',
   onViewModeChange,
   showInsights,
-  onToggleInsights
+  onToggleInsights,
+  onOpenHealthDoctor
 }) => {
   const [showExportMenu, setShowExportMenu] = useState(false);
 
@@ -241,6 +244,24 @@ export const LibraryToolbar: React.FC<LibraryToolbarProps> = memo(({
           >
             <BarChart3 className="w-3.5 h-3.5 text-amber-500" />
             <span>听歌分析</span>
+          </button>
+        )}
+
+        {/* Health Doctor, Watcher & Scraper Button */}
+        {onOpenHealthDoctor && (
+          <button
+            type="button"
+            onClick={onOpenHealthDoctor}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition border cursor-pointer ${
+              isLight
+                ? 'bg-purple-50 hover:bg-purple-100/80 text-purple-700 border-purple-200 shadow-sm'
+                : 'bg-purple-950/40 hover:bg-purple-900/60 text-purple-300 border-purple-500/30'
+            }`}
+            title="曲库健康诊断体检、实时监控增量状态、在线封面歌词刮削与同名去重"
+          >
+            <Activity className="w-3.5 h-3.5 text-purple-500" />
+            <span>曲库体检与刮削</span>
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" title="实时监控中" />
           </button>
         )}
 

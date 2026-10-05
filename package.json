@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
+    "@marsaud/smb2": "^0.18.0",
     "@tailwindcss/vite": "^4.1.14",
     "@travisvn/edge-tts": "^1.0.2",
     "@types/qrcode": "^1.5.6",

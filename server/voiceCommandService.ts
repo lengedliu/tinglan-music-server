@@ -4,6 +4,7 @@ import { Song, Playlist } from '../src/types';
 import { generateMinaRequestId, buildMinaHeaders } from './xiaomiPassport';
 import { computeSongMatchScore } from './pinyinHelper';
 import { xiaomiCircuitBreaker } from './circuitBreaker';
+import { aiService } from './core/aiService.js';
 
 export interface VoiceCommandRule {
   id: string;
@@ -50,6 +51,15 @@ export interface VoiceListenerConfig {
   adaptivePollingEnabled?: boolean;
   earlyInterceptionEnabled?: boolean;
   rules: VoiceCommandRule[];
+}
+
+export interface DialogueSessionContext {
+  lastQuery: string;
+  lastMatchedSongId: string;
+  lastMoodTitle: string;
+  lastQueueSongs: Song[];
+  lastCurrentIndex: number;
+  lastTimestamp: number;
 }
 
 const VOICE_CONFIG_FILE = path.join(process.cwd(), 'data', 'voice-config.json');
@@ -220,6 +230,7 @@ export class VoiceCommandService {
   private getSongsFn: (() => Song[]) | null = null;
   private getPlaylistsFn: (() => Playlist[]) | null = null;
   private playSongFn: ((song: Song, playlistName?: string, deviceId?: string) => Promise<boolean>) | null = null;
+  private playSongsQueueFn: ((songs: Song[], startIndex?: number, deviceId?: string) => Promise<boolean>) | null = null;
   private playPlaylistFn: ((playlistId: string, deviceId?: string) => Promise<boolean>) | null = null;
   private controlPlaybackFn: ((action: 'next' | 'prev' | 'pause' | 'stop' | 'resume' | 'volume_up' | 'volume_down', deviceId?: string) => Promise<boolean | { success: boolean; song?: any; message?: string }>) | null = null;
   private earlyStopFn: ((deviceId?: string) => Promise<any>) | null = null;
@@ -227,6 +238,9 @@ export class VoiceCommandService {
   private getAuthInfoFn: (() => { userId?: string; serviceToken?: string; devices: any[] }) | null = null;
 
   private slangRules: VoiceSlangRule[] = DEFAULT_SLANG_RULES;
+
+  // Item 4: Multi-turn Dialogue Session Context Map (TTL 90s)
+  private sessionContextMap = new Map<string, DialogueSessionContext>();
 
   private saveDialogueLogsTimeout: NodeJS.Timeout | null = null;
 
@@ -448,6 +462,7 @@ export class VoiceCommandService {
     getSongs: () => Song[];
     getPlaylists: () => Playlist[];
     playSong: (song: Song, playlistName?: string, deviceId?: string) => Promise<boolean>;
+    playSongsQueue?: (songs: Song[], startIndex?: number, deviceId?: string) => Promise<boolean>;
     playPlaylist: (playlistId: string, deviceId?: string) => Promise<boolean>;
     controlPlayback: (action: 'next' | 'prev' | 'pause' | 'stop' | 'resume' | 'volume_up' | 'volume_down', deviceId?: string) => Promise<boolean | { success: boolean; song?: Song | null; message?: string }>;
     earlyStop?: (deviceId?: string) => Promise<any>;
@@ -457,6 +472,7 @@ export class VoiceCommandService {
     this.getSongsFn = options.getSongs;
     this.getPlaylistsFn = options.getPlaylists;
     this.playSongFn = options.playSong;
+    this.playSongsQueueFn = options.playSongsQueue || null;
     this.playPlaylistFn = options.playPlaylist;
     this.controlPlaybackFn = options.controlPlayback;
     this.earlyStopFn = options.earlyStop || null;
@@ -848,6 +864,110 @@ export class VoiceCommandService {
       }
     }
 
+    // Item 4: Multi-turn Dialogue Follow-up & Correction Check (90s window)
+    const sessionKey = deviceId || 'global';
+    const activeSession = this.sessionContextMap.get(sessionKey);
+    const isSessionValid = activeSession && (now - activeSession.lastTimestamp < 90000);
+
+    if (isSessionValid) {
+      // 4.1 Direct Skip/Next in active mood queue
+      const isDirectSkip = /^(换一首|再换一首|换一首歌|切一首|切歌|不是这首|换个歌|换一个|不喜欢这首|不想听这个)$/.test(cleanQuery);
+      if (isDirectSkip && activeSession.lastQueueSongs && activeSession.lastQueueSongs.length > 1) {
+        if (this.earlyStopFn) await this.earlyStopFn(deviceId).catch(() => {});
+        activeSession.lastCurrentIndex = (activeSession.lastCurrentIndex + 1) % activeSession.lastQueueSongs.length;
+        const nextSong = activeSession.lastQueueSongs[activeSession.lastCurrentIndex];
+        
+        if (this.playSongFn) {
+          await this.playSongFn(nextSong, undefined, deviceId);
+        }
+        activeSession.lastTimestamp = now;
+        activeSession.lastMatchedSongId = nextSong.id;
+
+        const ttsText = `好的，为您切换至《${nextSong.title}》`;
+        if (this.sendTtsFn && deviceId) {
+          await this.sendTtsFn(deviceId, ttsText).catch(() => {});
+        }
+
+        const summary = `AI 多轮意图切歌: 《${nextSong.title}》 - ${nextSong.artist} (${activeSession.lastCurrentIndex + 1}/${activeSession.lastQueueSongs.length})`;
+        this.addLog({
+          id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          timestamp: Date.now(),
+          queryText: rawQuery,
+          matchedRuleId: 'rule_ai_multiturn_skip',
+          matchedRuleName: 'AI 多轮意图切歌',
+          actionSummary: summary,
+          status: 'matched',
+          source,
+          deviceId,
+          deviceName,
+          slangApplied,
+          slangTerm: matchedSlangTerm
+        });
+
+        return { matched: true, summary };
+      }
+
+      // 4.2 Contrast / Mood Refinement (e.g. "太吵了，来点更安静的", "换个欢快的", "来首节奏慢点的")
+      const isContrastAdjustment = /(太吵|太闹|更安静|安静点|更轻柔|欢快|节奏慢|换个风格|换个歌手|换成民谣|换成摇滚)/.test(cleanQuery);
+      if (isContrastAdjustment) {
+        const songs = this.getSongsFn ? this.getSongsFn() : [];
+        if (songs.length > 0) {
+          const currentSong = activeSession.lastQueueSongs[activeSession.lastCurrentIndex];
+          const contextualPrompt = `上一轮点歌需求是"${activeSession.lastQuery}"，当前正在播放《${currentSong?.title || '音乐'}》，用户提出了进一步调整需求："${rawQuery}"。请排除当前这首曲目，提炼新需求并推荐更契合的心境队列。`;
+          
+          try {
+            const aiResult = await aiService.parseVoiceIntent(contextualPrompt, songs as any);
+            if (aiResult.matched && aiResult.songId) {
+              const songToPlay = songs.find(s => s.id === aiResult.songId) || aiResult.primarySong;
+              if (songToPlay) {
+                if (this.earlyStopFn) await this.earlyStopFn(deviceId).catch(() => {});
+
+                if (this.playSongsQueueFn && Array.isArray(aiResult.playlistSongs) && aiResult.playlistSongs.length > 1) {
+                  await this.playSongsQueueFn(aiResult.playlistSongs, 0, deviceId);
+                } else if (this.playSongFn) {
+                  await this.playSongFn(songToPlay, undefined, deviceId);
+                }
+
+                if (this.sendTtsFn && deviceId && aiResult.ttsResponse) {
+                  await this.sendTtsFn(deviceId, aiResult.ttsResponse).catch(() => {});
+                }
+
+                // Update session
+                this.sessionContextMap.set(sessionKey, {
+                  lastQuery: `${activeSession.lastQuery} -> ${rawQuery}`,
+                  lastMatchedSongId: songToPlay.id,
+                  lastMoodTitle: aiResult.queueTitle || songToPlay.title,
+                  lastQueueSongs: aiResult.playlistSongs || [songToPlay],
+                  lastCurrentIndex: 0,
+                  lastTimestamp: now
+                });
+
+                const summary = `AI 多轮意图纠偏调整: 《${songToPlay.title}》 - ${songToPlay.artist} (${aiResult.reason || '多轮意图修正'})`;
+                this.addLog({
+                  id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                  timestamp: Date.now(),
+                  queryText: rawQuery,
+                  matchedRuleId: 'rule_ai_multiturn_refine',
+                  matchedRuleName: 'AI 多轮意图纠偏',
+                  actionSummary: summary,
+                  status: 'matched',
+                  source,
+                  deviceId,
+                  deviceName,
+                  slangApplied,
+                  slangTerm: matchedSlangTerm
+                });
+
+                return { matched: true, summary };
+              }
+            }
+          } catch (e: any) {
+            console.warn('[VoiceCommandService] Multi-turn refinement failed:', e.message);
+          }
+        }
+      }
+    }
+
     // Sort rules by specificity (control & playlist commands have higher priority than generic search)
     const enabledRules = [...this.config.rules.filter(r => r.enabled)].sort((a, b) => {
       if (a.actionType === 'play_song_search' && b.actionType !== 'play_song_search') return 1;
@@ -917,6 +1037,68 @@ export class VoiceCommandService {
           missedReason: err.message.includes('未检索到') ? 'unknown_song' : 'low_confidence'
         });
         return { matched: false, summary: err.message };
+      }
+    }
+
+    // 2. AI Large Language Model Semantic Voice Matching Fallback
+    const aiConfig = aiService.getConfig();
+    if (aiConfig.enabled && aiConfig.enableSemanticVoiceSearch) {
+      const songs = this.getSongsFn ? this.getSongsFn() : [];
+      if (songs.length > 0) {
+        try {
+          const aiResult = await aiService.parseVoiceIntent(rawQuery, songs as any);
+          if (aiResult.matched && aiResult.songId) {
+            const songToPlay = songs.find(s => s.id === aiResult.songId) || aiResult.primarySong;
+            if (songToPlay && (this.playSongsQueueFn || this.playSongFn)) {
+              if (this.earlyStopFn) await this.earlyStopFn(deviceId).catch(() => {});
+
+              // Item 2: Continuous Dynamic Mood Queue Playback
+              if (this.playSongsQueueFn && Array.isArray(aiResult.playlistSongs) && aiResult.playlistSongs.length > 1) {
+                await this.playSongsQueueFn(aiResult.playlistSongs, 0, deviceId);
+              } else if (this.playSongFn) {
+                await this.playSongFn(songToPlay, undefined, deviceId);
+              }
+
+              if (this.sendTtsFn && deviceId && aiResult.ttsResponse) {
+                await this.sendTtsFn(deviceId, aiResult.ttsResponse).catch(() => {});
+              }
+
+              // Update active dialogue session for multi-turn conversational follow-ups
+              this.sessionContextMap.set(deviceId || 'global', {
+                lastQuery: rawQuery,
+                lastMatchedSongId: songToPlay.id,
+                lastMoodTitle: aiResult.queueTitle || songToPlay.title,
+                lastQueueSongs: aiResult.playlistSongs || [songToPlay],
+                lastCurrentIndex: 0,
+                lastTimestamp: Date.now()
+              });
+
+              const activeProvider = aiConfig.providers[aiConfig.activeProvider];
+              const summary = (Array.isArray(aiResult.playlistSongs) && aiResult.playlistSongs.length > 1)
+                ? `AI 心境电台: 《${aiResult.queueTitle || songToPlay.title}》 (共 ${aiResult.playlistSongs.length} 首连续播放, 首曲: 《${songToPlay.title}》)`
+                : `AI 智能语义命中: 《${songToPlay.title}》 - ${songToPlay.artist} (${aiResult.reason || '意图契合'})`;
+
+              this.addLog({
+                id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                timestamp: Date.now(),
+                queryText: rawQuery,
+                matchedRuleId: 'rule_ai_semantic',
+                matchedRuleName: `AI 心境电台 (${activeProvider?.badge || '大模型'})`,
+                actionSummary: summary,
+                status: 'matched',
+                source,
+                deviceId,
+                deviceName,
+                slangApplied,
+                slangTerm: matchedSlangTerm
+              });
+
+              return { matched: true, summary };
+            }
+          }
+        } catch (aiErr: any) {
+          console.warn('[VoiceCommandService] AI voice search failed, falling back to ignored:', aiErr.message);
+        }
       }
     }
 

@@ -5,7 +5,8 @@ import {
   Music, 
   Server,
   Layers,
-  Zap
+  Zap,
+  HardDrive
 } from 'lucide-react';
 import { Song, Playlist, XiaomiDevice, SongSortOption, LibrarySourceFilter } from '../types';
 import { useTheme } from '../context/ThemeContext';
@@ -20,6 +21,9 @@ import { LibraryPagination } from './library/LibraryPagination';
 import { LibraryEmptyState } from './library/LibraryEmptyState';
 import { LibraryModals } from './library/LibraryModals';
 import { ListeningInsightsPanel } from './library/ListeningInsightsPanel';
+import { LibraryHealthDoctorModal } from './library/LibraryHealthDoctorModal';
+import { PlaylistImportModal } from './playlist/PlaylistImportModal';
+import { NasStorageModal } from './nas/NasStorageModal';
 import { useSongSelection } from './library/useSongSelection';
 import { VirtualList } from './VirtualList';
 import { 
@@ -105,6 +109,9 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [showInsights, setShowInsights] = useState(false);
+  const [showHealthDoctor, setShowHealthDoctor] = useState(false);
+  const [showImportPlaylistModal, setShowImportPlaylistModal] = useState(false);
+  const [showNasModal, setShowNasModal] = useState(false);
 
   // High-performance single-pass stats computation for tab badges
   const libraryStats = useMemo(() => {
@@ -404,6 +411,22 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
 
         {/* Global Action Toolbar */}
         <div className="flex flex-wrap items-center gap-1.5 sm:gap-2.5">
+          {/* NAS / WebDAV Remote Storage Mount */}
+          <button
+            id="btn-open-nas-modal"
+            type="button"
+            onClick={() => setShowNasModal(true)}
+            className={`flex items-center gap-1.5 px-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-xl text-xs font-semibold transition-all duration-200 border cursor-pointer ${
+              isLight
+                ? 'bg-blue-50 hover:bg-blue-100/90 text-blue-700 border-blue-200 shadow-sm'
+                : 'bg-blue-950/40 hover:bg-blue-900/60 text-blue-300 border-blue-500/30 shadow-sm'
+            }`}
+            title="挂载家庭 NAS、Alist、SMB 或 WebDAV 远程曲库"
+          >
+            <HardDrive className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-blue-500" />
+            <span>NAS 远程挂载</span>
+          </button>
+
           {/* Scan Music Folder */}
           <button
             id="btn-scan-music-dir"
@@ -471,6 +494,7 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
         selectedPlaylistId={selectedPlaylistId}
         onSelectPlaylist={(id) => setSelectedPlaylistId(id)}
         onOpenNewPlaylistModal={() => setShowNewPlaylistModal(true)}
+        onOpenImportPlaylistModal={() => setShowImportPlaylistModal(true)}
         isLight={isLight}
         totalSongCount={songs.length}
         favoriteSongCount={libraryStats.favCount}
@@ -550,6 +574,8 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
         onViewModeChange={handleViewModeChange}
         showInsights={showInsights}
         onToggleInsights={() => setShowInsights(prev => !prev)}
+        onOpenHealthDoctor={() => setShowHealthDoctor(true)}
+        onOpenNasModal={() => setShowNasModal(true)}
       />
 
       {/* 5. Main Song Table Container */}
@@ -763,6 +789,48 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
         onCloseClearConfirmModal={() => setShowClearConfirmModal(false)}
         onClearAllSongs={onClearAllSongs}
         totalSongsCount={songs.length}
+      />
+
+      {/* Library Health Doctor & Metadata Scraper Studio */}
+      <LibraryHealthDoctorModal
+        isOpen={showHealthDoctor}
+        onClose={() => setShowHealthDoctor(false)}
+        songs={songs}
+        onRefreshLibrary={onScanMusicDir}
+        onShowToast={(title, message, type) => {
+          console.log(`[Toast] ${title}: ${message} (${type})`);
+        }}
+      />
+
+      {/* External Playlist Smart Import Modal */}
+      <PlaylistImportModal
+        isOpen={showImportPlaylistModal}
+        onClose={() => setShowImportPlaylistModal(false)}
+        allSongs={songs}
+        onPlaySong={onPlaySong}
+        onImportSuccess={(createdPlaylist, playImmediately) => {
+          if (onCreatePlaylist) {
+            // Already saved in backend, trigger refresh/select
+            setSelectedPlaylistId(createdPlaylist.id);
+          }
+          if (playImmediately && createdPlaylist.songIds.length > 0) {
+            const playlistSongs = createdPlaylist.songIds
+              .map(id => songs.find(s => s.id === id))
+              .filter((s): s is Song => Boolean(s));
+            if (playlistSongs.length > 0 && onPlayAll) {
+              onPlayAll(playlistSongs, 0);
+            }
+          }
+        }}
+      />
+
+      {/* NAS / WebDAV Remote Storage Modal */}
+      <NasStorageModal
+        isOpen={showNasModal}
+        onClose={() => setShowNasModal(false)}
+        onSyncComplete={() => {
+          if (onScanMusicDir) onScanMusicDir();
+        }}
       />
     </div>
   );

@@ -23,6 +23,8 @@ import { VinylPlayerModal } from './components/VinylPlayerModal';
 import { MultiRoomCastModal } from './components/MultiRoomCastModal';
 import { TrackInspectorModal } from './components/TrackInspectorModal';
 import { ForceChangePasswordModal } from './components/ForceChangePasswordModal';
+import { FamilyUserModal } from './components/family/FamilyUserModal';
+import { BackupModal } from './components/backup/BackupModal';
 import { useTheme } from './context/ThemeContext';
 import { usePlaybackTimeActions } from './context/PlaybackTimeContext';
 import { useAppEvents } from './context/AppEventsContext';
@@ -51,6 +53,8 @@ export default function App() {
   const [securityStatus, setSecurityStatus] = useState<SecurityStatus | null>(null);
   const [isForcePasswordModalOpen, setIsForcePasswordModalOpen] = useState(false);
   const [dismissedDefaultPasswordAlert, setDismissedDefaultPasswordAlert] = useState(false);
+  const [showFamilyModal, setShowFamilyModal] = useState(false);
+  const [showBackupModal, setShowBackupModal] = useState(false);
 
   // Navigation: 音乐曲库, 广播与播客, 歌词播放, 智能音箱, Subsonic API, 日志, 设置, 赞助
   const [activeTab, setActiveTab] = useState<'library' | 'radio' | 'lyrics' | 'xiaomi' | 'subsonic' | 'logs' | 'settings' | 'sponsor'>(() => {
@@ -2572,7 +2576,7 @@ export default function App() {
           {/* Top Warning Ribbon for Default Admin Password */}
           {isUsingDefaultAdminPassword && (
             <div className="bg-gradient-to-r from-amber-600 via-rose-600 to-amber-600 text-white text-xs px-4 py-2 flex items-center justify-between shadow-md relative z-50 animate-fade-in shrink-0">
-              <div className="max-w-7xl mx-auto w-full flex items-center justify-between gap-3">
+              <div className="max-w-[1480px] mx-auto w-full flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2 flex-1 min-w-0">
                   <span className="p-1 rounded bg-black/20 text-amber-200 flex-shrink-0 animate-pulse">⚠️</span>
                   <span className="font-semibold truncate">
@@ -2604,6 +2608,8 @@ export default function App() {
             securityAuthEnabled={Boolean(securityStatus?.globalRequireAuth ?? securityStatus?.authRequired)}
             onOpenAuthModal={() => setIsAuthModalOpen(true)}
             onLogout={handleLogout}
+            onOpenFamilyModal={() => setShowFamilyModal(true)}
+            onOpenBackupModal={() => setShowBackupModal(true)}
           />
         </header>
 
@@ -2612,7 +2618,7 @@ export default function App() {
           ref={mainContentRef}
           className="flex-1 min-h-0 w-full overflow-y-auto overflow-x-hidden relative z-10 scroll-smooth"
         >
-          <div className="max-w-7xl w-full mx-auto px-3 sm:px-6 lg:px-8 pt-4 sm:pt-6 pb-36 md:pb-28">
+          <div className="max-w-[1480px] w-full mx-auto px-3 sm:px-6 lg:px-8 pt-4 sm:pt-6 pb-36 md:pb-28">
             {activeTab === 'library' && (
             <MusicLibrary
               songs={songs}
@@ -3113,6 +3119,25 @@ export default function App() {
           showToast('管理员密码已成功更新！', '系统安全加固完成，已自动保持登录状态', 'success');
         }}
         username={user?.username || 'admin'}
+      />
+
+      {/* Multi-User Family Space Modal */}
+      <FamilyUserModal
+        isOpen={showFamilyModal}
+        onClose={() => setShowFamilyModal(false)}
+        xiaomiDevices={devices}
+        onUserSwitched={(switchedUser) => {
+          showToast('身份无缝切换成功', `当前已切换至家庭成员：${switchedUser.name}`, 'success');
+        }}
+      />
+
+      {/* Disaster Recovery Cloud Backup Modal */}
+      <BackupModal
+        isOpen={showBackupModal}
+        onClose={() => setShowBackupModal(false)}
+        onRestoreComplete={() => {
+          showToast('全量恢复完成', '建议刷新页面以同步最新的音箱与家庭设置', 'success');
+        }}
       />
 
     </div>

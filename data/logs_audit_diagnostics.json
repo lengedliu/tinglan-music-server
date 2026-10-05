@@ -1,104 +1,109 @@
 [
   {
-    "id": "log_1790555701677_w5b2t",
-    "timestamp": 1790555701677,
-    "timeFormatted": "00:35:01.677",
+    "id": "log_1791175827798_tcql4",
+    "timestamp": 1791175827798,
+    "timeFormatted": "04:50:27.798",
     "category": "audit",
     "level": "info",
-    "traceId": "tr_cutil7",
-    "title": "用户登录成功",
-    "message": "用户「admin」通过 IP 127.0.0.1 成功登录系统",
+    "traceId": "tr_s8prpl",
+    "title": "已执行 AI 智能故障诊断",
+    "message": "AI 模型 (gemini-3.8-flash) 诊断结论: 系统当前运行状态良好无报错，处于就绪待机空闲状态。 (耗时: 3568ms)",
     "details": {
-      "username": "admin",
-      "role": "admin"
-    },
-    "clientIp": "127.0.0.1"
-  },
-  {
-    "id": "log_1790555952246_kcupn",
-    "timestamp": 1790555952246,
-    "timeFormatted": "00:39:12.246",
-    "category": "audit",
-    "level": "info",
-    "title": "密码修改成功",
-    "message": "用户「admin」的密码已成功更新并签发安全凭证",
-    "traceId": "tr_omyamr",
-    "details": {
-      "targetUsername": "admin",
-      "operator": "self-service/init"
-    },
-    "clientIp": "127.0.0.1"
-  },
-  {
-    "id": "log_1790555956579_lnzkm",
-    "timestamp": 1790555956579,
-    "timeFormatted": "00:39:16.579",
-    "category": "audit",
-    "level": "info",
-    "title": "密码修改成功",
-    "message": "用户「admin」的密码已成功更新并签发安全凭证",
-    "traceId": "tr_iygats",
-    "details": {
-      "targetUsername": "admin",
-      "operator": "self-service/init"
-    },
-    "clientIp": "127.0.0.1"
-  },
-  {
-    "id": "log_1790579903437_rwazf",
-    "timestamp": 1790579903437,
-    "timeFormatted": "07:18:23.437",
-    "category": "audit",
-    "level": "info",
-    "title": "密码修改成功",
-    "message": "用户「admin」的密码已成功更新并签发安全凭证",
-    "traceId": "tr_gpycd7",
-    "details": {
-      "targetUsername": "admin",
-      "operator": "self-service/init"
-    },
-    "clientIp": "127.0.0.1"
-  },
-  {
-    "id": "log_1790579907801_uarve",
-    "timestamp": 1790579907801,
-    "timeFormatted": "07:18:27.801",
-    "category": "audit",
-    "level": "info",
-    "title": "密码修改成功",
-    "message": "用户「admin」的密码已成功更新并签发安全凭证",
-    "traceId": "tr_8m27hf",
-    "details": {
-      "targetUsername": "admin",
-      "operator": "self-service/init"
-    },
-    "clientIp": "127.0.0.1"
-  },
-  {
-    "id": "log_1790612254371_t1xby",
-    "timestamp": 1790612254371,
-    "timeFormatted": "16:17:34.371",
-    "category": "cast",
-    "level": "warn",
-    "title": "[定时自动化] 小爱音箱Pro 播报: “夜深了，为您调低音量，祝您晚安好梦。”",
-    "message": "协议:  | 场景: 「🌙 夜间睡前舒缓问候 & 自动调低音量」 | 状态: 所有通道均未能送达 (已尝试通道: 高清音频串流投播 (Audio Stream TTS))。请检查米家账号是否保持登录状态或在设置中重新扫码绑定。",
-    "traceId": "tr_d09bn5",
-    "details": {
-      "type": "tts"
+      "success": true,
+      "latencyMs": 3568,
+      "modelUsed": "gemini-3.8-flash",
+      "summary": "系统当前运行状态良好无报错，处于就绪待机空闲状态。",
+      "rootCause": "系统指标正常，错误计数为零，近期无音频串流及播放请求记录。",
+      "recommendations": [
+        "服务运行正常，可直接通过控制端或小爱音箱发起播放以建立音频流",
+        "若曾发起播放却未被记录，请检查控制端与音箱是否处于同一局域网且未开启 AP 隔离",
+        "排查路由器 mDNS/UPnP 广播设置，确保 Mina 及 DLNA 设备发现服务正常"
+      ],
+      "severity": "normal"
     }
   },
   {
-    "id": "log_1790612254376_6ym5u",
-    "timestamp": 1790612254376,
-    "timeFormatted": "16:17:34.376",
-    "category": "automation",
+    "id": "log_1791176027406_xylp8",
+    "timestamp": 1791176027406,
+    "timeFormatted": "04:53:47.406",
+    "category": "system",
     "level": "info",
-    "title": "自动化场景触发成功",
-    "message": "场景「🌙 夜间睡前舒缓问候 & 自动调低音量」(手动) 执行成功: 【小爱音箱响应】小爱音箱Pro: TTS提示 (所有通道均未能送达 (已尝试通道: 高清音频串流投播 (Audio Stream TTS))。请检查米家账号是否保持登录状态或在设置中重新扫码绑定。)",
-    "traceId": "tr_2xgn92",
+    "traceId": "tr_x0e9bd",
+    "title": "AI 大模型配置已更新",
+    "message": "当前活跃模型切换为: Google Gemini",
     "details": {
-      "sceneId": "scene_night_lullaby",
-      "actionType": "tts_announce"
+      "activeProvider": "gemini",
+      "enabled": false
+    }
+  },
+  {
+    "id": "log_1791176090404_3m8rk",
+    "timestamp": 1791176090404,
+    "timeFormatted": "04:54:50.404",
+    "category": "system",
+    "level": "info",
+    "traceId": "tr_3ebhs4",
+    "title": "AI 大模型配置已更新",
+    "message": "当前活跃模型切换为: DeepSeek (深度求索)",
+    "details": {
+      "activeProvider": "deepseek",
+      "enabled": false
+    }
+  },
+  {
+    "id": "log_1791176103076_lvei3",
+    "timestamp": 1791176103076,
+    "timeFormatted": "04:55:03.076",
+    "category": "system",
+    "level": "info",
+    "traceId": "tr_c6xbk1",
+    "title": "AI 大模型配置已更新",
+    "message": "当前活跃模型切换为: DeepSeek (深度求索)",
+    "details": {
+      "activeProvider": "deepseek",
+      "enabled": false
+    }
+  },
+  {
+    "id": "log_1791176609200_epepm",
+    "timestamp": 1791176609200,
+    "timeFormatted": "05:03:29.200",
+    "category": "system",
+    "level": "info",
+    "traceId": "tr_dvhxtb",
+    "title": "AI 大模型配置已更新",
+    "message": "当前活跃模型切换为: DeepSeek (深度求索)",
+    "details": {
+      "activeProvider": "deepseek",
+      "enabled": false
+    }
+  },
+  {
+    "id": "log_1791176612837_0dyfe",
+    "timestamp": 1791176612837,
+    "timeFormatted": "05:03:32.837",
+    "category": "system",
+    "level": "info",
+    "traceId": "tr_kfmpoi",
+    "title": "AI 大模型配置已更新",
+    "message": "当前活跃模型切换为: DeepSeek (深度求索)",
+    "details": {
+      "activeProvider": "deepseek",
+      "enabled": false
+    }
+  },
+  {
+    "id": "log_1791177405970_817pw",
+    "timestamp": 1791177405970,
+    "timeFormatted": "05:16:45.970",
+    "category": "system",
+    "level": "info",
+    "title": "AI 大模型配置已更新",
+    "message": "当前活跃模型切换为: Google Gemini",
+    "traceId": "tr_fja804",
+    "details": {
+      "activeProvider": "gemini",
+      "enabled": true
     }
   }
 ]
