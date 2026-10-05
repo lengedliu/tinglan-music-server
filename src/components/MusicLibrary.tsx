@@ -6,10 +6,26 @@ import {
   Server,
   Layers,
   Zap,
-  HardDrive
+  HardDrive,
+  ShieldAlert,
+  Sparkles,
+  UserCheck,
+  X
 } from 'lucide-react';
 import { Song, Playlist, XiaomiDevice, SongSortOption, LibrarySourceFilter } from '../types';
 import { useTheme } from '../context/ThemeContext';
+import { apiFetch } from '../utils/api';
+import { useAppEvents } from '../context/AppEventsContext';
+
+export interface FamilyUser {
+  id: string;
+  name: string;
+  avatar: string;
+  role: 'admin' | 'member' | 'kid';
+  hasPin?: boolean;
+  assignedSpeakerDid?: string;
+  createdAt: number;
+}
 import { SongRow } from './library/SongRow';
 import { PlaylistTabs } from './library/PlaylistTabs';
 import { LibraryToolbar } from './library/LibraryToolbar';
@@ -112,6 +128,56 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
   const [showHealthDoctor, setShowHealthDoctor] = useState(false);
   const [showImportPlaylistModal, setShowImportPlaylistModal] = useState(false);
   const [showNasModal, setShowNasModal] = useState(false);
+
+  // Active Family User state
+  const [activeFamilyUser, setActiveFamilyUser] = useState<FamilyUser | null>(null);
+  const [dismissedPerspectiveUserIds, setDismissedPerspectiveUserIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('tinglan_dismissed_perspective_users');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const handleDismissPerspectiveBanner = (userId: string) => {
+    setDismissedPerspectiveUserIds(prev => {
+      const next = [...prev, userId];
+      try {
+        localStorage.setItem('tinglan_dismissed_perspective_users', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  const fetchActiveFamilyUser = useCallback(async () => {
+    try {
+      const res = await apiFetch('/api/family/users');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.activeUser) {
+          setActiveFamilyUser(data.activeUser);
+        }
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    fetchActiveFamilyUser();
+  }, [fetchActiveFamilyUser]);
+
+  const { subscribe } = useAppEvents();
+
+  useEffect(() => {
+    const unsub = subscribe('family:user_changed', (evt: any) => {
+      if (evt?.user) {
+        setActiveFamilyUser(evt.user);
+      } else {
+        fetchActiveFamilyUser();
+      }
+    });
+    return () => unsub();
+  }, [subscribe, fetchActiveFamilyUser]);
 
   // High-performance single-pass stats computation for tab badges
   const libraryStats = useMemo(() => {
@@ -219,7 +285,16 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
     setSongToAddToPlaylist(s);
   }, []);
 
-  // Filter songs based on search, playlist, and source
+  // Filter Playlists based on privacy settings & active family user
+  const visiblePlaylists = useMemo(() => {
+    return playlists.filter(p => {
+      if (p.isShared !== false) return true;
+      if (activeFamilyUser && p.ownerUserId === activeFamilyUser.id) return true;
+      return false;
+    });
+  }, [playlists, activeFamilyUser]);
+
+  // Filter songs based on search, playlist, source, and Kid Mode
   const filteredSongs = useMemo(() => {
     let result = songs;
 
@@ -233,7 +308,7 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
     } else if (selectedPlaylistId === 'dynamic:lossless') {
       result = losslessSongs;
     } else if (selectedPlaylistId !== 'all') {
-      const targetPl = playlists.find(p => p.id === selectedPlaylistId);
+      const targetPl = visiblePlaylists.find(p => p.id === selectedPlaylistId);
       if (targetPl) {
         result = result.filter(s => targetPl.songIds.includes(s.id));
       }
@@ -246,6 +321,15 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
       result = result.filter(s => s.source === 'navidrome');
     } else if (sourceFilter === 'favorites') {
       result = result.filter(s => s.isFavorite);
+    }
+
+    // 3. Kid Mode Auto-Filtering
+    if (activeFamilyUser?.role === 'kid') {
+      const kidKeywords = ['儿歌', '儿童', '古诗', '国学', '故事', '动画', '童谣', '宝贝', '睡前', '三字经', '唐诗', '胎教', '少儿', '贝瓦', '巧虎', '宝宝', '摇篮曲', '音乐盒', '小猪', '迪士尼', '卡农', 'lullaby', 'nursery'];
+      result = result.filter(s => {
+        const text = `${s.title} ${s.artist} ${s.album} ${s.genre || ''}`.toLowerCase();
+        return kidKeywords.some(kw => text.includes(kw.toLowerCase()));
+      });
     }
 
     // 3. Filter by search query (multi-token search with fast substring matching)
@@ -472,6 +556,55 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
         </div>
       </div>
 
+      {/* 1.5 Active Family User Perspective Banner */}
+      {activeFamilyUser && !dismissedPerspectiveUserIds.includes(activeFamilyUser.id) && (
+        <div className={`p-3.5 rounded-2xl border mb-4 flex items-center justify-between text-xs font-semibold animate-in fade-in ${
+          activeFamilyUser.role === 'kid'
+            ? isLight ? 'bg-purple-50 border-purple-200 text-purple-900' : 'bg-purple-900/20 border-purple-500/30 text-purple-200'
+            : isLight ? 'bg-orange-50/90 border-orange-200 text-orange-900' : 'bg-orange-500/10 border-orange-500/20 text-orange-200'
+        }`}>
+          <div className="flex items-center gap-2.5">
+            <span className="text-xl">{activeFamilyUser.avatar}</span>
+            <div>
+              <div className="font-bold text-xs flex items-center gap-1.5">
+                {activeFamilyUser.role === 'kid' ? (
+                  <>
+                    <span>儿童保护与精选模式已开启</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-400 font-mono">
+                      儿歌/故事过滤中
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span>当前已进入 [{activeFamilyUser.name}] 的个人音乐空间</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#FF6700]/20 text-[#FF6700] font-medium">
+                      {activeFamilyUser.role === 'admin' ? '全家主主控' : '家庭成员视角'}
+                    </span>
+                  </>
+                )}
+              </div>
+              <div className="text-[11px] opacity-80 mt-0.5">
+                {activeFamilyUser.role === 'kid'
+                  ? `当前成员：${activeFamilyUser.name} · 已精选适合小朋友的儿歌、古诗、国学与睡前故事，安全过滤重摇滚等曲目。`
+                  : `享用独立专属红心 (${libraryStats.favCount} 首) · 共展示 ${visiblePlaylists.length} 个全家共享与个人私有歌单`
+                }
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => handleDismissPerspectiveBanner(activeFamilyUser.id)}
+            className={`p-1.5 rounded-xl transition cursor-pointer flex-shrink-0 ${
+              isLight ? 'text-zinc-400 hover:text-zinc-700 hover:bg-black/5' : 'text-zinc-400 hover:text-white hover:bg-white/10'
+            }`}
+            title="关闭此视角提示"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* 2. Cross-Device Resume Points Shelf (Phase 1) */}
       <ResumePointsShelf
         onPlaySong={(s, pos) => {
@@ -490,7 +623,7 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
 
       {/* 3. Playlist Tabs Strip */}
       <PlaylistTabs
-        playlists={playlists}
+        playlists={visiblePlaylists}
         selectedPlaylistId={selectedPlaylistId}
         onSelectPlaylist={(id) => setSelectedPlaylistId(id)}
         onOpenNewPlaylistModal={() => setShowNewPlaylistModal(true)}

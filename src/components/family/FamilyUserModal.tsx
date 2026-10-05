@@ -111,6 +111,9 @@ export const FamilyUserModal: React.FC<FamilyUserModalProps> = ({
         setActiveUser(data.activeUser);
         setSelectedUserForSwitch(null);
         setPinInput('');
+        try {
+          localStorage.setItem('tinglan_active_family_user_id', data.activeUser.id);
+        } catch {}
         if (onUserSwitched) onUserSwitched(data.activeUser);
         fetchUsers();
       } else {

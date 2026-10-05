@@ -1536,23 +1536,6 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
           </button>
 
           <button
-            id="subtab-rpc"
-            onClick={() => setActiveSubTab('rpc')}
-            className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition whitespace-nowrap cursor-pointer ${
-              activeSubTab === 'rpc'
-                ? isLight 
-                  ? 'bg-[#FF6700] text-white font-bold shadow-[0_2px_10px_rgba(255,103,0,0.3)]' 
-                  : 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40 font-semibold shadow-[0_0_12px_rgba(255,103,0,0.2)]'
-                : isLight
-                  ? 'text-zinc-600 hover:text-zinc-950 hover:bg-zinc-100 border border-zinc-200'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-white/5'
-            }`}
-          >
-            <Code className={`w-4 h-4 ${activeSubTab === 'rpc' && isLight ? 'text-white' : 'text-purple-500'}`} />
-            <span>MIoT RPC 控制台</span>
-          </button>
-
-          <button
             id="subtab-strategy"
             onClick={() => setActiveSubTab('strategy')}
             className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs sm:text-sm font-medium transition whitespace-nowrap cursor-pointer ${
@@ -1584,6 +1567,23 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
           >
             <Settings className={`w-4 h-4 ${activeSubTab === 'settings' && isLight ? 'text-white' : 'text-blue-500'}`} />
             <span>协议与串流配置</span>
+          </button>
+
+          <button
+            id="subtab-rpc"
+            onClick={() => setActiveSubTab('rpc')}
+            title="MIoT RPC 控制台"
+            className={`p-2.5 rounded-full transition flex items-center justify-center cursor-pointer ${
+              activeSubTab === 'rpc'
+                ? isLight 
+                  ? 'bg-[#FF6700] text-white font-bold shadow-[0_2px_10px_rgba(255,103,0,0.3)]' 
+                  : 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40 font-semibold shadow-[0_0_12px_rgba(255,103,0,0.2)]'
+                : isLight
+                  ? 'text-zinc-600 hover:text-zinc-950 hover:bg-zinc-100 border border-zinc-200'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5 border border-white/5'
+            }`}
+          >
+            <Code className={`w-4 h-4 ${activeSubTab === 'rpc' && isLight ? 'text-white' : 'text-purple-500'}`} />
           </button>
         </div>
       </div>

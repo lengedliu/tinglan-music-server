@@ -61,6 +61,8 @@ export interface Playlist {
   songIds: string[];
   createdAt: string;
   isDynamic?: boolean;
+  isShared?: boolean;
+  ownerUserId?: string;
 }
 
 export interface XiaomiDeviceStatus {

@@ -27,6 +27,7 @@ export class FamilyUserService {
   private usersPath: string = path.join(process.cwd(), 'data', 'family_users.json');
   private favoritesPath: string = path.join(process.cwd(), 'data', 'user_favorites.json');
   private historyPath: string = path.join(process.cwd(), 'data', 'user_history.json');
+  private activeUserPath: string = path.join(process.cwd(), 'data', 'active_user.json');
 
   private users: FamilyUser[] = [];
   private favoritesMap: Record<string, string[]> = {}; // userId -> songIds
@@ -51,6 +52,17 @@ export class FamilyUserService {
     } catch {
       this.users = [];
     }
+
+    // Load activeUserId
+    try {
+      if (fs.existsSync(this.activeUserPath)) {
+        const raw = fs.readFileSync(this.activeUserPath, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.activeUserId) {
+          this.activeUserId = parsed.activeUserId;
+        }
+      }
+    } catch {}
 
     // Ensure default initial family members if empty
     if (!this.users || this.users.length === 0) {
@@ -135,6 +147,11 @@ export class FamilyUserService {
     }
 
     this.activeUserId = userId;
+    try {
+      fs.writeFileSync(this.activeUserPath, JSON.stringify({ activeUserId: this.activeUserId, updatedAt: Date.now() }, null, 2), 'utf-8');
+    } catch (err) {
+      console.error('[FamilyUserService] Failed to save active_user.json:', err);
+    }
     appEventBus.broadcast('family:user_changed', { activeUserId: this.activeUserId, user: target });
     return target;
   }

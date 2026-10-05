@@ -769,7 +769,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 系统设置与管理中心
               </h1>
               <span className="text-xs px-2.5 py-0.5 rounded-full bg-zinc-800 text-zinc-300 border border-white/10 font-mono">
-                v1.4.3 MIoT
+                v2.0.0 Pro
               </span>
             </div>
             <p className="text-xs sm:text-sm text-zinc-400 mt-1 leading-relaxed">
@@ -2005,7 +2005,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
                 </div>
                 <div className="flex justify-between border-b border-white/5 pb-1.5">
                   <span className="text-zinc-500">服务版本</span>
-                  <span className="font-mono text-[#FF6700]">v1.4.3 MIoT-Spec</span>
+                  <span className="font-mono text-[#FF6700]">v2.0.0 Pro (MIoT-Spec & Family Hub)</span>
                 </div>
                 <div className="flex justify-between border-b border-white/5 pb-1.5">
                   <span className="text-zinc-500">服务通信端口</span>

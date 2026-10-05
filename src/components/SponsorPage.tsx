@@ -313,11 +313,12 @@ export const SponsorPage: React.FC<SponsorPageProps> = ({ onShowToast }) => {
                   <span className="text-[10px] text-zinc-500 font-mono">TL7x9...8Kp2Q</span>
                 </div>
                 <button
-                  onClick={() => handleCopy('TL7x9qMnpRt9vK4wLmZ1o8Kp2Q', 'USDT地址')}
-                  className="px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 transition flex items-center gap-1 text-[11px] cursor-pointer"
+                  type="button"
+                  onClick={(e) => e.preventDefault()}
+                  className="px-2.5 py-1.5 rounded-lg bg-zinc-800 text-zinc-400 flex items-center gap-1 text-[11px] cursor-default"
                 >
-                  {copiedKey === 'USDT地址' ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                  <span>{copiedKey === 'USDT地址' ? '已复制' : '复制地址'}</span>
+                  <Copy className="w-3 h-3" />
+                  <span>复制地址</span>
                 </button>
               </div>
             </div>

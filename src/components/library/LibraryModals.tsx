@@ -18,7 +18,7 @@ export interface LibraryModalsProps {
   // 1. New Playlist Modal
   showNewPlaylistModal: boolean;
   onCloseNewPlaylistModal: () => void;
-  onCreatePlaylist: (name: string, description: string) => void;
+  onCreatePlaylist: (name: string, description: string, isShared?: boolean) => void;
 
   // 2. Add Single Song to Playlist Modal
   songToAddToPlaylist: Song | null;
@@ -72,6 +72,7 @@ export const LibraryModals: React.FC<LibraryModalsProps> = ({
   // New playlist state
   const [newPlaylistName, setNewPlaylistName] = useState('');
   const [newPlaylistDesc, setNewPlaylistDesc] = useState('');
+  const [newPlaylistIsShared, setNewPlaylistIsShared] = useState(true);
 
   // Inline playlist creation in Add Single Song Modal
   const [inlineNewPlaylistName, setInlineNewPlaylistName] = useState('');
@@ -91,9 +92,10 @@ export const LibraryModals: React.FC<LibraryModalsProps> = ({
   const handleCreatePlaylistSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newPlaylistName.trim()) return;
-    onCreatePlaylist(newPlaylistName.trim(), newPlaylistDesc.trim());
+    onCreatePlaylist(newPlaylistName.trim(), newPlaylistDesc.trim(), newPlaylistIsShared);
     setNewPlaylistName('');
     setNewPlaylistDesc('');
+    setNewPlaylistIsShared(true);
     onCloseNewPlaylistModal();
   };
 
@@ -135,11 +137,42 @@ export const LibraryModals: React.FC<LibraryModalsProps> = ({
                   placeholder="歌单介绍与场景..."
                   value={newPlaylistDesc}
                   onChange={(e) => setNewPlaylistDesc(e.target.value)}
-                  rows={3}
-                  className={`w-full px-4 py-2.5 border rounded-xl text-sm focus:outline-none focus:border-[#FF6700] focus:ring-1 focus:ring-[#FF6700]/50 ${
+                  rows={2}
+                  className={`w-full px-4 py-2 border rounded-xl text-sm focus:outline-none focus:border-[#FF6700] focus:ring-1 focus:ring-[#FF6700]/50 ${
                     isLight ? 'bg-zinc-50 border-zinc-300 text-zinc-950 placeholder-zinc-400' : 'bg-zinc-950/80 border-white/10 text-zinc-100'
                   }`}
                 />
+              </div>
+
+              <div>
+                <label className={`block text-xs mb-1.5 font-semibold ${isLight ? 'text-zinc-700' : 'text-zinc-400'}`}>公开与归属权限</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setNewPlaylistIsShared(true)}
+                    className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
+                      newPlaylistIsShared
+                        ? 'border-[#FF6700] bg-[#FF6700]/10 text-[#FF6700] font-bold'
+                        : isLight ? 'border-zinc-200 bg-zinc-50 text-zinc-700 hover:bg-zinc-100' : 'border-white/10 bg-zinc-950/50 text-zinc-400 hover:bg-white/5'
+                    }`}
+                  >
+                    <div className="text-xs font-semibold flex items-center gap-1">🌐 全家公开共享</div>
+                    <div className="text-[10px] opacity-75 mt-0.5">任何家庭成员均可看见与播放</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setNewPlaylistIsShared(false)}
+                    className={`p-2.5 rounded-xl border text-left transition cursor-pointer ${
+                      !newPlaylistIsShared
+                        ? 'border-[#FF6700] bg-[#FF6700]/10 text-[#FF6700] font-bold'
+                        : isLight ? 'border-zinc-200 bg-zinc-50 text-zinc-700 hover:bg-zinc-100' : 'border-white/10 bg-zinc-950/50 text-zinc-400 hover:bg-white/5'
+                    }`}
+                  >
+                    <div className="text-xs font-semibold flex items-center gap-1">🔒 仅自己可见</div>
+                    <div className="text-[10px] opacity-75 mt-0.5">仅当前成员身份可查看与播放</div>
+                  </button>
+                </div>
               </div>
               <div className="flex items-center justify-end gap-3 pt-2">
                 <button

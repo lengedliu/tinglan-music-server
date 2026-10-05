@@ -2010,7 +2010,16 @@ export default function App() {
     handlePlaySong(fallbackSong);
   };
 
-  const handleCreatePlaylist = async (name: string, description: string) => {
+  const handleCreatePlaylist = async (name: string, description: string, isShared: boolean = true) => {
+    let activeUserId = 'user-admin';
+    try {
+      const familyUserRes = await apiFetch('/api/family/users');
+      if (familyUserRes.ok) {
+        const familyData = await familyUserRes.json();
+        if (familyData.activeUserId) activeUserId = familyData.activeUserId;
+      }
+    } catch {}
+
     try {
       const res = await apiFetch('/api/playlists', {
         method: 'POST',
@@ -2018,13 +2027,15 @@ export default function App() {
         body: JSON.stringify({
           name,
           description,
-          songIds: []
+          songIds: [],
+          isShared,
+          ownerUserId: activeUserId
         })
       });
       const data = await res.json();
       if (data.playlist) {
         setPlaylists(prev => [...prev, data.playlist]);
-        showToast('新歌单创建成功', `歌单《${name}》已持久化保存`, 'success');
+        showToast('新歌单创建成功', `歌单《${name}》已保存为 ${isShared ? '全家公开共享' : '个人私有歌单'}`, 'success');
         return;
       }
     } catch (e) {}
@@ -2034,10 +2045,12 @@ export default function App() {
       name,
       description,
       songIds: [],
-      createdAt: new Date().toISOString().split('T')[0]
+      createdAt: new Date().toISOString().split('T')[0],
+      isShared,
+      ownerUserId: activeUserId
     };
     setPlaylists(prev => [...prev, newPl]);
-    showToast('新歌单创建成功', `歌单《${name}》已就绪`, 'success');
+    showToast('新歌单创建成功', `歌单《${name}》已保存`, 'success');
   };
 
   const handleToggleSongInPlaylist = async (songId: string, playlistId: string) => {
