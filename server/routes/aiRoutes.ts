@@ -43,6 +43,21 @@ export function createAiRoutes(): Router {
     }
   });
 
+  // Fetch available models for specified provider / credentials
+  router.post('/models', async (req: Request, res: Response) => {
+    try {
+      const { providerId, baseUrl, apiKey } = req.body || {};
+      const result = await aiService.fetchAvailableModels({ providerId, baseUrl, apiKey });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({
+        success: false,
+        models: [],
+        error: err.message || '获取可用模型失败'
+      });
+    }
+  });
+
   // Test connection to specified provider or active provider
   router.post('/test', async (req: Request, res: Response) => {
     const { providerId } = req.body || {};

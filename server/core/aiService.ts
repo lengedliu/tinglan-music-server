@@ -278,6 +278,110 @@ export class AiService {
   }
 
   /**
+   * Fetch available model list from target provider's API
+   */
+  public async fetchAvailableModels(params: {
+    providerId?: AiProviderId;
+    baseUrl?: string;
+    apiKey?: string;
+  }): Promise<{ success: boolean; models: string[]; error?: string }> {
+    const providerId = params.providerId || this.config.activeProvider;
+    const providerConfig = this.config.providers[providerId];
+
+    let baseUrl = (params.baseUrl || providerConfig?.baseUrl || providerConfig?.defaultBaseUrl || '').trim();
+    let apiKey = params.apiKey ? params.apiKey.trim() : '';
+
+    // If apiKey is empty or masked ("sk-••••"), resolve effective key
+    if (!apiKey || apiKey.includes('••••')) {
+      apiKey = this.resolveApiKey(providerId);
+    }
+
+    try {
+      // 1. Gemini Models List
+      if (providerId === 'gemini' || baseUrl.includes('generativelanguage.googleapis.com')) {
+        if (!apiKey) {
+          throw new Error('未配置 Gemini API Key，请先输入密钥或在环境变量中配置');
+        }
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(`Gemini 模型列表接口响应错误 (${res.status}): ${errText.slice(0, 150)}`);
+        }
+        const json = await res.json();
+        const rawList = Array.isArray(json.models) ? json.models : [];
+        const modelsList: string[] = rawList
+          .filter((m: any) => !m.supportedGenerationMethods || m.supportedGenerationMethods.includes('generateContent'))
+          .map((m: any) => (m.name || '').replace(/^models\//, ''))
+          .filter(Boolean)
+          .sort();
+
+        return {
+          success: true,
+          models: modelsList.length > 0 ? modelsList : ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-flash']
+        };
+      }
+
+      // 2. OpenAI-compatible Models List (/v1/models)
+      let modelsUrl = baseUrl.replace(/\/+$/, '');
+      if (!modelsUrl.endsWith('/models')) {
+        modelsUrl = `${modelsUrl}/models`;
+      }
+
+      const headers: Record<string, string> = {
+        'Accept': 'application/json'
+      };
+      if (apiKey) {
+        headers['Authorization'] = `Bearer ${apiKey}`;
+      }
+
+      let res = await fetch(modelsUrl, { headers, signal: AbortSignal.timeout(10000) });
+
+      // Fallback for Ollama /api/tags if /v1/models fails
+      if (!res.ok && (providerId === 'custom' || baseUrl.includes('11434'))) {
+        const ollamaTagsUrl = baseUrl.replace(/\/v1\/?$/, '') + '/api/tags';
+        try {
+          const ollamaRes = await fetch(ollamaTagsUrl, { signal: AbortSignal.timeout(5000) });
+          if (ollamaRes.ok) {
+            const ollamaJson = await ollamaRes.json();
+            const ollamaModels = (ollamaJson.models || []).map((m: any) => m.name).filter(Boolean);
+            if (ollamaModels.length > 0) {
+              return { success: true, models: ollamaModels.sort() };
+            }
+          }
+        } catch {}
+      }
+
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(`请求 API 模型列表失败 (${res.status}): ${errText.slice(0, 200)}`);
+      }
+
+      const json = await res.json();
+      let rawList: any[] = json.data || json.models || json;
+      if (!Array.isArray(rawList)) {
+        rawList = [];
+      }
+
+      const models: string[] = rawList
+        .map((item: any) => typeof item === 'string' ? item : item?.id || item?.name)
+        .filter((id: any) => typeof id === 'string' && id.trim().length > 0)
+        .sort();
+
+      if (models.length === 0) {
+        throw new Error('接口返回成功，但未解析到可用模型标识');
+      }
+
+      return { success: true, models };
+    } catch (err: any) {
+      return {
+        success: false,
+        models: [],
+        error: err.message || '获取模型列表超时或失败'
+      };
+    }
+  }
+
+  /**
    * Universal text completion dispatcher
    */
   public async generateCompletion(params: {
