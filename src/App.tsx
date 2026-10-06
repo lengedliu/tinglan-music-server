@@ -1909,14 +1909,25 @@ export default function App() {
     }
   };
 
-  const handleUpdateConfig = (newConfig: Partial<MiotConfig>) => {
+  const handleUpdateConfig = async (newConfig: Partial<MiotConfig>) => {
     const updated = { ...miotConfig, ...newConfig };
     setMiotConfig(updated);
-    apiFetch('/api/miot/config', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updated)
-    }).catch(() => {});
+    try {
+      const res = await apiFetch('/api/miot/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated)
+      });
+      const data = await res.json();
+      if (data.success && data.config) {
+        setMiotConfig(data.config);
+        showToast('配置已保存', '音箱串流地址与核心配置已成功持久化落盘', 'success');
+      } else if (!data.success) {
+        showToast('保存提示', data.error || '未能保存配置', 'error');
+      }
+    } catch (err: any) {
+      showToast('网络错误', err.message || '请求超时', 'error');
+    }
   };
 
   const handleScanDevices = () => {

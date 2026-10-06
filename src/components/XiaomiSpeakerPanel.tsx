@@ -144,6 +144,12 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
   const [showTokenTutorial, setShowTokenTutorial] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (miotConfig.serverHost) {
+      setServerHostInput(miotConfig.serverHost);
+    }
+  }, [miotConfig.serverHost]);
+
   // Stream Reachability Diagnostic State
   const [streamStatus, setStreamStatus] = useState<{
     serverHost: string;

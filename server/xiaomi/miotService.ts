@@ -592,10 +592,7 @@ export function getBestLanIpForTarget(targetSpeakerIp?: string, serverHost?: str
   if (serverHost && serverHost.startsWith('http')) {
     const hostMatch = serverHost.match(/https?:\/\/([^:/]+)/);
     if (hostMatch && hostMatch[1] && !hostMatch[1].startsWith('127.') && hostMatch[1] !== 'localhost') {
-      const configuredHost = hostMatch[1];
-      if (allIps.includes(configuredHost)) {
-        return configuredHost;
-      }
+      return hostMatch[1];
     }
   }
 

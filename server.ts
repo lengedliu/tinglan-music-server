@@ -889,12 +889,16 @@ app.use('/api/miot/groups', groupRouter);
 
 // 7. Queue Engine Dispatchers & Persistence
 queueEngine.setCastDispatcher(async (song: any, targetDid: string, seekSeconds?: number) => {
+  const currentMiotConfig = loadJson(CONFIG_FILE, miotConfig);
   return dispatchCastSongDirectly({
     song,
     targetDid,
     seekSeconds,
-    miotConfig,
-    saveMiotConfigFn: (cfg) => saveJson(CONFIG_FILE, cfg),
+    miotConfig: currentMiotConfig,
+    saveMiotConfigFn: (cfg) => {
+      miotConfig = cfg;
+      saveJson(CONFIG_FILE, cfg);
+    },
     serverPort: PORT,
     jwtSecret: JWT_SECRET,
     activeStreamIps

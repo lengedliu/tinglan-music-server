@@ -641,15 +641,18 @@ export class AiService {
         targetArtist = '周杰伦';
       }
 
+      const isSpecificSong = Boolean(targetSongTitle);
+      const isMoodScene = isMood && !isSpecificSong;
+
       intent = {
-        isMoodOrScene: isMood,
-        moodSceneTitle: isMood ? `${extractedKeywords[0] || '心境'}随心听电台` : '',
+        isMoodOrScene: isMoodScene,
+        moodSceneTitle: isMoodScene ? `${extractedKeywords[0] || '心境'}随心听电台` : '',
         keywords: extractedKeywords.length > 0 ? extractedKeywords : [queryText.slice(0, 4)],
         targetArtist,
         targetSongTitle,
-        targetGenre: isMood ? 'Instrumental / Acoustic' : '',
-        suggestedTts: isMood ? `好的，为您开启${extractedKeywords[0] || '专属'}心境电台` : `好的，为您播放相关音乐`,
-        queueTitle: isMood ? `${extractedKeywords[0] || '心境'}随心听电台` : '相关推荐电台'
+        targetGenre: isMoodScene ? 'Instrumental / Acoustic' : '',
+        suggestedTts: isMoodScene ? `好的，为您开启${extractedKeywords[0] || '专属'}心境电台` : '',
+        queueTitle: isMoodScene ? `${extractedKeywords[0] || '心境'}随心听电台` : `${targetArtist || '音乐'}专属推荐电台`
       };
     }
 
@@ -752,11 +755,12 @@ export class AiService {
 
       const primary = matchedList[0].song;
 
-      // Build continuous playback mood queue (5 ~ 10 tracks)
-      let queueSongs: any[] = [];
-      const isMood = Boolean(intent.isMoodOrScene);
+      // Check if user specifically requested a song, but we had to substitute another song by the artist
+      const requestedTargetTitle = (intent.targetSongTitle || '').trim();
+      const isMood = Boolean(intent.isMoodOrScene) && !requestedTargetTitle;
       const queueTitle = intent.queueTitle || intent.moodSceneTitle || (isMood ? '心境电台' : `${primary.title} 专属电台`);
 
+      let queueSongs: any[] = [];
       if (isMood) {
         // Take up to 10 top scoring mood songs
         queueSongs = matchedList.slice(0, 10).map(m => m.song);
@@ -788,10 +792,22 @@ export class AiService {
         }
       }
 
-      const tts = intent.suggestedTts || (isMood
-        ? `好的，为您开启${queueTitle}，首曲播放${primary.artist}的《${primary.title}》`
-        : `好的，为您播放${primary.artist}的《${primary.title}》`
-      );
+      const primaryTitle = (primary.title || '').trim();
+      const isTargetSongMatched = !requestedTargetTitle || 
+        primaryTitle.toLowerCase().includes(requestedTargetTitle.toLowerCase()) || 
+        requestedTargetTitle.toLowerCase().includes(primaryTitle.toLowerCase());
+
+      let tts = intent.suggestedTts;
+
+      if (!isMood && requestedTargetTitle && !isTargetSongMatched) {
+        // The requested song was NOT found in local library, but we found other songs by the artist
+        const artistName = primary.artist || intent.targetArtist || '该歌手';
+        tts = `未找到您想要的歌曲《${requestedTargetTitle}》，为您播放${artistName}的其它歌曲《${primaryTitle}》`;
+      } else if (!tts) {
+        tts = isMood
+          ? `好的，为您开启${queueTitle}，首曲播放${primary.artist}的《${primary.title}》`
+          : `好的，为您播放${primary.artist}的《${primary.title}》`;
+      }
 
       const result: AiVoiceMatchResult = {
         matched: true,
@@ -802,7 +818,9 @@ export class AiService {
         songId: primary.id,
         songTitle: primary.title,
         artist: primary.artist,
-        reason: isMood
+        reason: (!isMood && requestedTargetTitle && !isTargetSongMatched)
+          ? `曲库未收录《${requestedTargetTitle}》，已智能为您推荐播放歌手【${primary.artist}】的其它歌曲《${primary.title}》`
+          : isMood
           ? `命中心境标签【${intent.moodSceneTitle || intent.keywords?.slice(0, 3).join('/')}】(已创建 ${queueSongs.length} 首心境队列)`
           : `精准匹配: 歌手《${primary.artist}》/ 曲目《${primary.title}》(已附带 ${queueSongs.length} 首连续电台)`,
         ttsResponse: tts

@@ -77,14 +77,10 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
         return false;
       }
     } else {
-      // In LAN unauthenticated mode, if user is logged in they must be admin;
-      // If no user is logged in, but the system has admin accounts registered, block sensitive hardware configuration
+      // In LAN unauthenticated mode, if user is explicitly logged in as non-admin, block;
+      // otherwise, allow hardware and server host configuration on local network.
       if (clientUser && clientUser.role !== 'admin') {
         res.status(200).json({ success: false, error: '权限不足：普通用户无权执行系统级硬件与认证管理操作' });
-        return false;
-      }
-      if (!clientUser) {
-        res.status(200).json({ success: false, error: '安全拦截：小米账号登录绑定、解绑与音箱核心配置属于高危管理操作，请先登录管理员账号' });
         return false;
       }
     }
