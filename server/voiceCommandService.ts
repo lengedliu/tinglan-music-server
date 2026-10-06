@@ -40,7 +40,7 @@ export interface VoiceDialogueLog {
   deviceName?: string;
   slangApplied?: boolean;
   slangTerm?: string;
-  missedReason?: 'homophone_mismatch' | 'unknown_song' | 'slang_hotword' | 'no_rule_match' | 'low_confidence';
+  missedReason?: 'homophone_mismatch' | 'unknown_song' | 'slang_hotword' | 'no_rule_match' | 'low_confidence' | 'smart_home_control';
 }
 
 export interface VoiceListenerConfig {
@@ -861,6 +861,60 @@ export class VoiceCommandService {
     if (this.recentCommands.size > 100) {
       for (const [k, ts] of this.recentCommands.entries()) {
         if (now - ts > 30000) this.recentCommands.delete(k);
+      }
+    }
+
+    // =========================================================================
+    // Tier 1: Fast Non-Music Guardrail (智能家居与日常问答 0ms 零干扰放行)
+    // Ensures home automation (lights, AC, curtains, vacuum), weather, alarms,
+    // and daily tools are NEVER hijacked by private music services or AI models!
+    // =========================================================================
+    const isExplicitMusicWordPresent = /(音乐|歌曲|歌单|电台|专辑|歌手|原唱|周杰伦|播放|放一首|来一首|放首歌|我想听|歌词|唱的歌|纯音乐|轻音乐)/.test(cleanQuery);
+
+    if (!isExplicitMusicWordPresent) {
+      // 1. Smart Home Device Control Patterns
+      const isSmartHomeControl = (
+        // Open/close/control actions on household appliances/devices
+        /^(打开|关闭|关掉|开一下|关一下|启动|停止|开启|关了|开了)(客厅|卧室|主卧|次卧|厨房|卫生间|阳台|玄关|走廊|过道|书房|餐厅|全屋|所有)?(灯|大灯|筒灯|射灯|灯带|夜灯|壁灯|吊灯|空调|电视|电视机|窗帘|纱帘|百叶窗|风扇|吊扇|电风扇|加湿器|除湿机|空气净化器|净化器|扫地机|扫地机器人|吸尘器|洗地机|插座|排插|开关|热水器|电热水器|饮水机|净水器|电饭煲|微波炉|烤箱|油烟机|洗碗机|洗衣机|烘干机|投影仪|幕布|摄像头|门锁|浴霸|暖风机|电热毯|取暖器|路由器|设备)$/.test(cleanQuery) ||
+        // Action sentences with device parameters (e.g. 把空调调到26度, 客厅灯调亮一点, 窗帘打开一半)
+        /^(把|将)?(客厅|卧室|厨房|空调|窗帘|风扇|灯|电视|加湿器|净化器|扫地机|插座|热水器).*(打开|关闭|关掉|开到|调到|升到|降到|调大|调小|调亮|调暗|设为|设置成|启动|停止|暂停扫地|回充|充电|去扫地|扫地|一半|全开|全关).*$/.test(cleanQuery) ||
+        // Short direct device words
+        /^(开灯|关灯|全开灯|全关灯|开空调|关空调|制冷模式|制热模式|除湿模式|送风模式|开风扇|关风扇|开窗帘|关窗帘|打开窗帘|关闭窗帘|扫地|去扫地|开始扫地|回去充电|暂停扫地|开电视|关电视|息屏|亮屏)$/.test(cleanQuery) ||
+        // Smart scene modes
+        /^(我出门了|我回家了|离家模式|回家模式|睡眠模式|睡觉模式|观影模式|早安模式|晚安模式|起床模式|就寝模式|会客模式)$/.test(cleanQuery)
+      );
+
+      // 2. Daily Life Utilities, Tools, and Information Queries
+      const isDailyUtility = (
+        // Weather & temperature
+        /(天气|气温|温度|下雨吗|晴天|阴天|刮风|空气质量|冷不冷|热不热|防晒指数)/.test(cleanQuery) ||
+        // Alarms, timers, clocks, reminders
+        /(几点|几号|星期几|礼拜几|闹钟|倒计时|定时器|提醒我|叫我起床|日程)/.test(cleanQuery) ||
+        // Calculations, news, facts, small tools
+        /(今日新闻|头条新闻|计算|算一下|加等于|减等于|乘等于|除等于|讲个笑话|讲故事|背首诗|翻译|汇率)/.test(cleanQuery) ||
+        // Direct XiaoAi wake words or identity queries
+        /^(你叫什么|你是谁|你几岁|你会做什么|小爱同学|你好小爱)$/.test(cleanQuery)
+      );
+
+      if (isSmartHomeControl || isDailyUtility) {
+        const guardType = isSmartHomeControl ? '智能家居设备控制' : '日常生活问答';
+        console.log(`[VoiceCommandService] 🏠 非音乐指令命中 (${guardType}): “${rawQuery}”，100% 零干扰安全放行给小爱原生系统`);
+        this.addLog({
+          id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          timestamp: Date.now(),
+          queryText: rawQuery,
+          matchedRuleId: 'rule_non_music_guardrail',
+          matchedRuleName: '米家智能家居/日常问答放行',
+          actionSummary: `非音乐指令 (${guardType})，已零干扰放行给小爱音箱原生系统处理`,
+          status: 'ignored',
+          source,
+          deviceId,
+          deviceName,
+          slangApplied,
+          slangTerm: matchedSlangTerm,
+          missedReason: 'smart_home_control'
+        });
+        return { matched: false, summary: `非音乐指令 (${guardType})，已安全放行给小爱原生米家系统` };
       }
     }
 
