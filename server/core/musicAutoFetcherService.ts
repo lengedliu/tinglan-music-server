@@ -683,3 +683,13 @@ export class MusicAutoFetcherService {
 }
 
 export const musicAutoFetcherService = MusicAutoFetcherService.getInstance();
+
+export function isSchedulerModeActive(
+  fetcherCfg: FetcherConfig,
+  aiCfg?: { aiSkillCallbackUrl?: string }
+): boolean {
+  if (fetcherCfg.downloadMode === 'ai_skill') return false;
+  if (aiCfg?.aiSkillCallbackUrl && aiCfg.aiSkillCallbackUrl.trim()) return false;
+  if (!fetcherCfg.enabled) return false;
+  return fetcherCfg.downloadMode === 'scheduler';
+}

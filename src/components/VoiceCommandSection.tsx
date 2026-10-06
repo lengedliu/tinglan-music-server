@@ -991,7 +991,7 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
                   onChange={(e: any) => setEditingRule({ ...editingRule, actionType: e.target.value })}
                   className="w-full bg-zinc-950 border border-white/10 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-[#FF6700] cursor-pointer"
                 >
-                  <option value="download_song">📥 离线下载歌曲 (智能检查曲库，已存在回复“如您要下载的歌曲已存在”，未收录启动离线下载)</option>
+                  <option value="download_song">📥 离线下载歌曲 (智能检查曲库，已存在提示“您要下载的歌曲已经在曲库了，现在要播放吗”，未收录启动离线下载)</option>
                   <option value="play_song_search">智能搜歌点歌 (自动提取关键词模糊匹配本地歌曲)</option>
                   <option value="play_random_all">随机播放全部音乐 (曲库全随机起播)</option>
                   <option value="play_playlist">投播指定歌单 (投播整个歌单到音箱)</option>

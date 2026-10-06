@@ -3,7 +3,7 @@ import path from 'path';
 import { GoogleGenAI } from '@google/genai';
 import { computeSongMatchScore } from '../pinyinHelper.js';
 import { aiSemanticCache } from './aiSemanticCache.js';
-import { musicAutoFetcherService } from './musicAutoFetcherService.js';
+import { musicAutoFetcherService, isSchedulerModeActive } from './musicAutoFetcherService.js';
 import { logEngine } from './logEngine.js';
 import { getResolvedServerHost } from '../xiaomi/miotService.js';
 
@@ -877,7 +877,7 @@ export class AiService {
 
           // Auto Fetcher: Trigger background download for missing track/artist in zero-match fallback
           const fetcherCfg = musicAutoFetcherService.getConfig();
-          const isSchedulerActive = Boolean(fetcherCfg.enabled && fetcherCfg.downloadMode !== 'ai_skill');
+          const isSchedulerActive = isSchedulerModeActive(fetcherCfg, this.config);
           const autoFetchTriggered = Boolean(
             fetcherCfg.autoTriggerOnMissingVoiceQuery && 
             (requestedTargetTitle || requestedArtist)
@@ -1031,7 +1031,7 @@ export class AiService {
 
         // Auto Fetcher: Check if missing track should be automatically downloaded to NAS in background
         const fetcherCfg = musicAutoFetcherService.getConfig();
-        const isSchedulerActive = Boolean(fetcherCfg.enabled && fetcherCfg.downloadMode !== 'ai_skill');
+        const isSchedulerActive = isSchedulerModeActive(fetcherCfg, this.config);
         const autoFetchTriggered = Boolean(
           fetcherCfg.autoTriggerOnMissingVoiceQuery && 
           requestedTargetTitle && 

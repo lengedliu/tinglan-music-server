@@ -5,7 +5,7 @@ import { generateMinaRequestId, buildMinaHeaders } from './xiaomiPassport';
 import { computeSongMatchScore } from './pinyinHelper';
 import { xiaomiCircuitBreaker } from './circuitBreaker';
 import { aiService } from './core/aiService.js';
-import { musicAutoFetcherService } from './core/musicAutoFetcherService.js';
+import { musicAutoFetcherService, isSchedulerModeActive } from './core/musicAutoFetcherService.js';
 import { logEngine } from './core/logEngine.js';
 
 export interface VoiceCommandRule {
@@ -65,6 +65,12 @@ export interface PendingDownloadContext {
   rawQuery?: string;
 }
 
+export interface PendingPlayContext {
+  song: Song;
+  timestamp: number;
+  rawQuery?: string;
+}
+
 export interface DialogueSessionContext {
   lastQuery: string;
   lastMatchedSongId: string;
@@ -73,6 +79,7 @@ export interface DialogueSessionContext {
   lastCurrentIndex: number;
   lastTimestamp: number;
   pendingDownload?: PendingDownloadContext;
+  pendingPlay?: PendingPlayContext;
 }
 
 const VOICE_CONFIG_FILE = path.join(process.cwd(), 'data', 'voice-config.json');
@@ -891,12 +898,83 @@ export class VoiceCommandService {
     }
 
     // =========================================================================
-    // Tier -1: Pending Download Confirmation Session (下载前二次语音确认)
-    // 监听用户回答“是/下载吧/好的/要”或“否/不用/算了/取消”
+    // Tier -1: Pending Download or Play Confirmation Session (语音二次交互确认)
+    // 监听用户回答“是/下载吧/播放/好的/要”或“否/不用/算了/取消”
     // =========================================================================
     const sessionKey = deviceId || 'global';
     const activeSession = this.sessionContextMap.get(sessionKey);
 
+    // 1. 检查是否存在“已收录歌曲是否现在播放”确认会话
+    if (activeSession && activeSession.pendingPlay && (now - activeSession.pendingPlay.timestamp < 45000)) {
+      const pending = activeSession.pendingPlay;
+      const isAffirmative = /^(是|是的|播放|放吧|播吧|好的|好|好啊|要|要播|要听|播放吧|放一放|确认|行|可以|对|对的|需要|帮我放|恩|嗯|听|放|播)$/i.test(cleanQuery) ||
+                            cleanQuery === '播放' || cleanQuery === '要播放' || cleanQuery === '好的播放';
+      const isNegative = /^(不|不是|不要|不用|不用了|算了|取消|别放|不用放|不要了|不听了|否|放弃|不播放|不要播放|拒绝|不用了谢谢|算了不要了)$/i.test(cleanQuery);
+
+      if (isAffirmative) {
+        delete activeSession.pendingPlay;
+        const targetDid = deviceId || this.config.targetDeviceId;
+        
+        // 早期截断打断：切断小米官方语音抢先播报的“我不理解”声音
+        if (this.earlyStopFn && targetDid) {
+          await this.earlyStopFn(targetDid).catch(() => {});
+        }
+
+        const targetSong = pending.song;
+        const ttsText = `好的，为您播放${targetSong.artist ? targetSong.artist + '的' : ''}《${targetSong.title}》`;
+        if (this.sendTtsFn && targetDid) {
+          await this.sendTtsFn(targetDid, ttsText).catch(() => {});
+          await new Promise(r => setTimeout(r, 800));
+        }
+
+        if (this.playSongFn) {
+          await this.playSongFn(targetSong, '语音确认播放已在曲库歌曲', targetDid);
+        }
+
+        const summary = `用户语音确认播放已在曲库歌曲: 《${targetSong.title}》 - ${targetSong.artist || '本地曲目'}`;
+        this.addLog({
+          id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          timestamp: Date.now(),
+          queryText: rawQuery,
+          matchedRuleId: 'rule_play_existing_confirmed',
+          matchedRuleName: '语音确认播放已存在曲目 (用户确认播放)',
+          actionSummary: summary,
+          status: 'matched',
+          source,
+          deviceId,
+          deviceName,
+          slangApplied,
+          slangTerm: matchedSlangTerm
+        });
+        return { matched: true, summary };
+      } else if (isNegative) {
+        delete activeSession.pendingPlay;
+        const targetDid = deviceId || this.config.targetDeviceId;
+        const ttsText = '好的，不为您播放';
+        if (this.sendTtsFn && targetDid) {
+          await this.sendTtsFn(targetDid, ttsText).catch(() => {});
+        }
+
+        const summary = `用户取消播放已在曲库歌曲: 《${pending.song.title}》`;
+        this.addLog({
+          id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          timestamp: Date.now(),
+          queryText: rawQuery,
+          matchedRuleId: 'rule_play_existing_cancelled',
+          matchedRuleName: '语音取消播放已存在曲目 (用户拒绝)',
+          actionSummary: summary,
+          status: 'matched',
+          source,
+          deviceId,
+          deviceName,
+          slangApplied,
+          slangTerm: matchedSlangTerm
+        });
+        return { matched: true, summary };
+      }
+    }
+
+    // 2. 检查是否存在“未收录歌曲是否下载”确认会话
     if (activeSession && activeSession.pendingDownload && (now - activeSession.pendingDownload.timestamp < 45000)) {
       const pending = activeSession.pendingDownload;
       const isAffirmative = /^(是|是的|下载|下载吧|好的|好|好啊|要|要下|确认|行|可以|对|对的|需要|帮我下|下吧|恩|嗯|确认下载|快下载|赶紧下|同意|行啊|准了|下)$/i.test(cleanQuery) ||
@@ -907,6 +985,12 @@ export class VoiceCommandService {
         // 用户确认下载
         delete activeSession.pendingDownload;
         const targetDid = deviceId || this.config.targetDeviceId;
+
+        // 早期截断打断：切断小米官方语音抢先播报的“我不理解”声音
+        if (this.earlyStopFn && targetDid) {
+          await this.earlyStopFn(targetDid).catch(() => {});
+        }
+
         const ttsText = '好的，已为您启动后台离线下载，完成后将自动同步至NAS';
         if (this.sendTtsFn && targetDid) {
           await this.sendTtsFn(targetDid, ttsText).catch(() => {});
@@ -917,7 +1001,7 @@ export class VoiceCommandService {
 
         try {
           const fetcherCfg = musicAutoFetcherService.getConfig();
-          const isSchedulerActive = Boolean(fetcherCfg.enabled && fetcherCfg.downloadMode !== 'ai_skill');
+          const isSchedulerActive = isSchedulerModeActive(fetcherCfg, aiService.getConfig());
 
           if (isSchedulerActive) {
             musicAutoFetcherService.enqueueTask({
@@ -1638,19 +1722,38 @@ export class VoiceCommandService {
     }
 
     if (matchedExistingSong) {
-      // 1. 曲库已存在：小爱回答“如您要下载的歌曲已存在”
-      const ttsText = '如您要下载的歌曲已存在';
+      // 1. 曲库已存在：小爱回答“您要下载的歌曲已经在曲库了，现在要播放吗”
+      const ttsText = '您要下载的歌曲已经在曲库了，现在要播放吗';
       if (this.sendTtsFn && targetDid) {
         await this.sendTtsFn(targetDid, ttsText).catch(() => {});
       }
 
-      const summary = `如您要下载的歌曲已存在 (曲库已收录: 《${matchedExistingSong.title}》 - ${matchedExistingSong.artist || '本地曲目'})`;
+      // 注册待播放交互上下文，支持用户随后回答“是/播放/好的/放吧”直接播放
+      const sessionKey = deviceId || 'global';
+      const activeSession = this.sessionContextMap.get(sessionKey) || {
+        lastQuery: rawQuery,
+        lastMatchedSongId: matchedExistingSong.id,
+        lastMoodTitle: '',
+        lastQueueSongs: [matchedExistingSong],
+        lastCurrentIndex: 0,
+        lastTimestamp: Date.now()
+      };
+      activeSession.pendingPlay = {
+        song: matchedExistingSong,
+        timestamp: Date.now(),
+        rawQuery
+      };
+      activeSession.lastTimestamp = Date.now();
+      this.sessionContextMap.set(sessionKey, activeSession);
+      this.boostToBurstMode(45000);
+
+      const summary = `您要下载的歌曲已经在曲库了，现在要播放吗 (曲库已收录: 《${matchedExistingSong.title}》 - ${matchedExistingSong.artist || '本地曲目'})`;
       this.addLog({
         id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
         timestamp: Date.now(),
         queryText: rawQuery,
-        matchedRuleId: 'rule_download_song',
-        matchedRuleName: '离线下载歌曲 (智能查重与后台入库)',
+        matchedRuleId: 'rule_download_song_exists',
+        matchedRuleName: '离线下载歌曲 (曲库已存在，询问是否播放)',
         actionSummary: summary,
         status: 'matched',
         source,
@@ -1688,6 +1791,7 @@ export class VoiceCommandService {
         };
         activeSession.lastTimestamp = Date.now();
         this.sessionContextMap.set(sessionKey, activeSession);
+        this.boostToBurstMode(45000);
 
         const ttsText = `本地曲库暂未收录《${downloadTitle}》，是否需要为您下载并同步至NAS？`;
         if (this.sendTtsFn && targetDid) {
@@ -1722,7 +1826,7 @@ export class VoiceCommandService {
 
       try {
         const fetcherCfg = musicAutoFetcherService.getConfig();
-        const isSchedulerActive = Boolean(fetcherCfg.enabled && fetcherCfg.downloadMode !== 'ai_skill');
+        const isSchedulerActive = isSchedulerModeActive(fetcherCfg, aiService.getConfig());
 
         if (isSchedulerActive) {
           // 调度中心开启：仅投递至调度流水线队列，避免双重触发
