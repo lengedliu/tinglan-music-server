@@ -149,6 +149,11 @@ const DEFAULT_AI_CONFIG: AiServiceConfig = {
 
 const AI_CONFIG_FILE = path.join(process.cwd(), 'data', 'ai-config.json');
 
+function cleanTtsTitle(title: string): string {
+  if (!title) return '';
+  return title.replace(/\s*\([^)]*\)\s*/g, '').replace(/\s*（[^）]*）\s*/g, '').trim();
+}
+
 export class AiService {
   private static instance: AiService;
   private config: AiServiceConfig = { ...DEFAULT_AI_CONFIG };
@@ -760,15 +765,16 @@ export class AiService {
           const fallbackQueue = pool.slice(0, 8);
           const genreOrMood = intent.targetGenre || intent.moodSceneTitle || '精选相似流派';
 
+          const cleanPrimaryTitle = cleanTtsTitle(fallbackPrimary.title);
           let tts = '';
           if (requestedTargetTitle && requestedArtist) {
-            tts = `本地曲库暂未收录《${requestedTargetTitle}》及${requestedArtist}的歌曲，已为您推荐相似风格的《${fallbackPrimary.title}》`;
-          } else if (requestedArtist) {
-            tts = `本地曲库暂未收录${requestedArtist}的歌曲，已为您推荐相似风格的《${fallbackPrimary.title}》`;
+            tts = `好的，为您开启${genreOrMood}推荐电台，未在曲库找到《${requestedTargetTitle}》，首曲播放《${cleanPrimaryTitle}》`;
           } else if (requestedTargetTitle) {
-            tts = `本地曲库暂未收录《${requestedTargetTitle}》，已为您推荐相似风格的《${fallbackPrimary.title}》`;
+            tts = `好的，为您开启${genreOrMood}推荐电台，未在曲库找到《${requestedTargetTitle}》，首曲播放《${cleanPrimaryTitle}》`;
+          } else if (requestedArtist) {
+            tts = `好的，为您开启${genreOrMood}推荐电台，未找到${requestedArtist}的歌，首曲播放《${cleanPrimaryTitle}》`;
           } else {
-            tts = `好的，为您开启${genreOrMood}推荐电台，首曲播放《${fallbackPrimary.title}》`;
+            tts = `好的，为您开启${genreOrMood}推荐电台，没有找到想要的歌，首曲播放《${cleanPrimaryTitle}》`;
           }
 
           const fallbackResult: AiVoiceMatchResult = {
@@ -853,19 +859,32 @@ export class AiService {
       let tts = intent.suggestedTts;
 
       if (!isMood) {
+        const cleanPrimaryTitle = cleanTtsTitle(primaryTitle);
         if (requestedTargetTitle && !isTargetSongMatched && hasArtistInLibrary && isArtistMatched) {
           // Level 2: Same artist exists in library, target song missing
           const artistName = primary.artist || requestedArtist || '该歌手';
-          tts = `未找到您想要的歌曲《${requestedTargetTitle}》，为您播放${artistName}的其它歌曲《${primaryTitle}》`;
+          tts = `未找到您想要的歌曲《${requestedTargetTitle}》，为您播放${artistName}的其它歌曲《${cleanPrimaryTitle}》`;
         } else if ((requestedTargetTitle || requestedArtist) && (!hasArtistInLibrary || !isArtistMatched)) {
           // Level 3 (Strategy 1): Both target song and artist absent, recommend similar genre/style
           if (requestedTargetTitle && requestedArtist) {
-            tts = `本地曲库暂未收录《${requestedTargetTitle}》及${requestedArtist}的歌曲，已为您推荐相似风格的《${primaryTitle}》`;
+            tts = `好的，为您开启${queueTitle || '精选相似流派推荐电台'}，未在曲库找到《${requestedTargetTitle}》，首曲播放《${cleanPrimaryTitle}》`;
+          } else if (requestedTargetTitle) {
+            tts = `好的，为您开启${queueTitle || '精选相似流派推荐电台'}，未在曲库找到《${requestedTargetTitle}》，首曲播放《${cleanPrimaryTitle}》`;
           } else if (requestedArtist) {
-            tts = `本地曲库暂未收录${requestedArtist}的歌曲，已为您推荐相似风格的《${primaryTitle}》`;
+            tts = `好的，为您开启${queueTitle || '精选相似流派推荐电台'}，未找到${requestedArtist}的歌，首曲播放《${cleanPrimaryTitle}》`;
           } else {
-            tts = `本地曲库暂未收录《${requestedTargetTitle}》，已为您推荐相似风格的《${primaryTitle}》`;
+            tts = `好的，为您开启精选相似流派推荐电台，没有找到想要的歌，首曲播放《${cleanPrimaryTitle}》`;
           }
+        }
+      }
+
+      // If query is an unindexed lyrics search or general query with fallback recommendation
+      if (queryText.includes('歌词') && (!isTargetSongMatched || !hasArtistInLibrary)) {
+        const cleanPrimaryTitle = cleanTtsTitle(primaryTitle);
+        if (requestedTargetTitle) {
+          tts = `好的，为您开启精选相似流派推荐电台，未在曲库找到《${requestedTargetTitle}》，首曲播放《${cleanPrimaryTitle}》`;
+        } else {
+          tts = `好的，为您开启精选相似流派推荐电台，没有找到想要的歌，首曲播放《${cleanPrimaryTitle}》`;
         }
       }
 

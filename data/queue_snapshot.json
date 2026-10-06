@@ -97,13 +97,13 @@
       "source": "local"
     }
   ],
-  "currentIndex": 2,
+  "currentIndex": 0,
   "loopMode": "all",
   "targetDid": "did-1789129459008",
   "targetDeviceName": "小爱音箱Pro",
   "isPlaying": true,
-  "songStartTime": 1791270277519,
-  "currentDuration": 220,
+  "songStartTime": 1791272356811,
+  "currentDuration": 234,
   "currentSongStarted": false,
-  "savedAt": 1791270277520
+  "savedAt": 1791272357173
 }

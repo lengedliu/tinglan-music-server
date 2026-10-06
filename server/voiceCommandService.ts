@@ -1102,9 +1102,11 @@ export class VoiceCommandService {
               });
 
               const activeProvider = aiConfig.providers[aiConfig.activeProvider];
-              const summary = (Array.isArray(aiResult.playlistSongs) && aiResult.playlistSongs.length > 1)
-                ? `AI 心境电台: 《${aiResult.queueTitle || songToPlay.title}》 (共 ${aiResult.playlistSongs.length} 首连续播放, 首曲: 《${songToPlay.title}》)`
-                : `AI 智能语义命中: 《${songToPlay.title}》 - ${songToPlay.artist} (${aiResult.reason || '意图契合'})`;
+              const summary = aiResult.ttsResponse
+                ? `${aiResult.ttsResponse} (已编排 ${aiResult.playlistSongs?.length || 1} 首连续播放)`
+                : ((Array.isArray(aiResult.playlistSongs) && aiResult.playlistSongs.length > 1)
+                  ? `AI 心境电台: 《${aiResult.queueTitle || songToPlay.title}》 (共 ${aiResult.playlistSongs.length} 首连续播放, 首曲: 《${songToPlay.title}》)`
+                  : `AI 智能语义命中: 《${songToPlay.title}》 - ${songToPlay.artist} (${aiResult.reason || '意图契合'})`);
 
               this.addLog({
                 id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
