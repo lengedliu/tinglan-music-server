@@ -108,9 +108,43 @@
     "timeFormatted": "16:14:25.989",
     "category": "cast",
     "level": "warn",
+    "traceId": "tr_0p5ffi",
     "title": "【歌单队列切播失败】《月半小夜曲 (Acoustic Night)》",
     "message": "未能成功向音箱【小爱音箱Pro】下发播放指令：所有投播通道均未响应或未实际拉取音频流。请检查音箱网络连通性、DLNA开关或小米账号登录状态。",
-    "traceId": "tr_0p5ffi",
+    "details": {
+      "type": "error",
+      "model": "xiaomi.wifispeaker.sound"
+    },
+    "clientIp": "192.168.31.25",
+    "targetDid": "did-1789129459008",
+    "deviceName": "xiaomi.wifispeaker.sound"
+  },
+  {
+    "id": "log_1791304387259_6tj2s",
+    "timestamp": 1791304387259,
+    "timeFormatted": "16:33:07.259",
+    "category": "cast",
+    "level": "warn",
+    "traceId": "tr_sxbqu5",
+    "title": "【歌单队列切播失败】《月半小夜曲 (Acoustic Night)》",
+    "message": "未能成功向音箱【小爱音箱Pro】下发播放指令：所有投播通道均未响应或未实际拉取音频流。请检查音箱网络连通性、DLNA开关或小米账号登录状态。",
+    "details": {
+      "type": "error",
+      "model": "xiaomi.wifispeaker.sound"
+    },
+    "clientIp": "192.168.31.25",
+    "targetDid": "did-1789129459008",
+    "deviceName": "xiaomi.wifispeaker.sound"
+  },
+  {
+    "id": "log_1791304469652_lfvsb",
+    "timestamp": 1791304469652,
+    "timeFormatted": "16:34:29.652",
+    "category": "cast",
+    "level": "warn",
+    "title": "【歌单队列切播失败】《思念成疾》",
+    "message": "未能成功向音箱【小爱音箱Pro】下发播放指令：所有投播通道均未响应或未实际拉取音频流。请检查音箱网络连通性、DLNA开关或小米账号登录状态。",
+    "traceId": "tr_ge4xz6",
     "details": {
       "type": "error",
       "model": "xiaomi.wifispeaker.sound"

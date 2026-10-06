@@ -662,6 +662,13 @@ export class AiService {
       if (queryText.includes('天青色') || queryText.includes('烟雨')) {
         targetSongTitle = '青花瓷';
         targetArtist = '周杰伦';
+      } else {
+        let cleaned = queryText.replace(/^(小爱同学|小爱|请|帮我|麻烦)/g, '').trim();
+        cleaned = cleaned.replace(/^(播放|放一首|放首|放|听一听|我想听|听|点歌|来一首|来首|下首|下载歌曲|下载一首|帮我下载|下载|搜)/g, '').trim();
+        cleaned = cleaned.replace(/^(歌曲|歌曲是|歌|一首)/g, '').trim();
+        if (cleaned && cleaned.length >= 2 && cleaned.length <= 15 && !/(晴天|阴天|下雨|天气|几点)/.test(cleaned)) {
+          targetSongTitle = cleaned;
+        }
       }
 
       const isSpecificSong = Boolean(targetSongTitle);
@@ -799,14 +806,56 @@ export class AiService {
           const fallbackQueue = pool.slice(0, 8);
           const genreOrMood = intent.targetGenre || intent.moodSceneTitle || '精选相似流派';
 
+          // Auto Fetcher: Trigger background download for missing track/artist in zero-match fallback
+          const fetcherCfg = musicAutoFetcherService.getConfig();
+          const isSchedulerActive = Boolean(fetcherCfg.enabled && fetcherCfg.downloadMode !== 'ai_skill');
+          const autoFetchTriggered = Boolean(
+            fetcherCfg.autoTriggerOnMissingVoiceQuery && 
+            (requestedTargetTitle || requestedArtist)
+          );
+
+          if (autoFetchTriggered) {
+            try {
+              const downloadTitle = requestedTargetTitle || `${requestedArtist}的热门金曲`;
+              const downloadArtist = requestedArtist || '华语歌手';
+              if (isSchedulerActive) {
+                // Mode A: Scheduler mode
+                musicAutoFetcherService.enqueueTask({
+                  title: downloadTitle,
+                  artist: downloadArtist,
+                  genre: intent.targetGenre || '流行 / 经典',
+                  requestedBy: 'voice_ai'
+                });
+                console.log(`[AiService] 🚀 [调度中心模式 - 零匹配补库] 自动调度后台离线下载并入库 NAS: 《${downloadTitle}》 - ${downloadArtist}`);
+              } else {
+                // Mode B: AI Skill direct mode
+                musicAutoFetcherService.executeAiSkillDirectDownload({
+                  title: downloadTitle,
+                  artist: downloadArtist,
+                  genre: intent.targetGenre || '流行 / 经典',
+                  requestedBy: 'voice_ai'
+                }).catch((e: any) => console.warn('[AiService] AI skill direct download error in zero-match fallback:', e.message));
+                console.log(`[AiService] 🤖 [AI Skill 直连模式 - 零匹配补库] 自动使用 AI 自身 Skill 下载并同步 NAS: 《${downloadTitle}》 - ${downloadArtist}`);
+              }
+            } catch (fetchErr: any) {
+              console.warn('[AiService] Auto fetch notice in zero-match fallback:', fetchErr.message);
+            }
+          }
+
           const cleanPrimaryTitle = cleanTtsTitle(fallbackPrimary.title);
           let tts = '';
           if (requestedTargetTitle && requestedArtist) {
-            tts = `好的，为您开启${genreOrMood}推荐电台，未在曲库找到《${requestedTargetTitle}》，首曲播放《${cleanPrimaryTitle}》`;
+            tts = autoFetchTriggered
+              ? `好的，为您开启${genreOrMood}推荐电台，未在曲库找到《${requestedTargetTitle}》，已为您启动后台智能下载，首曲播放《${cleanPrimaryTitle}》`
+              : `好的，为您开启${genreOrMood}推荐电台，未在曲库找到《${requestedTargetTitle}》，首曲播放《${cleanPrimaryTitle}》`;
           } else if (requestedTargetTitle) {
-            tts = `好的，为您开启${genreOrMood}推荐电台，未在曲库找到《${requestedTargetTitle}》，首曲播放《${cleanPrimaryTitle}》`;
+            tts = autoFetchTriggered
+              ? `好的，为您开启${genreOrMood}推荐电台，未在曲库找到《${requestedTargetTitle}》，已为您启动后台智能下载，首曲播放《${cleanPrimaryTitle}》`
+              : `好的，为您开启${genreOrMood}推荐电台，未在曲库找到《${requestedTargetTitle}》，首曲播放《${cleanPrimaryTitle}》`;
           } else if (requestedArtist) {
-            tts = `好的，为您开启${genreOrMood}推荐电台，未找到${requestedArtist}的歌，首曲播放《${cleanPrimaryTitle}》`;
+            tts = autoFetchTriggered
+              ? `好的，为您开启${genreOrMood}推荐电台，未找到${requestedArtist}的歌，已为您启动后台智能下载，首曲播放《${cleanPrimaryTitle}》`
+              : `好的，为您开启${genreOrMood}推荐电台，未找到${requestedArtist}的歌，首曲播放《${cleanPrimaryTitle}》`;
           } else {
             tts = `好的，为您开启${genreOrMood}推荐电台，没有找到想要的歌，首曲播放《${cleanPrimaryTitle}》`;
           }
@@ -820,11 +869,15 @@ export class AiService {
             songId: fallbackPrimary.id,
             songTitle: fallbackPrimary.title,
             artist: fallbackPrimary.artist,
-            reason: `本地曲库未收录【${requestedArtist ? requestedArtist + ' · ' : ''}${requestedTargetTitle || '目标曲目'}】，已启动智能兜底电台，推荐相似风格《${fallbackPrimary.title}》`,
+            reason: `本地曲库未收录【${requestedArtist ? requestedArtist + ' · ' : ''}${requestedTargetTitle || '目标曲目'}】${autoFetchTriggered ? '（已启动后台智能下载）' : ''}，已启动智能兜底电台，推荐相似风格《${fallbackPrimary.title}》`,
             ttsResponse: tts
           };
 
-          aiSemanticCache.set(queryText, fallbackResult);
+          // Do not cache fallback results when auto-fetch is triggered so subsequent queries hit the newly downloaded track
+          if (!autoFetchTriggered) {
+            aiSemanticCache.set(queryText, fallbackResult);
+          }
+
           console.log(`[AiService] 🎯 [AI 意图兜底推荐完成] 指令: "${queryText}" -> 返回数据:`, JSON.stringify(fallbackResult, null, 2));
           return fallbackResult;
         }

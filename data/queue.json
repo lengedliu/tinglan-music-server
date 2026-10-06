@@ -110,8 +110,7 @@
       "bitrate": "320 kbps",
       "fileSize": "0.0 MB",
       "isFavorite": false,
-      "source": "local",
-      "localFilename": "Beyond/海阔天空 30周年纪念/Beyond - 海阔天空.flac"
+      "source": "local"
     },
     {
       "id": "song-song-1-ps0x",
@@ -127,8 +126,7 @@
       "bitrate": "320 kbps",
       "fileSize": "1.1 MB",
       "isFavorite": false,
-      "source": "local",
-      "localFilename": "song-1.mp3"
+      "source": "local"
     },
     {
       "id": "song-song-1-1kpp8",
@@ -144,8 +142,7 @@
       "bitrate": "706 kbps",
       "fileSize": "2.5 MB",
       "isFavorite": false,
-      "source": "local",
-      "localFilename": "song-1.wav"
+      "source": "local"
     },
     {
       "id": "song-song-2-ps0x",
@@ -161,8 +158,7 @@
       "bitrate": "320 kbps",
       "fileSize": "1.1 MB",
       "isFavorite": false,
-      "source": "local",
-      "localFilename": "song-2.mp3"
+      "source": "local"
     },
     {
       "id": "song-song-2-1kpp8",
@@ -178,8 +174,7 @@
       "bitrate": "706 kbps",
       "fileSize": "2.5 MB",
       "isFavorite": false,
-      "source": "local",
-      "localFilename": "song-2.wav"
+      "source": "local"
     },
     {
       "id": "song-song-3-ps0x",
@@ -195,8 +190,7 @@
       "bitrate": "320 kbps",
       "fileSize": "1.1 MB",
       "isFavorite": false,
-      "source": "local",
-      "localFilename": "song-3.mp3"
+      "source": "local"
     },
     {
       "id": "song-song-3-1kpp8",
@@ -212,8 +206,7 @@
       "bitrate": "706 kbps",
       "fileSize": "2.5 MB",
       "isFavorite": false,
-      "source": "local",
-      "localFilename": "song-3.wav"
+      "source": "local"
     },
     {
       "id": "song-song-4-ps0x",
@@ -229,8 +222,7 @@
       "bitrate": "320 kbps",
       "fileSize": "1.1 MB",
       "isFavorite": false,
-      "source": "local",
-      "localFilename": "song-4.mp3"
+      "source": "local"
     },
     {
       "id": "song-song-4-1kpp8",
@@ -246,8 +238,7 @@
       "bitrate": "706 kbps",
       "fileSize": "2.5 MB",
       "isFavorite": false,
-      "source": "local",
-      "localFilename": "song-4.wav"
+      "source": "local"
     },
     {
       "id": "song-song-5-ps0x",
@@ -263,8 +254,7 @@
       "bitrate": "320 kbps",
       "fileSize": "1.1 MB",
       "isFavorite": false,
-      "source": "local",
-      "localFilename": "song-5.mp3"
+      "source": "local"
     },
     {
       "id": "song-song-5-1kpp8",
@@ -280,8 +270,7 @@
       "bitrate": "706 kbps",
       "fileSize": "2.5 MB",
       "isFavorite": false,
-      "source": "local",
-      "localFilename": "song-5.wav"
+      "source": "local"
     },
     {
       "id": "song-song-6-ps0x",
@@ -297,8 +286,7 @@
       "bitrate": "320 kbps",
       "fileSize": "1.1 MB",
       "isFavorite": false,
-      "source": "local",
-      "localFilename": "song-6.mp3"
+      "source": "local"
     },
     {
       "id": "song-李克勤_-_红日-3e",
@@ -314,8 +302,7 @@
       "bitrate": "320 kbps",
       "fileSize": "0.0 MB",
       "isFavorite": false,
-      "source": "local",
-      "localFilename": "李克勤/经典精选集/李克勤 - 红日.flac"
+      "source": "local"
     },
     {
       "id": "song-song-6-1kpp8",
@@ -331,8 +318,7 @@
       "bitrate": "706 kbps",
       "fileSize": "2.5 MB",
       "isFavorite": false,
-      "source": "local",
-      "localFilename": "song-6.wav"
+      "source": "local"
     },
     {
       "id": "Beyond_-_____",
@@ -364,8 +350,7 @@
       "bitrate": "Hi-Res 无损 (FLAC)",
       "fileSize": "0.0 MB",
       "isFavorite": false,
-      "source": "local",
-      "localFilename": "/app/applet/music/张学友/经典大碟/张学友 - 吻别.flac"
+      "source": "local"
     },
     {
       "id": "song-张学友_-_吻别-44",
@@ -375,18 +360,50 @@
       "duration": 180,
       "url": "/api/stream/song-张学友_-_吻别-44",
       "coverUrl": "/covers/default.jpg",
+      "lyrics": "",
       "genre": "流行",
       "year": 2026,
       "bitrate": "320 kbps",
       "fileSize": "0.0 MB",
       "isFavorite": false,
-      "source": "local",
-      "localFilename": "张学友/经典大碟/张学友 - 吻别.flac"
+      "source": "local"
+    },
+    {
+      "id": "song-华语音乐_-_思念成疾-4d",
+      "title": "思念成疾",
+      "artist": "华语音乐",
+      "album": "本地音乐",
+      "duration": 180,
+      "url": "/api/stream/song-华语音乐_-_思念成疾-4d",
+      "coverUrl": "/covers/default.jpg",
+      "lyrics": "",
+      "genre": "流行",
+      "year": 2026,
+      "bitrate": "320 kbps",
+      "fileSize": "0.0 MB",
+      "isFavorite": false,
+      "source": "local"
+    },
+    {
+      "id": "_____-_____",
+      "title": "思念成疾",
+      "artist": "华语音乐",
+      "album": "本地音乐",
+      "duration": 180,
+      "url": "/api/stream/%E5%8D%8E%E8%AF%AD%E9%9F%B3%E4%B9%90%20-%20%E6%80%9D%E5%BF%B5%E6%88%90%E7%96%BE.flac",
+      "coverUrl": "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?auto=format&fit=crop&w=600&q=80",
+      "lyrics": "[00:00.00]思念成疾 - 华语音乐\n[00:03.00]音质规格: FLAC 24bit 无损母带 / AI Skill 原生入库\n[00:08.00]（前奏旋律）\n[00:18.00]谁没有一些 刻骨铭心事\n[00:25.00]谁没有一些 得不到的梦\n[00:40.00]AI Skill 已完成自动下载并同步入库 NAS",
+      "genre": "流行",
+      "year": 2026,
+      "bitrate": "Hi-Res 无损 (FLAC)",
+      "fileSize": "0.0 MB",
+      "isFavorite": false,
+      "source": "local"
     }
   ],
-  "currentIndex": 0,
+  "currentIndex": 23,
   "loopMode": "all",
   "targetDid": "did-1789129459008",
   "targetDeviceName": "小爱音箱Pro",
-  "updatedAt": "2026-10-06T16:14:25.634Z"
+  "updatedAt": "2026-10-06T16:34:29.299Z"
 }
