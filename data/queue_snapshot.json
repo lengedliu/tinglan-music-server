@@ -133,9 +133,9 @@
   "loopMode": "all",
   "targetDid": "did-1789129459008",
   "targetDeviceName": "小爱音箱Pro",
-  "isPlaying": true,
-  "songStartTime": 1791305001033,
+  "isPlaying": false,
+  "songStartTime": 0,
   "currentDuration": 234,
   "currentSongStarted": false,
-  "savedAt": 1791305001391
+  "savedAt": 1791306819718
 }

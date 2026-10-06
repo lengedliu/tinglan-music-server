@@ -293,7 +293,7 @@ export interface VoiceCommandRule {
   id: string;
   name: string;
   triggerPhrases: string[];
-  actionType: 'play_playlist' | 'play_random_all' | 'play_song_search' | 'control_command';
+  actionType: 'play_playlist' | 'play_random_all' | 'play_song_search' | 'control_command' | 'download_song';
   targetPlaylistId?: string;
   controlAction?: 'next' | 'prev' | 'pause' | 'stop' | 'resume' | 'volume_up' | 'volume_down';
   ttsFeedback?: string;

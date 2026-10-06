@@ -299,6 +299,8 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
   };
 
   const QUICK_TEST_PRESETS = [
+    { label: '⬇️ 下载已收录歌曲', query: '下载 月半小夜曲' },
+    { label: '📥 离线下载新歌', query: '下载 七里香' },
     { label: '🎵 点播月半小夜曲', query: '放一首月半小夜曲' },
     { label: '🎤 歌手+歌名搜索', query: '放一首周杰伦的夜的第七章' },
     { label: '❤️ 播放我喜欢的音乐', query: '播放我喜欢的歌' },
@@ -683,6 +685,7 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
             const isSongSearch = rule.actionType === 'play_song_search';
             const isPlaylist = rule.actionType === 'play_playlist';
             const isRandom = rule.actionType === 'play_random_all';
+            const isDownload = rule.actionType === 'download_song';
 
             const controlLabels: Record<string, string> = {
               next: '下一首',
@@ -707,12 +710,14 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
                       <span className={`p-1.5 rounded-xl text-xs ${
+                        isDownload ? 'bg-cyan-500/20 text-cyan-300' :
                         isSongSearch ? 'bg-purple-500/20 text-purple-300' :
                         isPlaylist ? 'bg-blue-500/20 text-blue-300' :
                         isRandom ? 'bg-amber-500/20 text-amber-300' :
                         'bg-emerald-500/20 text-emerald-300'
                       }`}>
-                        {isSongSearch ? <Search className="w-3.5 h-3.5" /> :
+                        {isDownload ? <Download className="w-3.5 h-3.5" /> :
+                         isSongSearch ? <Search className="w-3.5 h-3.5" /> :
                          isPlaylist ? <ListMusic className="w-3.5 h-3.5" /> :
                          isRandom ? <Sparkles className="w-3.5 h-3.5" /> :
                          <Sliders className="w-3.5 h-3.5" />}
@@ -723,7 +728,8 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
                     <div className="text-[11px] text-zinc-400 flex items-center gap-1.5">
                       <span>动作类型:</span>
                       <span className="font-semibold text-zinc-200">
-                        {isSongSearch ? '模糊搜歌并起播' :
+                        {isDownload ? '离线下载与曲库查重' :
+                         isSongSearch ? '模糊搜歌并起播' :
                          isPlaylist ? `投播歌单 (${rule.targetPlaylistId === 'favorites' ? '我喜欢的音乐' : (rule.targetPlaylistId === 'default' ? '默认歌单' : rule.targetPlaylistId)})` :
                          isRandom ? '曲库全随机起播' :
                          `播控指令 (${controlLabels[rule.controlAction || 'next'] || rule.controlAction})`}
@@ -961,6 +967,7 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
                   onChange={(e: any) => setEditingRule({ ...editingRule, actionType: e.target.value })}
                   className="w-full bg-zinc-950 border border-white/10 rounded-xl px-3.5 py-2.5 text-white focus:outline-none focus:border-[#FF6700] cursor-pointer"
                 >
+                  <option value="download_song">📥 离线下载歌曲 (智能检查曲库，已存在回复“如您要下载的歌曲已存在”，未收录启动离线下载)</option>
                   <option value="play_song_search">智能搜歌点歌 (自动提取关键词模糊匹配本地歌曲)</option>
                   <option value="play_random_all">随机播放全部音乐 (曲库全随机起播)</option>
                   <option value="play_playlist">投播指定歌单 (投播整个歌单到音箱)</option>

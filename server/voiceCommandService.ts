@@ -5,12 +5,13 @@ import { generateMinaRequestId, buildMinaHeaders } from './xiaomiPassport';
 import { computeSongMatchScore } from './pinyinHelper';
 import { xiaomiCircuitBreaker } from './circuitBreaker';
 import { aiService } from './core/aiService.js';
+import { musicAutoFetcherService } from './core/musicAutoFetcherService.js';
 
 export interface VoiceCommandRule {
   id: string;
   name: string;
   triggerPhrases: string[];
-  actionType: 'play_playlist' | 'play_random_all' | 'play_song_search' | 'control_command';
+  actionType: 'play_playlist' | 'play_random_all' | 'play_song_search' | 'control_command' | 'download_song';
   targetPlaylistId?: string;
   controlAction?: 'next' | 'prev' | 'pause' | 'stop' | 'resume' | 'volume_up' | 'volume_down';
   ttsFeedback?: string;
@@ -188,11 +189,20 @@ const DEFAULT_RULES: VoiceCommandRule[] = [
     ttsFeedback: '好的，正在播放歌单',
     enabled: true
   },
-  // 3. Intelligent song search (matched after high-priority controls)
+  // 3. Dedicated offline download with library duplication check
+  {
+    id: 'rule_download_song',
+    name: '离线下载歌曲 (智能查重与后台入库)',
+    triggerPhrases: ['下载歌曲', '帮我下载', '下载一首', '下载', '离线下载', '下首歌', '下歌曲'],
+    actionType: 'download_song',
+    ttsFeedback: '已为您启动后台离线下载',
+    enabled: true
+  },
+  // 4. Intelligent song search (matched after high-priority controls)
   {
     id: 'rule_search_song',
-    name: '智能搜歌点歌与下载',
-    triggerPhrases: ['点歌', '来一首', '放一首', '我想听', '播放歌曲', '来首', '放首', '听', '放', '播', '搜', '来一曲', '放一曲', '下载歌曲', '帮我下载', '下载一首', '下载', '下歌曲', '下首'],
+    name: '智能搜歌点歌与播放',
+    triggerPhrases: ['点歌', '来一首', '放一首', '我想听', '播放歌曲', '来首', '放首', '听', '放', '播', '搜', '来一曲', '放一曲'],
     actionType: 'play_song_search',
     ttsFeedback: '好的，为您播放 {title}',
     enabled: true
@@ -819,7 +829,7 @@ export class VoiceCommandService {
     // 1. Clean wake words, polite prefixes & punctuation
     let cleanQuery = rawQuery
       .replace(/^[，。！？!?~\s]+|[，。！？!?~\s]+$/g, '')
-      .replace(/^(小爱同学|小爱|给我|帮我|请帮我|麻烦|我想|我想听听|我想听|请|立刻|马上|能不能|麻烦你)[\s，,。！!:]*/i, '')
+      .replace(/^(小爱同学|小爱|给我|帮我|请帮我|麻烦|我想|我想听听|我想听|请|立刻|马上|能不能|麻烦你|口令)[\s，,。！!:]*/i, '')
       .trim();
 
     if (!cleanQuery) cleanQuery = rawQuery;
@@ -862,6 +872,23 @@ export class VoiceCommandService {
       for (const [k, ts] of this.recentCommands.entries()) {
         if (now - ts > 30000) this.recentCommands.delete(k);
       }
+    }
+
+    // =========================================================================
+    // Tier 0: Direct Download Command Interception (口令以“下载”开头)
+    // 检查曲库是否存在：若存在小爱回答“如您要下载的歌曲已存在”；若不存在播报“已为您启动后台离线下载”并加入下载队列
+    // =========================================================================
+    const isDownloadCommand = /^(下载歌曲|下载一首|帮我下载|离线下载|下载|下首歌|下歌曲)/.test(cleanQuery) || cleanQuery.startsWith('下载');
+    if (isDownloadCommand) {
+      return await this.handleDownloadVoiceCommand(
+        rawQuery,
+        cleanQuery,
+        deviceId,
+        deviceName,
+        source,
+        slangApplied,
+        matchedSlangTerm
+      );
     }
 
     // =========================================================================
@@ -1333,8 +1360,247 @@ export class VoiceCommandService {
         };
       }
 
+      case 'download_song': {
+        const query = param ? `下载 ${param}` : '下载';
+        const res = await this.handleDownloadVoiceCommand(
+          query,
+          query,
+          deviceId,
+          undefined,
+          'test_manual'
+        );
+        return {
+          success: res.matched,
+          summary: res.summary
+        };
+      }
+
       default:
         throw new Error('未知的指令动作类型');
+    }
+  }
+
+  /**
+   * Check if requested song exists in current music library (曲库)
+   * Multi-strategy: title clean match, artist+title match, pinyin fuzzy score match
+   */
+  public checkSongExistsInLibrary(
+    songs: Song[],
+    targetTitle: string,
+    targetArtist?: string,
+    rawKeyword?: string
+  ): Song | null {
+    if (!songs || songs.length === 0) return null;
+
+    const normTitle = (targetTitle || '').toLowerCase().replace(/[\s\-_《》「」『』()（）\[\]]/g, '');
+    const normArtist = (targetArtist || '').toLowerCase().replace(/[\s\-_]/g, '');
+
+    // 1. Direct match on clean title and artist
+    for (const song of songs) {
+      const sRawTitle = (song.title || '').toLowerCase();
+      // Remove subtitles in parenthesis e.g. "月半小夜曲 (Acoustic Night)" -> "月半小夜曲"
+      const sCleanTitle = sRawTitle.replace(/\s*\(.*?\)\s*/g, '').replace(/\s*（.*?）\s*/g, '').replace(/[\s\-_《》「」『』]/g, '').trim();
+      const sCleanArtist = (song.artist || '').toLowerCase().replace(/[\s\-_]/g, '').trim();
+
+      if (normArtist) {
+        const artistMatch = sCleanArtist.includes(normArtist) || normArtist.includes(sCleanArtist);
+        const titleMatch = sCleanTitle === normTitle ||
+                           sCleanTitle.includes(normTitle) ||
+                           normTitle.includes(sCleanTitle) ||
+                           sRawTitle.includes(normTitle);
+        if (artistMatch && titleMatch) {
+          return song;
+        }
+      } else {
+        if (sCleanTitle === normTitle || sRawTitle === normTitle) {
+          return song;
+        }
+        // If clean title is inside song title and difference is small
+        if (normTitle.length >= 2 && sCleanTitle.includes(normTitle) && sCleanTitle.length <= normTitle.length + 4) {
+          return song;
+        }
+        if (normTitle.length >= 2 && normTitle.includes(sCleanTitle) && normTitle.length <= sCleanTitle.length + 4) {
+          return song;
+        }
+      }
+    }
+
+    // 2. Multi-tier fuzzy & pinyin matching
+    const searchParam = targetArtist ? `${targetArtist} ${targetTitle}` : (targetTitle || rawKeyword || '');
+    const fuzzy = this.fuzzyFindSongWithScore(songs, searchParam);
+    if (fuzzy && fuzzy.score >= 80) {
+      return fuzzy.song;
+    }
+
+    return null;
+  }
+
+  /**
+   * Handle voice commands starting with '下载' (e.g. 下载 晴天, 下载周杰伦的稻香, 帮我下载 七里香)
+   * 1. Checks current music library (曲库)
+   * 2. If exists -> XiaoAi replies: "如您要下载的歌曲已存在"
+   * 3. If not exists -> Broadcasts: "已为您启动后台离线下载" and automatically enqueues background offline download
+   */
+  public async handleDownloadVoiceCommand(
+    rawQuery: string,
+    cleanQuery: string,
+    deviceId?: string,
+    deviceName?: string,
+    source: 'speaker_mina_poll' | 'speaker_mina_ws' | 'test_manual' = 'test_manual',
+    slangApplied = false,
+    matchedSlangTerm = ''
+  ): Promise<{ matched: boolean; summary: string }> {
+    // Extract target from cleanQuery (e.g., '下载 晴天', '帮我下载 七里香', '下载歌曲 稻香', '下载一首 枫')
+    let rawTarget = cleanQuery
+      .replace(/^(帮我下载|下载歌曲|下载一首|离线下载|下载|下首歌|下歌曲)/, '')
+      .replace(/^(一下|一首|点|首|首歌曲|首歌|关于|这首歌|歌曲)/, '')
+      .trim();
+
+    // Check if user just said '下载' without specifying a song
+    if (!rawTarget) {
+      const activeSession = this.sessionContextMap.get(deviceId || 'global');
+      if (activeSession && activeSession.lastQueueSongs && activeSession.lastQueueSongs.length > 0) {
+        const currentSong = activeSession.lastQueueSongs[activeSession.lastCurrentIndex];
+        if (currentSong) {
+          rawTarget = `${currentSong.artist ? currentSong.artist + ' ' : ''}${currentSong.title}`;
+        }
+      }
+    }
+
+    if (!rawTarget) {
+      const promptTts = '请告诉我您想下载哪首歌曲，例如：下载 晴天';
+      const targetDid = deviceId || this.config.targetDeviceId;
+      if (this.sendTtsFn && targetDid) {
+        await this.sendTtsFn(targetDid, promptTts).catch(() => {});
+      }
+      return {
+        matched: true,
+        summary: '请告诉我您想下载哪首歌曲，例如：下载 晴天'
+      };
+    }
+
+    // Parse artist and title from rawTarget
+    let extractedArtist = '';
+    let extractedTitle = rawTarget;
+
+    if (rawTarget.includes('唱的') || rawTarget.includes('的')) {
+      const sep = rawTarget.includes('唱的') ? '唱的' : '的';
+      const parts = rawTarget.split(sep).map(p => p.trim()).filter(Boolean);
+      if (parts.length >= 2) {
+        extractedArtist = parts[0];
+        extractedTitle = parts.slice(1).join(' ').trim();
+      }
+    } else if (rawTarget.includes(' ')) {
+      const parts = rawTarget.split(/\s+/).filter(Boolean);
+      if (parts.length >= 2) {
+        extractedArtist = parts[0];
+        extractedTitle = parts.slice(1).join(' ').trim();
+      }
+    }
+
+    extractedTitle = extractedTitle
+      .replace(/^(这首歌|这首|歌曲|单曲)/, '')
+      .replace(/(这首歌|这首|的歌|歌曲)$/, '')
+      .replace(/[《》「」『』"]/g, '')
+      .trim();
+
+    if (!extractedTitle && extractedArtist) {
+      extractedTitle = extractedArtist;
+      extractedArtist = '';
+    }
+    if (!extractedTitle) {
+      extractedTitle = rawTarget.trim();
+    }
+
+    const songs = this.getSongsFn ? this.getSongsFn() : [];
+    const matchedExistingSong = this.checkSongExistsInLibrary(songs, extractedTitle, extractedArtist, rawTarget);
+    const targetDid = deviceId || this.config.targetDeviceId;
+
+    // Early interception on speaker to avoid overlapping native audio
+    if (this.earlyStopFn && targetDid) {
+      await this.earlyStopFn(targetDid).catch(() => {});
+    }
+
+    if (matchedExistingSong) {
+      // 1. 曲库已存在：小爱回答“如您要下载的歌曲已存在”
+      const ttsText = '如您要下载的歌曲已存在';
+      if (this.sendTtsFn && targetDid) {
+        await this.sendTtsFn(targetDid, ttsText).catch(() => {});
+      }
+
+      const summary = `如您要下载的歌曲已存在 (曲库已收录: 《${matchedExistingSong.title}》 - ${matchedExistingSong.artist || '本地曲目'})`;
+      this.addLog({
+        id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        timestamp: Date.now(),
+        queryText: rawQuery,
+        matchedRuleId: 'rule_download_song',
+        matchedRuleName: '离线下载歌曲 (智能查重与后台入库)',
+        actionSummary: summary,
+        status: 'matched',
+        source,
+        deviceId,
+        deviceName,
+        slangApplied,
+        slangTerm: matchedSlangTerm
+      });
+
+      console.log(`[VoiceCommandService] 📥 [曲库已收录] 指令: "${rawQuery}" -> 小爱播报: "${ttsText}" (已收录《${matchedExistingSong.title}》)`);
+      return { matched: true, summary };
+    } else {
+      // 2. 曲库不存在：播报“已为您启动后台离线下载”并启动后台离线下载
+      const ttsText = '已为您启动后台离线下载';
+      if (this.sendTtsFn && targetDid) {
+        await this.sendTtsFn(targetDid, ttsText).catch(() => {});
+      }
+
+      const downloadTitle = extractedTitle || rawTarget || '单曲';
+      const downloadArtist = extractedArtist || '华语音乐';
+
+      try {
+        const fetcherCfg = musicAutoFetcherService.getConfig();
+        const isSchedulerActive = Boolean(fetcherCfg.enabled && fetcherCfg.downloadMode !== 'ai_skill');
+        
+        // Always record task in queue so it is visible in the AI 离线下载调度中心 UI
+        musicAutoFetcherService.enqueueTask({
+          title: downloadTitle,
+          artist: downloadArtist,
+          genre: '流行 / 经典',
+          requestedBy: 'voice_ai'
+        });
+
+        if (isSchedulerActive) {
+          console.log(`[VoiceCommandService] 🚀 [离线下载] 自动调度后台离线下载并入库 NAS: 《${downloadTitle}》 - ${downloadArtist}`);
+        } else {
+          musicAutoFetcherService.executeAiSkillDirectDownload({
+            title: downloadTitle,
+            artist: downloadArtist,
+            genre: '流行 / 经典',
+            requestedBy: 'voice_ai'
+          }).catch(e => console.warn('[VoiceCommandService] AI Skill download error:', e.message));
+          console.log(`[VoiceCommandService] 🤖 [离线下载] 自动使用 AI Skill 下载并同步 NAS: 《${downloadTitle}》 - ${downloadArtist}`);
+        }
+      } catch (fetchErr: any) {
+        console.warn('[VoiceCommandService] Failed to trigger auto fetcher:', fetchErr.message);
+      }
+
+      const summary = `已为您启动后台离线下载 (曲库未收录，已创建离线下载任务: 《${downloadTitle}》 - ${downloadArtist}，下载完成将自动同步至NAS)`;
+      this.addLog({
+        id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        timestamp: Date.now(),
+        queryText: rawQuery,
+        matchedRuleId: 'rule_download_song',
+        matchedRuleName: '离线下载歌曲 (智能查重与后台入库)',
+        actionSummary: summary,
+        status: 'matched',
+        source,
+        deviceId,
+        deviceName,
+        slangApplied,
+        slangTerm: matchedSlangTerm
+      });
+
+      console.log(`[VoiceCommandService] 🚀 [启动离线下载] 指令: "${rawQuery}" -> 小爱播报: "${ttsText}" (创建下载任务: 《${downloadTitle}》 - ${downloadArtist})`);
+      return { matched: true, summary };
     }
   }
 

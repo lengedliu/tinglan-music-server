@@ -816,19 +816,20 @@ export class AiService {
 
           if (autoFetchTriggered) {
             try {
-              const downloadTitle = requestedTargetTitle || `${requestedArtist}的热门金曲`;
-              const downloadArtist = requestedArtist || '华语歌手';
+              const downloadTitle = (requestedTargetTitle || `${requestedArtist}的热门金曲`).replace(/[《》「」『』"']/g, '').trim();
+              const downloadArtist = (requestedArtist || '华语歌手').replace(/[《》「」『』"']/g, '').trim();
+
+              // Always enqueue into scheduler so task appears and progresses in AI 离线下载调度中心
+              musicAutoFetcherService.enqueueTask({
+                title: downloadTitle,
+                artist: downloadArtist,
+                genre: intent.targetGenre || '流行 / 经典',
+                requestedBy: 'voice_ai'
+              });
+
               if (isSchedulerActive) {
-                // Mode A: Scheduler mode
-                musicAutoFetcherService.enqueueTask({
-                  title: downloadTitle,
-                  artist: downloadArtist,
-                  genre: intent.targetGenre || '流行 / 经典',
-                  requestedBy: 'voice_ai'
-                });
                 console.log(`[AiService] 🚀 [调度中心模式 - 零匹配补库] 自动调度后台离线下载并入库 NAS: 《${downloadTitle}》 - ${downloadArtist}`);
               } else {
-                // Mode B: AI Skill direct mode
                 musicAutoFetcherService.executeAiSkillDirectDownload({
                   title: downloadTitle,
                   artist: downloadArtist,
@@ -962,24 +963,27 @@ export class AiService {
 
         if (autoFetchTriggered) {
           try {
+            const cleanDownloadTitle = (requestedTargetTitle || '目标单曲').replace(/[《》「」『』"']/g, '').trim();
+            const cleanDownloadArtist = (requestedArtist || '华语音乐').replace(/[《》「」『』"']/g, '').trim();
+
+            // Always enqueue task so user sees it in AI 离线下载调度中心
+            musicAutoFetcherService.enqueueTask({
+              title: cleanDownloadTitle,
+              artist: cleanDownloadArtist,
+              genre: intent.targetGenre || '流行 / 经典',
+              requestedBy: 'voice_ai'
+            });
+
             if (isSchedulerActive) {
-              // 模式 A: 开启下载调度中心进行多任务流水线调度
-              musicAutoFetcherService.enqueueTask({
-                title: requestedTargetTitle,
-                artist: requestedArtist || '华语音乐',
-                genre: intent.targetGenre || '流行 / 经典',
-                requestedBy: 'voice_ai'
-              });
-              console.log(`[AiService] 🚀 [调度中心模式] 自动调度后台离线下载并入库 NAS: 《${requestedTargetTitle}》 - ${requestedArtist}`);
+              console.log(`[AiService] 🚀 [调度中心模式] 自动调度后台离线下载并入库 NAS: 《${cleanDownloadTitle}》 - ${cleanDownloadArtist}`);
             } else {
-              // 模式 B: 关闭调度中心，直接使用 AI 自身 Skill 下载并同步入库
               musicAutoFetcherService.executeAiSkillDirectDownload({
-                title: requestedTargetTitle,
-                artist: requestedArtist || '华语音乐',
+                title: cleanDownloadTitle,
+                artist: cleanDownloadArtist,
                 genre: intent.targetGenre || '流行 / 经典',
                 requestedBy: 'voice_ai'
               }).catch((e: any) => console.warn('[AiService] AI skill direct download error:', e.message));
-              console.log(`[AiService] 🤖 [AI Skill 直连模式] 自动使用 AI 自身 Skill 下载并同步 NAS: 《${requestedTargetTitle}》 - ${requestedArtist}`);
+              console.log(`[AiService] 🤖 [AI Skill 直连模式] 自动使用 AI 自身 Skill 下载并同步 NAS: 《${cleanDownloadTitle}》 - ${cleanDownloadArtist}`);
             }
           } catch (fetchErr: any) {
             console.warn('[AiService] Auto fetch notice:', fetchErr.message);

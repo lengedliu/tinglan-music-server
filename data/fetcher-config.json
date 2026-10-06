@@ -1,6 +1,6 @@
 {
-  "enabled": false,
-  "downloadMode": "ai_skill",
+  "enabled": true,
+  "downloadMode": "scheduler",
   "autoTriggerOnMissingVoiceQuery": true,
   "defaultQuality": "lossless",
   "storageSubfolderFormat": "{artist}/{album}",

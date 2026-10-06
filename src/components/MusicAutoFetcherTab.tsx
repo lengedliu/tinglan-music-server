@@ -124,10 +124,10 @@ export const MusicAutoFetcherTab: React.FC<MusicAutoFetcherTabProps> = ({ onShow
       setIsLoading(false);
     });
 
-    // Auto-poll active tasks every 2.5 seconds
+    // Auto-poll active tasks every 1.2 seconds for real-time progress
     const interval = setInterval(() => {
       fetchTasks();
-    }, 2500);
+    }, 1200);
 
     return () => clearInterval(interval);
   }, [fetchTasks, fetchConfig]);

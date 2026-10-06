@@ -164,6 +164,22 @@
       "enabled": true
     },
     {
+      "id": "rule_download_song",
+      "name": "离线下载歌曲 (智能查重与后台入库)",
+      "triggerPhrases": [
+        "下载歌曲",
+        "帮我下载",
+        "下载一首",
+        "下载",
+        "离线下载",
+        "下首歌",
+        "下歌曲"
+      ],
+      "actionType": "download_song",
+      "ttsFeedback": "已为您启动后台离线下载",
+      "enabled": true
+    },
+    {
       "id": "rule_search_song",
       "name": "智能搜歌点歌",
       "triggerPhrases": [
