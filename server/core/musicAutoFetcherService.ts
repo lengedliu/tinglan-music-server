@@ -3,7 +3,7 @@ import path from 'path';
 import { appEventBus } from './eventBus.js';
 import { asyncMusicScanner } from './asyncMusicScanner.js';
 import { voiceCommandService } from '../voiceCommandService.js';
-import { aiService } from './aiService.js';
+import { aiService, buildAiPromptPayload } from './aiService.js';
 import { getResolvedServerHost } from '../xiaomi/miotService.js';
 import { logEngine } from './logEngine.js';
 
@@ -444,10 +444,62 @@ export class MusicAutoFetcherService {
     const finalFilePath = path.join(targetFolder, finalFileName);
     const lrcPath = path.join(targetFolder, `${safeArtist} - ${safeTitle}.lrc`);
 
-    // 0. Dispatch to External AI Skill Callback / Webhook if configured
+    // 0. 🌟 核心阶段 1：向配置的 AI Agent (LLM 大模型) 传入 Prompt 结构化参数进行下载调度思考
+    const resolvedBaseUrl = getResolvedServerHost();
+    const promptPayload = buildAiPromptPayload(
+      `${safeTitle} ${safeArtist !== '华语音乐' ? safeArtist : ''}`,
+      { downloadMode: 'ai_skill', serverHost: resolvedBaseUrl }
+    );
+
+    console.log(`[MusicAutoFetcher] 🤖 [AI Agent 核心调起] 正在向配置的大模型 (${promptPayload.model}) 传入 Prompt 参数...`);
+    logEngine.info(
+      'automation',
+      'AI Agent 核心服务调起',
+      `已向配置的大模型 AI Agent (${promptPayload.model}) 传入 Prompt 结构化参数进行下载调度思考 | 目标: 《${safeTitle}》- ${safeArtist}`,
+      {
+        traceId,
+        model: promptPayload.model,
+        systemPrompt: promptPayload.systemPrompt,
+        userPrompt: promptPayload.userPrompt,
+        inboundWebhookUrl: promptPayload.inboundWebhookUrl,
+        inboundWebhookMethod: promptPayload.inboundWebhookMethod,
+        track: { title: safeTitle, artist: safeArtist, album: safeAlbum }
+      }
+    );
+
+    try {
+      const aiRes = await aiService.generateCompletion({
+        prompt: promptPayload.userPrompt,
+        systemPrompt: promptPayload.systemPrompt,
+        temperature: 0.2,
+        maxTokens: 500
+      });
+
+      console.log(`[MusicAutoFetcher] 🤖 AI Agent (${aiRes.modelUsed}) 决策响应成功: ${aiRes.text.slice(0, 100)}`);
+      logEngine.info(
+        'automation',
+        'AI Agent 决策响应成功',
+        `配置的大模型 AI Agent (${aiRes.modelUsed || promptPayload.model}) 响应成功 | 耗时: ${aiRes.latencyMs}ms | 决策文本: ${aiRes.text.slice(0, 200)}`,
+        {
+          traceId,
+          modelUsed: aiRes.modelUsed || promptPayload.model,
+          latencyMs: aiRes.latencyMs,
+          replySample: aiRes.text.slice(0, 300)
+        }
+      );
+    } catch (aiErr: any) {
+      console.warn(`[MusicAutoFetcher] 🤖 AI Agent 思考提示: ${aiErr.message}`);
+      logEngine.warn(
+        'automation',
+        'AI Agent 智能体执行提示',
+        `调用配置的 AI Agent (${promptPayload.model}) 返回: ${aiErr.message} | 本地离线引擎将继续落盘保障可用性`,
+        { traceId, model: promptPayload.model, error: aiErr.message }
+      );
+    }
+
+    // 0-alt. 可选拓展：向外部 AI Agent 拓展 Webhook 派发 (若用户有单独配置)
     const aiConfig = aiService.getConfig();
     if (aiConfig.aiSkillCallbackUrl && aiConfig.aiSkillCallbackUrl.trim()) {
-      const resolvedBaseUrl = getResolvedServerHost();
       const inboundWebhookUrl = `${resolvedBaseUrl}/api/skill/notify-completed`;
       const callbackPayload = {
         event: 'ai_skill_music_download_requested',
@@ -491,11 +543,11 @@ export class MusicAutoFetcherService {
       };
 
       try {
-        console.log(`[MusicAutoFetcher] 📡 正在向 AI Skill 外部回调地址发送下载指令: ${aiConfig.aiSkillCallbackUrl}`);
+        console.log(`[MusicAutoFetcher] 📡 正在向 AI Agent 外部拓展 Webhook 发送指令: ${aiConfig.aiSkillCallbackUrl}`);
         logEngine.info(
           'automation',
-          'AI Skill 外部探针回调派发',
-          `正在向外部 AI Agent/探针 Webhook 发送结构化下载指令 | 目标: ${aiConfig.aiSkillCallbackUrl} | 歌曲: 《${safeTitle}》`,
+          'AI Agent 外部拓展派发',
+          `正在向外部 AI Agent Webhook 发送结构化下载指令 | 目标: ${aiConfig.aiSkillCallbackUrl} | 歌曲: 《${safeTitle}》`,
           {
             traceId,
             callbackUrl: aiConfig.aiSkillCallbackUrl,
@@ -513,19 +565,19 @@ export class MusicAutoFetcherService {
           body: JSON.stringify(callbackPayload),
           signal: AbortSignal.timeout(8000)
         }).then(r => {
-          console.log(`[MusicAutoFetcher] 📡 AI Skill 外部回调响应: HTTP ${r.status}`);
+          console.log(`[MusicAutoFetcher] 📡 AI Agent 外部拓展响应: HTTP ${r.status}`);
           logEngine.info(
             'automation',
-            'AI Skill 外部探针响应成功',
-            `外部 AI Agent/探针成功接收离线任务 | HTTP 状态码: ${r.status} | 歌曲: 《${safeTitle}》`,
+            'AI Agent 外部响应成功',
+            `外部 AI Agent Webhook 成功接收离线任务 | HTTP 状态码: ${r.status} | 歌曲: 《${safeTitle}》`,
             { traceId, status: r.status, callbackUrl: aiConfig.aiSkillCallbackUrl }
           );
         }).catch(err => {
-          console.warn(`[MusicAutoFetcher] 📡 AI Skill 外部回调注意: ${err.message}`);
+          console.warn(`[MusicAutoFetcher] 📡 AI Agent 外部拓展提示: ${err.message}`);
           logEngine.warn(
             'automation',
-            'AI Skill 外部探针通信异常',
-            `向外部 AI Webhook 发送指令失败或超时 | 错误: ${err.message} | 本地离线引擎将继续落盘保障可用性`,
+            'AI Agent 外部拓展通信提示',
+            `向外部 AI Webhook 发送指令异常: ${err.message} | 本地离线引擎将继续落盘保障可用性`,
             { traceId, error: err.message, callbackUrl: aiConfig.aiSkillCallbackUrl }
           );
         });

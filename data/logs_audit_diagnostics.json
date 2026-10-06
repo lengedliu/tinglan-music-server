@@ -408,9 +408,9 @@
     "timeFormatted": "19:56:53.015",
     "category": "automation",
     "level": "info",
+    "traceId": "tr_ltf1os",
     "title": "AI Skill 语音确认下载触发",
-    "message": "用户语音确认下载【枫】 | 歌手: 华语音乐 | 模式: AI Skill 原生秒级落盘",
-    "traceId": "tr_ltf1os"
+    "message": "用户语音确认下载【枫】 | 歌手: 华语音乐 | 模式: AI Skill 原生秒级落盘"
   },
   {
     "id": "log_1791316613021_76wsi",
@@ -418,9 +418,9 @@
     "timeFormatted": "19:56:53.021",
     "category": "automation",
     "level": "info",
+    "traceId": "ai_skill_mux3nsm5",
     "title": "AI Skill 启动离线下载",
-    "message": "【AI 原生直连】开始为《枫》- 华语音乐 执行直接离线下载与 NAS 同步 | 来源: voice_ai | 格式: FLAC 24bit 无损",
-    "traceId": "ai_skill_mux3nsm5"
+    "message": "【AI 原生直连】开始为《枫》- 华语音乐 执行直接离线下载与 NAS 同步 | 来源: voice_ai | 格式: FLAC 24bit 无损"
   },
   {
     "id": "log_1791316613024_02u3h",
@@ -428,9 +428,9 @@
     "timeFormatted": "19:56:53.024",
     "category": "automation",
     "level": "info",
+    "traceId": "ai_skill_mux3nsm5",
     "title": "AI Skill 音频与歌词落盘",
-    "message": "AI Skill 已成功生成高保真音频容器与伴生动态歌词 | 规格: FLAC 24bit/96kHz (31.4 MB) | 路径: /app/applet/music/华语音乐/经典精选集/华语音乐 - 枫.flac",
-    "traceId": "ai_skill_mux3nsm5"
+    "message": "AI Skill 已成功生成高保真音频容器与伴生动态歌词 | 规格: FLAC 24bit/96kHz (31.4 MB) | 路径: /app/applet/music/华语音乐/经典精选集/华语音乐 - 枫.flac"
   },
   {
     "id": "log_1791316613025_7pyng",
@@ -438,9 +438,9 @@
     "timeFormatted": "19:56:53.025",
     "category": "automation",
     "level": "info",
+    "traceId": "ai_skill_mux3nsm5",
     "title": "AI Skill 触发 NAS 曲库热同步",
-    "message": "主动唤起 NAS 曲库异步扫描引擎，实现免等待热同步入库 | 挂载点: /app/applet/music | 目标曲目: 《枫》",
-    "traceId": "ai_skill_mux3nsm5"
+    "message": "主动唤起 NAS 曲库异步扫描引擎，实现免等待热同步入库 | 挂载点: /app/applet/music | 目标曲目: 《枫》"
   },
   {
     "id": "log_1791316613153_1yyta",
@@ -448,8 +448,38 @@
     "timeFormatted": "19:56:53.153",
     "category": "automation",
     "level": "info",
+    "traceId": "ai_skill_mux3nsm5",
     "title": "AI Skill 流程执行完毕",
-    "message": "《枫》- 华语音乐 全流程下载、转码与 NAS 入库成功 | 音箱语音播报: 未触发/非语音 | 状态: 100% 已入库",
-    "traceId": "ai_skill_mux3nsm5"
+    "message": "《枫》- 华语音乐 全流程下载、转码与 NAS 入库成功 | 音箱语音播报: 未触发/非语音 | 状态: 100% 已入库"
+  },
+  {
+    "id": "log_1791317346451_0fkfw",
+    "timestamp": 1791317346451,
+    "timeFormatted": "20:09:06.451",
+    "category": "automation",
+    "level": "info",
+    "title": "AI Skill 语音确认下载触发",
+    "message": "用户语音确认下载【歌游京】 | 歌手: 华语音乐 | 模式: AI Skill 原生秒级落盘",
+    "traceId": "tr_9f4w18"
+  },
+  {
+    "id": "log_1791317346456_rxylc",
+    "timestamp": 1791317346456,
+    "timeFormatted": "20:09:06.456",
+    "category": "automation",
+    "level": "info",
+    "title": "AI Skill 启动离线下载",
+    "message": "【AI 原生直连】开始为《歌游京》- 华语音乐 执行直接离线下载与 NAS 同步 | 来源: voice_ai | 格式: FLAC 24bit 无损",
+    "traceId": "ai_skill_mux43ijc"
+  },
+  {
+    "id": "log_1791317346459_t9jsv",
+    "timestamp": 1791317346459,
+    "timeFormatted": "20:09:06.459",
+    "category": "automation",
+    "level": "info",
+    "title": "AI Agent 核心服务调起",
+    "message": "已向配置的大模型 AI Agent (gemini-3.8-flash) 传入 Prompt 结构化参数进行下载调度思考 | 目标: 《歌游京》- 华语音乐",
+    "traceId": "ai_skill_mux43ijc"
   }
 ]
