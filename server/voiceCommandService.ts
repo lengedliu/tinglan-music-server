@@ -1130,6 +1130,7 @@ export class VoiceCommandService {
       if (songs.length > 0) {
         try {
           const aiResult = await aiService.parseVoiceIntent(rawQuery, songs as any);
+          console.log(`[VoiceCommandService] 🤖 AI 意图提取完成，接收到返回数据:`, JSON.stringify(aiResult, null, 2));
           if (aiResult.matched && aiResult.songId) {
             const songToPlay = songs.find(s => s.id === aiResult.songId) || aiResult.primarySong;
             if (songToPlay && (this.playSongsQueueFn || this.playSongFn)) {

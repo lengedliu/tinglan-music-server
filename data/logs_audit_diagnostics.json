@@ -36,9 +36,9 @@
     "timeFormatted": "15:50:13.136",
     "category": "cast",
     "level": "info",
+    "traceId": "tr_1p04vp",
     "title": "启动歌单投播",
     "message": "开始为【小爱音箱Pro】连续播放《月半小夜曲 (Acoustic Night)》 (1/8)",
-    "traceId": "tr_1p04vp",
     "details": {
       "songTitle": "月半小夜曲 (Acoustic Night)",
       "artist": "李克勤 / 弦乐室内乐团",
@@ -55,9 +55,9 @@
     "timeFormatted": "15:50:13.496",
     "category": "cast",
     "level": "warn",
+    "traceId": "tr_des3q7",
     "title": "【歌单队列切播失败】《月半小夜曲 (Acoustic Night)》",
     "message": "未能成功向音箱【小爱音箱Pro】下发播放指令：所有投播通道均未响应或未实际拉取音频流。请检查音箱网络连通性、DLNA开关或小米账号登录状态。",
-    "traceId": "tr_des3q7",
     "details": {
       "type": "error",
       "model": "xiaomi.wifispeaker.sound"
@@ -72,9 +72,9 @@
     "timeFormatted": "15:51:08.168",
     "category": "cast",
     "level": "info",
+    "traceId": "tr_218bf8",
     "title": "启动歌单投播",
     "message": "开始为【小爱音箱Pro】连续播放《月半小夜曲 (Acoustic Night)》 (1/8)",
-    "traceId": "tr_218bf8",
     "details": {
       "songTitle": "月半小夜曲 (Acoustic Night)",
       "artist": "李克勤 / 弦乐室内乐团",
@@ -91,9 +91,26 @@
     "timeFormatted": "15:51:08.522",
     "category": "cast",
     "level": "warn",
+    "traceId": "tr_9yqrj1",
     "title": "【歌单队列切播失败】《月半小夜曲 (Acoustic Night)》",
     "message": "未能成功向音箱【小爱音箱Pro】下发播放指令：所有投播通道均未响应或未实际拉取音频流。请检查音箱网络连通性、DLNA开关或小米账号登录状态。",
-    "traceId": "tr_9yqrj1",
+    "details": {
+      "type": "error",
+      "model": "xiaomi.wifispeaker.sound"
+    },
+    "clientIp": "192.168.31.25",
+    "targetDid": "did-1789129459008",
+    "deviceName": "xiaomi.wifispeaker.sound"
+  },
+  {
+    "id": "log_1791303265989_fziwv",
+    "timestamp": 1791303265989,
+    "timeFormatted": "16:14:25.989",
+    "category": "cast",
+    "level": "warn",
+    "title": "【歌单队列切播失败】《月半小夜曲 (Acoustic Night)》",
+    "message": "未能成功向音箱【小爱音箱Pro】下发播放指令：所有投播通道均未响应或未实际拉取音频流。请检查音箱网络连通性、DLNA开关或小米账号登录状态。",
+    "traceId": "tr_0p5ffi",
     "details": {
       "type": "error",
       "model": "xiaomi.wifispeaker.sound"

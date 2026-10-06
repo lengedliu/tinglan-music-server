@@ -577,10 +577,12 @@ export class AiService {
     if (cached && cached.songId) {
       const exists = songs.some(s => s.id === cached.songId);
       if (exists) {
-        return {
+        const cacheResult = {
           ...cached,
           fromCache: true
         };
+        console.log(`[AiService] ⚡ [语义缓存命中] 指令: "${queryText}" -> 返回数据:`, JSON.stringify(cacheResult, null, 2));
+        return cacheResult;
       }
     }
 
@@ -680,6 +682,9 @@ export class AiService {
     if (!intent || typeof intent !== 'object') {
       return { matched: false, reason: '意图提取未完成' };
     }
+
+    // 💡 LOG: Print AI extracted intent parameters
+    console.log(`[AiService] 🧠 [AI 意图提取完成] 指令: "${queryText}" -> 提取出的结构化数据:`, JSON.stringify(intent, null, 2));
 
       // Stage 2: Local High-Performance Multi-Criteria Matching across 100% of library
       const scoredSongs = songs.map(song => {
@@ -820,13 +825,16 @@ export class AiService {
           };
 
           aiSemanticCache.set(queryText, fallbackResult);
+          console.log(`[AiService] 🎯 [AI 意图兜底推荐完成] 指令: "${queryText}" -> 返回数据:`, JSON.stringify(fallbackResult, null, 2));
           return fallbackResult;
         }
 
-        return {
+        const unmatchedResult = {
           matched: false,
           reason: `已理解意图为【${intent.targetSongTitle || intent.targetArtist || intent.moodSceneTitle || '特定风格'}】，但在本地曲库中未检索到匹配曲目`
         };
+        console.log(`[AiService] ⚠️ [AI 意图理解完成但未匹配曲库] 指令: "${queryText}" -> 返回数据:`, JSON.stringify(unmatchedResult, null, 2));
+        return unmatchedResult;
       }
 
       const primary = matchedList[0].song;
@@ -991,6 +999,8 @@ export class AiService {
 
       // Save to semantic cache for future instant 0ms hits
       aiSemanticCache.set(queryText, result);
+
+      console.log(`[AiService] 🎯 [AI 意图曲库匹配成功] 指令: "${queryText}" -> 返回数据:`, JSON.stringify(result, null, 2));
 
       return result;
   }

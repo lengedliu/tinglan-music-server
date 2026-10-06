@@ -1,6 +1,6 @@
 {
   "totalHits": 1,
-  "savedAt": 1791301866306,
+  "savedAt": 1791303263777,
   "entries": [
     {
       "query": "来首歌词中有谁没有一些 得不到的梦的歌",
@@ -707,6 +707,57 @@
       "hitCount": 1,
       "createdAt": 1791301863305,
       "lastHitAt": 1791301863305
+    },
+    {
+      "query": "放张学友的吻别",
+      "normalizedQuery": "张学友的吻别",
+      "result": {
+        "matched": true,
+        "isMoodQueue": true,
+        "queueTitle": "张学友经典金曲",
+        "primarySong": {
+          "id": "song-1",
+          "title": "月半小夜曲 (Acoustic Night)",
+          "artist": "李克勤 / 弦乐室内乐团",
+          "album": "港乐经典·发烧重现",
+          "duration": 234,
+          "url": "/api/stream/song-1.mp3",
+          "coverUrl": "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=600&q=80",
+          "lyrics": "[00:00.00]月半小夜曲 - 弦乐原声版\n[00:04.00]词：向雪怀 曲：河合奈保子\n[00:08.50]演奏：Tinglan 听澜 Hi-Fi 发烧工作室\n[00:15.00]哪怕面对冷冰冰的墙壁\n[00:22.00]深深的一声叹息\n[00:29.00]仍难忘你的笑语盈盈\n[00:36.00]仍难舍你的柔情似蜜\n[00:44.00]月亮为何还在夜空高挂\n[00:51.50]似这半月儿静听幽咽的吉他\n[00:58.50]幽幽提琴在低诉我心声\n[01:05.50]如泣如诉如醉如痴\n[01:13.00]我的心仍在期待你的归期\n[01:20.50]小爱音箱正在高保真投放此曲\n[01:28.00]提琴轻诉，如风拂面\n[01:36.00]夜深沉，乐声犹在耳畔\n[01:50.00]（间奏·纯净吉他独奏）\n[02:10.00]月半小夜曲 - Tinglan 听澜音乐流媒体",
+          "genre": "Classic Pop / Acoustic",
+          "year": 2021,
+          "bitrate": "320kbps MP3",
+          "fileSize": "9.2 MB",
+          "isFavorite": false,
+          "source": "local"
+        },
+        "playlistSongs": [
+          {
+            "id": "song-1",
+            "title": "月半小夜曲 (Acoustic Night)",
+            "artist": "李克勤 / 弦乐室内乐团",
+            "album": "港乐经典·发烧重现",
+            "duration": 234,
+            "url": "/api/stream/song-1.mp3",
+            "coverUrl": "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=600&q=80",
+            "lyrics": "[00:00.00]月半小夜曲 - 弦乐原声版\n[00:04.00]词：向雪怀 曲：河合奈保子\n[00:08.50]演奏：Tinglan 听澜 Hi-Fi 发烧工作室\n[00:15.00]哪怕面对冷冰冰的墙壁\n[00:22.00]深深的一声叹息\n[00:29.00]仍难忘你的笑语盈盈\n[00:36.00]仍难舍你的柔情似蜜\n[00:44.00]月亮为何还在夜空高挂\n[00:51.50]似这半月儿静听幽咽的吉他\n[00:58.50]幽幽提琴在低诉我心声\n[01:05.50]如泣如诉如醉如痴\n[01:13.00]我的心仍在期待你的归期\n[01:20.50]小爱音箱正在高保真投放此曲\n[01:28.00]提琴轻诉，如风拂面\n[01:36.00]夜深沉，乐声犹在耳畔\n[01:50.00]（间奏·纯净吉他独奏）\n[02:10.00]月半小夜曲 - Tinglan 听澜音乐流媒体",
+            "genre": "Classic Pop / Acoustic",
+            "year": 2021,
+            "bitrate": "320kbps MP3",
+            "fileSize": "9.2 MB",
+            "isFavorite": false,
+            "source": "local"
+          }
+        ],
+        "songId": "song-1",
+        "songTitle": "月半小夜曲 (Acoustic Night)",
+        "artist": "李克勤 / 弦乐室内乐团",
+        "reason": "本地曲库未收录【张学友 · 吻别】，已启动智能兜底电台，推荐相似风格《月半小夜曲 (Acoustic Night)》",
+        "ttsResponse": "好的，为您开启张学友经典金曲，未在曲库找到《吻别》，已为您启动后台智能下载，首曲播放《月半小夜曲》"
+      },
+      "hitCount": 1,
+      "createdAt": 1791303260776,
+      "lastHitAt": 1791303260776
     }
   ]
 }
