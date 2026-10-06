@@ -390,6 +390,7 @@
     "duration": 180,
     "url": "/api/stream/song-华语音乐_-_思念成疾-4d",
     "coverUrl": "/covers/default.jpg",
+    "lyrics": "",
     "genre": "流行",
     "year": 2026,
     "bitrate": "320 kbps",
@@ -412,7 +413,39 @@
     "bitrate": "Hi-Res 无损 (FLAC)",
     "fileSize": "0.0 MB",
     "isFavorite": false,
+    "source": "local"
+  },
+  {
+    "id": "song-华语歌手_-_万疆-47",
+    "title": "万疆",
+    "artist": "华语歌手",
+    "album": "本地音乐",
+    "duration": 180,
+    "url": "/api/stream/song-华语歌手_-_万疆-47",
+    "coverUrl": "/covers/default.jpg",
+    "genre": "流行",
+    "year": 2026,
+    "bitrate": "320 kbps",
+    "fileSize": "0.0 MB",
+    "isFavorite": false,
     "source": "local",
-    "localFilename": "/app/applet/music/华语音乐/经典大碟/华语音乐 - 思念成疾.flac"
+    "localFilename": "华语歌手/经典大碟/华语歌手 - 万疆.flac"
+  },
+  {
+    "id": "_____-___",
+    "title": "万疆",
+    "artist": "华语歌手",
+    "album": "本地音乐",
+    "duration": 180,
+    "url": "/api/stream/%E5%8D%8E%E8%AF%AD%E6%AD%8C%E6%89%8B%20-%20%E4%B8%87%E7%96%86.flac",
+    "coverUrl": "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?auto=format&fit=crop&w=600&q=80",
+    "lyrics": "[00:00.00]万疆 - 华语歌手\n[00:03.00]音质规格: FLAC 24bit 无损母带 / AI Skill 原生入库\n[00:08.00]（前奏旋律）\n[00:18.00]谁没有一些 刻骨铭心事\n[00:25.00]谁没有一些 得不到的梦\n[00:40.00]AI Skill 已完成自动下载并同步入库 NAS",
+    "genre": "流行",
+    "year": 2026,
+    "bitrate": "Hi-Res 无损 (FLAC)",
+    "fileSize": "0.0 MB",
+    "isFavorite": false,
+    "source": "local",
+    "localFilename": "/app/applet/music/华语歌手/经典大碟/华语歌手 - 万疆.flac"
   }
 ]

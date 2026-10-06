@@ -846,18 +846,18 @@ export class AiService {
           let tts = '';
           if (requestedTargetTitle && requestedArtist) {
             tts = autoFetchTriggered
-              ? `好的，为您开启${genreOrMood}推荐电台，未在曲库找到《${requestedTargetTitle}》，已为您启动后台智能下载，首曲播放《${cleanPrimaryTitle}》`
-              : `好的，为您开启${genreOrMood}推荐电台，未在曲库找到《${requestedTargetTitle}》，首曲播放《${cleanPrimaryTitle}》`;
+              ? `未在曲库找到《${requestedTargetTitle}》，已为您启动后台离线下载，先为您播放《${cleanPrimaryTitle}》`
+              : `未在曲库找到《${requestedTargetTitle}》，为您播放相似曲目《${cleanPrimaryTitle}》`;
           } else if (requestedTargetTitle) {
             tts = autoFetchTriggered
-              ? `好的，为您开启${genreOrMood}推荐电台，未在曲库找到《${requestedTargetTitle}》，已为您启动后台智能下载，首曲播放《${cleanPrimaryTitle}》`
-              : `好的，为您开启${genreOrMood}推荐电台，未在曲库找到《${requestedTargetTitle}》，首曲播放《${cleanPrimaryTitle}》`;
+              ? `未在曲库找到《${requestedTargetTitle}》，已为您启动后台离线下载，先为您播放《${cleanPrimaryTitle}》`
+              : `未在曲库找到《${requestedTargetTitle}》，为您播放相似曲目《${cleanPrimaryTitle}》`;
           } else if (requestedArtist) {
             tts = autoFetchTriggered
-              ? `好的，为您开启${genreOrMood}推荐电台，未找到${requestedArtist}的歌，已为您启动后台智能下载，首曲播放《${cleanPrimaryTitle}》`
-              : `好的，为您开启${genreOrMood}推荐电台，未找到${requestedArtist}的歌，首曲播放《${cleanPrimaryTitle}》`;
+              ? `未找到${requestedArtist}的歌，已为您启动后台离线下载，先为您播放《${cleanPrimaryTitle}》`
+              : `未找到${requestedArtist}的歌，为您播放相似曲目《${cleanPrimaryTitle}》`;
           } else {
-            tts = `好的，为您开启${genreOrMood}推荐电台，没有找到想要的歌，首曲播放《${cleanPrimaryTitle}》`;
+            tts = `为您开启精选推荐电台，首曲播放《${cleanPrimaryTitle}》`;
           }
 
           const fallbackResult: AiVoiceMatchResult = {
@@ -990,22 +990,24 @@ export class AiService {
           // Level 2: Same artist exists in library, target song missing
           const artistName = primary.artist || requestedArtist || '该歌手';
           tts = autoFetchTriggered
-            ? `未在曲库找到《${requestedTargetTitle}》，已为您启动后台智能下载，先为您播放${artistName}的《${cleanPrimaryTitle}》`
-            : `未找到您想要的歌曲《${requestedTargetTitle}》，为您播放${artistName}的其它歌曲《${cleanPrimaryTitle}》`;
+            ? `未在曲库找到《${requestedTargetTitle}》，已为您启动后台离线下载，先为您播放${artistName}的《${cleanPrimaryTitle}》`
+            : `未在曲库找到《${requestedTargetTitle}》，为您播放${artistName}的《${cleanPrimaryTitle}》`;
         } else if ((requestedTargetTitle || requestedArtist) && (!hasArtistInLibrary || !isArtistMatched)) {
           // Level 3 (Strategy 1): Both target song and artist absent, recommend similar genre/style
           if (requestedTargetTitle && requestedArtist) {
             tts = autoFetchTriggered
-              ? `好的，为您开启${queueTitle || '精选相似流派推荐电台'}，未在曲库找到《${requestedTargetTitle}》，已为您启动后台智能下载，首曲播放《${cleanPrimaryTitle}》`
-              : `好的，为您开启${queueTitle || '精选相似流派推荐电台'}，未在曲库找到《${requestedTargetTitle}》，首曲播放《${cleanPrimaryTitle}》`;
+              ? `未在曲库找到《${requestedTargetTitle}》，已为您启动后台离线下载，先为您播放《${cleanPrimaryTitle}》`
+              : `未在曲库找到《${requestedTargetTitle}》，为您播放相似曲目《${cleanPrimaryTitle}》`;
           } else if (requestedTargetTitle) {
             tts = autoFetchTriggered
-              ? `好的，为您开启${queueTitle || '精选相似流派推荐电台'}，未在曲库找到《${requestedTargetTitle}》，已为您启动后台智能下载，首曲播放《${cleanPrimaryTitle}》`
-              : `好的，为您开启${queueTitle || '精选相似流派推荐电台'}，未在曲库找到《${requestedTargetTitle}》，首曲播放《${cleanPrimaryTitle}》`;
+              ? `未在曲库找到《${requestedTargetTitle}》，已为您启动后台离线下载，先为您播放《${cleanPrimaryTitle}》`
+              : `未在曲库找到《${requestedTargetTitle}》，为您播放相似曲目《${cleanPrimaryTitle}》`;
           } else if (requestedArtist) {
-            tts = `好的，为您开启${queueTitle || '精选相似流派推荐电台'}，未找到${requestedArtist}的歌，首曲播放《${cleanPrimaryTitle}》`;
+            tts = autoFetchTriggered
+              ? `未找到${requestedArtist}的歌，已为您启动后台离线下载，先为您播放《${cleanPrimaryTitle}》`
+              : `未找到${requestedArtist}的歌，为您播放相似曲目《${cleanPrimaryTitle}》`;
           } else {
-            tts = `好的，为您开启精选相似流派推荐电台，没有找到想要的歌，首曲播放《${cleanPrimaryTitle}》`;
+            tts = `为您开启精选推荐电台，首曲播放《${cleanPrimaryTitle}》`;
           }
         }
       }

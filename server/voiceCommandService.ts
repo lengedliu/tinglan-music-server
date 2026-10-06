@@ -983,7 +983,7 @@ export class VoiceCommandService {
                 if (this.sendTtsFn && deviceId && aiResult.ttsResponse) {
                   await this.sendTtsFn(deviceId, aiResult.ttsResponse).catch(() => {});
                   const ttsCharCount = (aiResult.ttsResponse || '').length;
-                  const delayMs = Math.min(Math.max(ttsCharCount * 220, 1800), 4500);
+                  const delayMs = Math.min(Math.max(ttsCharCount * 300 + 800, 2000), 20000);
                   await new Promise(resolve => setTimeout(resolve, delayMs));
                 }
 
@@ -1140,7 +1140,7 @@ export class VoiceCommandService {
               if (this.sendTtsFn && deviceId && aiResult.ttsResponse) {
                 await this.sendTtsFn(deviceId, aiResult.ttsResponse).catch(() => {});
                 const ttsCharCount = (aiResult.ttsResponse || '').length;
-                const delayMs = Math.min(Math.max(ttsCharCount * 220, 1800), 4500);
+                const delayMs = Math.min(Math.max(ttsCharCount * 300 + 800, 2000), 20000);
                 await new Promise(resolve => setTimeout(resolve, delayMs));
               }
 
