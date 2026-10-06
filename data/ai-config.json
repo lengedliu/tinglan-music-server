@@ -72,5 +72,7 @@
   "timeoutMs": 6000,
   "enableSemanticVoiceSearch": true,
   "enableLogDiagnostics": true,
-  "enableMusicInsight": true
+  "enableMusicInsight": true,
+  "aiSkillCallbackUrl": "",
+  "aiSkillAuthToken": ""
 }

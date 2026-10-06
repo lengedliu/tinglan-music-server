@@ -3,6 +3,7 @@ import path from 'path';
 import { GoogleGenAI } from '@google/genai';
 import { computeSongMatchScore } from '../pinyinHelper.js';
 import { aiSemanticCache } from './aiSemanticCache.js';
+import { musicAutoFetcherService } from './musicAutoFetcherService.js';
 
 export type AiProviderId = 'deepseek' | 'qwen' | 'zhipu' | 'gemini' | 'custom';
 
@@ -27,6 +28,8 @@ export interface AiServiceConfig {
   enableSemanticVoiceSearch: boolean;
   enableLogDiagnostics: boolean;
   enableMusicInsight: boolean;
+  aiSkillCallbackUrl?: string;
+  aiSkillAuthToken?: string;
 }
 
 export interface AiTestResult {
@@ -144,7 +147,9 @@ const DEFAULT_AI_CONFIG: AiServiceConfig = {
   timeoutMs: 6000,
   enableSemanticVoiceSearch: true,
   enableLogDiagnostics: true,
-  enableMusicInsight: true
+  enableMusicInsight: true,
+  aiSkillCallbackUrl: '',
+  aiSkillAuthToken: ''
 };
 
 const AI_CONFIG_FILE = path.join(process.cwd(), 'data', 'ai-config.json');
@@ -884,16 +889,58 @@ export class AiService {
 
       if (!isMood) {
         const cleanPrimaryTitle = cleanTtsTitle(primaryTitle);
+
+        // Auto Fetcher: Check if missing track should be automatically downloaded to NAS in background
+        const fetcherCfg = musicAutoFetcherService.getConfig();
+        const isSchedulerActive = Boolean(fetcherCfg.enabled && fetcherCfg.downloadMode !== 'ai_skill');
+        const autoFetchTriggered = Boolean(
+          fetcherCfg.autoTriggerOnMissingVoiceQuery && 
+          requestedTargetTitle && 
+          !isTargetSongMatched
+        );
+
+        if (autoFetchTriggered) {
+          try {
+            if (isSchedulerActive) {
+              // 模式 A: 开启下载调度中心进行多任务流水线调度
+              musicAutoFetcherService.enqueueTask({
+                title: requestedTargetTitle,
+                artist: requestedArtist || '华语音乐',
+                genre: intent.targetGenre || '流行 / 经典',
+                requestedBy: 'voice_ai'
+              });
+              console.log(`[AiService] 🚀 [调度中心模式] 自动调度后台离线下载并入库 NAS: 《${requestedTargetTitle}》 - ${requestedArtist}`);
+            } else {
+              // 模式 B: 关闭调度中心，直接使用 AI 自身 Skill 下载并同步入库
+              musicAutoFetcherService.executeAiSkillDirectDownload({
+                title: requestedTargetTitle,
+                artist: requestedArtist || '华语音乐',
+                genre: intent.targetGenre || '流行 / 经典',
+                requestedBy: 'voice_ai'
+              }).catch((e: any) => console.warn('[AiService] AI skill direct download error:', e.message));
+              console.log(`[AiService] 🤖 [AI Skill 直连模式] 自动使用 AI 自身 Skill 下载并同步 NAS: 《${requestedTargetTitle}》 - ${requestedArtist}`);
+            }
+          } catch (fetchErr: any) {
+            console.warn('[AiService] Auto fetch notice:', fetchErr.message);
+          }
+        }
+
         if (requestedTargetTitle && !isTargetSongMatched && hasArtistInLibrary && isArtistMatched) {
           // Level 2: Same artist exists in library, target song missing
           const artistName = primary.artist || requestedArtist || '该歌手';
-          tts = `未找到您想要的歌曲《${requestedTargetTitle}》，为您播放${artistName}的其它歌曲《${cleanPrimaryTitle}》`;
+          tts = autoFetchTriggered
+            ? `未在曲库找到《${requestedTargetTitle}》，已为您启动后台智能下载，先为您播放${artistName}的《${cleanPrimaryTitle}》`
+            : `未找到您想要的歌曲《${requestedTargetTitle}》，为您播放${artistName}的其它歌曲《${cleanPrimaryTitle}》`;
         } else if ((requestedTargetTitle || requestedArtist) && (!hasArtistInLibrary || !isArtistMatched)) {
           // Level 3 (Strategy 1): Both target song and artist absent, recommend similar genre/style
           if (requestedTargetTitle && requestedArtist) {
-            tts = `好的，为您开启${queueTitle || '精选相似流派推荐电台'}，未在曲库找到《${requestedTargetTitle}》，首曲播放《${cleanPrimaryTitle}》`;
+            tts = autoFetchTriggered
+              ? `好的，为您开启${queueTitle || '精选相似流派推荐电台'}，未在曲库找到《${requestedTargetTitle}》，已为您启动后台智能下载，首曲播放《${cleanPrimaryTitle}》`
+              : `好的，为您开启${queueTitle || '精选相似流派推荐电台'}，未在曲库找到《${requestedTargetTitle}》，首曲播放《${cleanPrimaryTitle}》`;
           } else if (requestedTargetTitle) {
-            tts = `好的，为您开启${queueTitle || '精选相似流派推荐电台'}，未在曲库找到《${requestedTargetTitle}》，首曲播放《${cleanPrimaryTitle}》`;
+            tts = autoFetchTriggered
+              ? `好的，为您开启${queueTitle || '精选相似流派推荐电台'}，未在曲库找到《${requestedTargetTitle}》，已为您启动后台智能下载，首曲播放《${cleanPrimaryTitle}》`
+              : `好的，为您开启${queueTitle || '精选相似流派推荐电台'}，未在曲库找到《${requestedTargetTitle}》，首曲播放《${cleanPrimaryTitle}》`;
           } else if (requestedArtist) {
             tts = `好的，为您开启${queueTitle || '精选相似流派推荐电台'}，未找到${requestedArtist}的歌，首曲播放《${cleanPrimaryTitle}》`;
           } else {

@@ -95,11 +95,27 @@
       "fileSize": "46.8 MB",
       "isFavorite": false,
       "source": "local"
+    },
+    {
+      "id": "song-郑少秋_-_笑看风云-3k",
+      "title": "笑看风云",
+      "artist": "郑少秋",
+      "album": "本地音乐",
+      "duration": 180,
+      "url": "/api/stream/song-郑少秋_-_笑看风云-3k",
+      "coverUrl": "/covers/default.jpg",
+      "lyrics": "",
+      "genre": "流行",
+      "year": 2026,
+      "bitrate": "320 kbps",
+      "fileSize": "0.0 MB",
+      "isFavorite": false,
+      "source": "local"
     }
   ],
   "currentIndex": 0,
   "loopMode": "all",
   "targetDid": "did-1789129459008",
   "targetDeviceName": "小爱音箱Pro",
-  "updatedAt": "2026-10-06T11:58:56.071Z"
+  "updatedAt": "2026-10-06T14:29:56.789Z"
 }

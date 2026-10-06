@@ -1,0 +1,11 @@
+{
+  "enabled": false,
+  "downloadMode": "ai_skill",
+  "autoTriggerOnMissingVoiceQuery": true,
+  "defaultQuality": "lossless",
+  "storageSubfolderFormat": "{artist}/{album}",
+  "maxConcurrentDownloads": 3,
+  "notifySpeakerOnCompleted": true,
+  "driverPreference": "smart_auto",
+  "targetStoragePath": "/app/applet/music"
+}

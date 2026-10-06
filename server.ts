@@ -86,6 +86,7 @@ import { createAutomationRouter } from './server/routes/automationRoutes.js';
 import { createSystemBackupRouter } from './server/routes/systemBackupRoutes.js';
 import { createLogRouter } from './server/routes/logRoutes.js';
 import { createAiRoutes } from './server/routes/aiRoutes.js';
+import { createFetcherRoutes } from './server/routes/fetcherRoutes.js';
 import { createMetadataRouter } from './server/routes/metadataRoutes.js';
 import playlistImportRouter from './server/routes/playlistImportRoutes.js';
 import nasRouter from './server/routes/nasRoutes.js';
@@ -796,6 +797,7 @@ app.use(streamRouter);
 // 4. TTS Engine & Radio & Phase 3 Automation & System Backup & AI Hub
 app.use('/api/tts', createTtsRouter());
 app.use('/api/ai', createAiRoutes());
+app.use('/api/fetcher', createFetcherRoutes());
 app.use('/api/radio', createRadioRouter({
   getMiotConfig: () => miotConfig,
   setMiotConfig: (cfg) => {

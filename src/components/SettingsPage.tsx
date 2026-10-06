@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Settings,
   Shield, 
@@ -44,13 +44,17 @@ import {
   Coffee,
   ExternalLink,
   QrCode,
-  Bot
+  Bot,
+  Download,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { SecurityStatus, User, DbEngine, DbStatusInfo } from '../types';
 import { apiFetch } from '../utils/api';
 import { getUserAvatar } from '../utils/avatar';
 import { useTheme, THEMES, ThemeId } from '../context/ThemeContext';
 import { AiModelSettingsTab } from './AiModelSettingsTab';
+import { MusicAutoFetcherTab } from './MusicAutoFetcherTab';
 
 interface SettingsPageProps {
   currentUser: User | null;
@@ -68,7 +72,58 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   onNavigateToSponsor
 }) => {
   const { theme, setTheme, themeConfig } = useTheme();
-  const [subTab, setSubTab] = useState<'all' | 'theme' | 'ai' | 'users' | 'security' | 'database' | 'system' | 'sponsor'>('all');
+  const isLight = theme === 'light';
+  const [subTab, setSubTab] = useState<'all' | 'theme' | 'ai' | 'fetcher' | 'users' | 'security' | 'database' | 'system' | 'sponsor'>('all');
+
+  // Navigation Pills Horizontal Scroll & Mouse Drag State
+  const navScrollRef = useRef<HTMLDivElement | null>(null);
+  const [isDraggingNav, setIsDraggingNav] = useState(false);
+  const [navDragStartX, setNavDragStartX] = useState(0);
+  const [navScrollLeftStart, setNavScrollLeftStart] = useState(0);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  const checkNavScroll = useCallback(() => {
+    if (navScrollRef.current) {
+      const { scrollLeft, scrollWidth, clientWidth } = navScrollRef.current;
+      setCanScrollLeft(scrollLeft > 2);
+      setCanScrollRight(scrollLeft < scrollWidth - clientWidth - 2);
+    }
+  }, []);
+
+  useEffect(() => {
+    checkNavScroll();
+    window.addEventListener('resize', checkNavScroll);
+    return () => window.removeEventListener('resize', checkNavScroll);
+  }, [checkNavScroll]);
+
+  const handleScrollNav = (direction: 'left' | 'right') => {
+    if (navScrollRef.current) {
+      const amount = direction === 'left' ? -240 : 240;
+      navScrollRef.current.scrollBy({ left: amount, behavior: 'smooth' });
+      setTimeout(checkNavScroll, 300);
+    }
+  };
+
+  const handleNavMouseDown = (e: React.MouseEvent) => {
+    if (!navScrollRef.current) return;
+    setIsDraggingNav(true);
+    setNavDragStartX(e.pageX - navScrollRef.current.offsetLeft);
+    setNavScrollLeftStart(navScrollRef.current.scrollLeft);
+  };
+
+  const handleNavMouseMove = (e: React.MouseEvent) => {
+    if (!isDraggingNav || !navScrollRef.current) return;
+    e.preventDefault();
+    const x = e.pageX - navScrollRef.current.offsetLeft;
+    const walk = (x - navDragStartX) * 1.5;
+    navScrollRef.current.scrollLeft = navScrollLeftStart - walk;
+    checkNavScroll();
+  };
+
+  const handleNavMouseUpOrLeave = () => {
+    setIsDraggingNav(false);
+  };
 
   // --- Security State ---
   const [secLoading, setSecLoading] = useState(false);
@@ -836,113 +891,175 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
         </div>
       )}
 
-      {/* Sub-tab Switcher */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-white/5 pb-2">
-        <button
-          onClick={() => setSubTab('all')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap cursor-pointer ${
-            subTab === 'all'
-              ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40'
-              : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
+      {/* Sub-tab Switcher (Single-line, Mouse Drag-to-Scroll, End Arrow Controls) */}
+      <div className="relative flex items-center justify-between border-b border-zinc-200 dark:border-white/5 pb-2">
+        <div
+          ref={navScrollRef}
+          onScroll={checkNavScroll}
+          onMouseDown={handleNavMouseDown}
+          onMouseMove={handleNavMouseMove}
+          onMouseUp={handleNavMouseUpOrLeave}
+          onMouseLeave={handleNavMouseUpOrLeave}
+          className={`flex items-center gap-2 overflow-x-auto whitespace-nowrap py-1 select-none flex-1 mr-2 transition-all ${
+            isDraggingNav ? 'cursor-grabbing' : 'cursor-grab'
           }`}
+          style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
         >
-          <Sliders className="w-3.5 h-3.5" />
-          <span>全部设置</span>
-        </button>
+          <button
+            onClick={() => setSubTab('all')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap cursor-pointer flex-shrink-0 ${
+              subTab === 'all'
+                ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40'
+                : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
+            }`}
+          >
+            <Sliders className="w-3.5 h-3.5" />
+            <span>全部设置</span>
+          </button>
 
-        <button
-          onClick={() => setSubTab('theme')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap cursor-pointer ${
-            subTab === 'theme'
-              ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40'
-              : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
-          }`}
-        >
-          <Palette className="w-3.5 h-3.5 text-amber-400" />
-          <span>UI 主题外观</span>
-          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300 font-mono">
-            {THEMES.length}
-          </span>
-        </button>
+          <button
+            onClick={() => setSubTab('theme')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap cursor-pointer flex-shrink-0 ${
+              subTab === 'theme'
+                ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40'
+                : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
+            }`}
+          >
+            <Palette className="w-3.5 h-3.5 text-amber-400" />
+            <span>UI 主题外观</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300 font-mono">
+              {THEMES.length}
+            </span>
+          </button>
 
-        <button
-          onClick={() => setSubTab('ai')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap cursor-pointer ${
-            subTab === 'ai'
-              ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40'
-              : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
-          }`}
-        >
-          <Bot className="w-3.5 h-3.5 text-purple-400" />
-          <span>AI 大模型中枢</span>
-          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-purple-500/20 text-purple-300 font-mono">
-            4+1
-          </span>
-        </button>
+          <button
+            onClick={() => setSubTab('ai')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap cursor-pointer flex-shrink-0 ${
+              subTab === 'ai'
+                ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40'
+                : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
+            }`}
+          >
+            <Bot className="w-3.5 h-3.5 text-purple-400" />
+            <span>AI 大模型中枢</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-purple-500/20 text-purple-300 font-mono">
+              4+1
+            </span>
+          </button>
 
-        <button
-          onClick={() => setSubTab('users')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap cursor-pointer ${
-            subTab === 'users'
-              ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40'
-              : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
-          }`}
-        >
-          <Users className="w-3.5 h-3.5" />
-          <span>用户管理</span>
-          <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-zinc-800 text-zinc-300 font-mono">
-            {totalUsersCount}
-          </span>
-        </button>
+          <button
+            onClick={() => setSubTab('fetcher')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap cursor-pointer flex-shrink-0 ${
+              subTab === 'fetcher'
+                ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40'
+                : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
+            }`}
+          >
+            <Download className="w-3.5 h-3.5 text-amber-400" />
+            <span>AI 离线下载调度</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300 font-mono">
+              自动补库
+            </span>
+          </button>
 
-        <button
-          onClick={() => setSubTab('security')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap cursor-pointer ${
-            subTab === 'security'
-              ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40'
-              : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
-          }`}
-        >
-          <ShieldCheck className="w-3.5 h-3.5" />
-          <span>安全与注册控制</span>
-        </button>
+          <button
+            onClick={() => setSubTab('users')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap cursor-pointer flex-shrink-0 ${
+              subTab === 'users'
+                ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40'
+                : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
+            }`}
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span>用户管理</span>
+            <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-zinc-800 text-zinc-300 font-mono">
+              {totalUsersCount}
+            </span>
+          </button>
 
-        <button
-          onClick={() => setSubTab('database')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap cursor-pointer ${
-            subTab === 'database'
-              ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40'
-              : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
-          }`}
-        >
-          <Database className="w-3.5 h-3.5" />
-          <span>数据库管理中心</span>
-        </button>
+          <button
+            onClick={() => setSubTab('security')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap cursor-pointer flex-shrink-0 ${
+              subTab === 'security'
+                ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40'
+                : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
+            }`}
+          >
+            <ShieldCheck className="w-3.5 h-3.5" />
+            <span>安全与注册控制</span>
+          </button>
 
-        <button
-          onClick={() => setSubTab('system')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap cursor-pointer ${
-            subTab === 'system'
-              ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40'
-              : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
-          }`}
-        >
-          <Server className="w-3.5 h-3.5" />
-          <span>网络与环境信息</span>
-        </button>
+          <button
+            onClick={() => setSubTab('database')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap cursor-pointer flex-shrink-0 ${
+              subTab === 'database'
+                ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40'
+                : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
+            }`}
+          >
+            <Database className="w-3.5 h-3.5" />
+            <span>数据库管理中心</span>
+          </button>
 
-        <button
-          onClick={() => setSubTab('sponsor')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap cursor-pointer ${
-            subTab === 'sponsor'
-              ? 'bg-rose-500/15 text-rose-400 border border-rose-500/40'
-              : 'text-rose-400/80 hover:text-rose-300 hover:bg-rose-500/10'
-          }`}
-        >
-          <Heart className="w-3.5 h-3.5 text-rose-400" />
-          <span>赞助与支持</span>
-          <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" />
-        </button>
+          <button
+            onClick={() => setSubTab('system')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap cursor-pointer flex-shrink-0 ${
+              subTab === 'system'
+                ? 'bg-[#FF6700]/15 text-[#FF6700] border border-[#FF6700]/40'
+                : 'text-zinc-400 hover:text-zinc-200 hover:bg-white/5'
+            }`}
+          >
+            <Server className="w-3.5 h-3.5" />
+            <span>网络与环境信息</span>
+          </button>
+
+          <button
+            onClick={() => setSubTab('sponsor')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition whitespace-nowrap cursor-pointer flex-shrink-0 ${
+              subTab === 'sponsor'
+                ? 'bg-rose-500/15 text-rose-400 border border-rose-500/40'
+                : 'text-rose-400/80 hover:text-rose-300 hover:bg-rose-500/10'
+            }`}
+          >
+            <Heart className="w-3.5 h-3.5 text-rose-400" />
+            <span>赞助与支持</span>
+            <span className="w-1.5 h-1.5 rounded-full bg-rose-400 animate-pulse" />
+          </button>
+        </div>
+
+        {/* Scroll Controls (At the end) */}
+        <div className="flex items-center gap-1 flex-shrink-0 z-10 pl-2 border-l border-zinc-200 dark:border-white/10">
+          <button
+            type="button"
+            onClick={() => handleScrollNav('left')}
+            disabled={!canScrollLeft}
+            className={`p-1.5 rounded-xl border transition cursor-pointer ${
+              canScrollLeft
+                ? isLight 
+                  ? 'bg-white hover:bg-zinc-100 text-zinc-700 border-zinc-200 shadow-sm' 
+                  : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-white/10 shadow-md'
+                : 'opacity-30 cursor-not-allowed text-zinc-500 border-transparent'
+            }`}
+            title="向左滑动导航胶囊"
+          >
+            <ChevronLeft className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => handleScrollNav('right')}
+            disabled={!canScrollRight}
+            className={`p-1.5 rounded-xl border transition cursor-pointer ${
+              canScrollRight
+                ? isLight 
+                  ? 'bg-white hover:bg-zinc-100 text-zinc-700 border-zinc-200 shadow-sm' 
+                  : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border-white/10 shadow-md'
+                : 'opacity-30 cursor-not-allowed text-zinc-500 border-transparent'
+            }`}
+            title="向右滑动导航胶囊"
+          >
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
 
       {/* ================= SECTION: UI THEMES & APPEARANCE ================= */}
@@ -1034,6 +1151,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       {(subTab === 'all' || subTab === 'ai') && (
         <div className="space-y-6 pt-2">
           <AiModelSettingsTab onShowToast={onShowToast} />
+        </div>
+      )}
+
+      {/* ================= SECTION: MUSIC AUTO FETCHER ================= */}
+      {(subTab === 'all' || subTab === 'fetcher') && (
+        <div className="space-y-6 pt-2">
+          <MusicAutoFetcherTab onShowToast={onShowToast} />
         </div>
       )}
 

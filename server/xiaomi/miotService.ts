@@ -1,4 +1,6 @@
 import os from 'os';
+import fs from 'fs';
+import path from 'path';
 import net from 'net';
 import dgram from 'dgram';
 import crypto from 'crypto';
@@ -616,6 +618,37 @@ export function getBestLanIpForTarget(targetSpeakerIp?: string, serverHost?: str
 
   const primaryPhysical = allIps.find(ip => ip.startsWith('192.168.') || ip.startsWith('10.'));
   return primaryPhysical || allIps[0];
+}
+
+/**
+ * Centrally resolve the server's streaming host (e.g. http://192.168.31.20:3000)
+ * Priority: 1. User-configured miotConfig.serverHost, 2. Env SERVER_HOST, 3. Best physical LAN IP, 4. localhost
+ */
+export function getResolvedServerHost(): string {
+  try {
+    const configPath = path.join(process.cwd(), 'data', 'config.json');
+    if (fs.existsSync(configPath)) {
+      const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      if (cfg && cfg.serverHost && typeof cfg.serverHost === 'string' && cfg.serverHost.startsWith('http')) {
+        const cleaned = cfg.serverHost.replace(/\/+$/, '');
+        if (!cleaned.includes('localhost') && !cleaned.includes('127.0.0.1')) {
+          return cleaned;
+        }
+      }
+    }
+  } catch {}
+
+  const envHost = process.env.SERVER_HOST || process.env.PUBLIC_API_URL;
+  if (envHost && envHost.startsWith('http')) {
+    return envHost.replace(/\/+$/, '');
+  }
+
+  const lanIps = getLocalNetworkIps();
+  if (lanIps.length > 0 && lanIps[0] && !lanIps[0].startsWith('127.')) {
+    return `http://${lanIps[0]}:3000`;
+  }
+
+  return 'http://localhost:3000';
 }
 
 export function sendMiioHello(ip: string, timeoutMs = 1800): Promise<{ reachable: boolean; did?: string; stamp?: number; latency: number }> {

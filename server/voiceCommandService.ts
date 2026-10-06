@@ -869,7 +869,10 @@ export class VoiceCommandService {
     // Ensures home automation (lights, AC, curtains, vacuum), weather, alarms,
     // and daily tools are NEVER hijacked by private music services or AI models!
     // =========================================================================
-    const isExplicitMusicWordPresent = /(音乐|歌曲|歌单|电台|专辑|歌手|原唱|周杰伦|播放|放一首|来一首|放首歌|我想听|歌词|唱的歌|纯音乐|轻音乐)/.test(cleanQuery);
+    const isExplicitMusicWordPresent = (
+      /(音乐|歌曲|歌单|电台|专辑|歌手|原唱|周杰伦|播放|放一首|来一首|放首歌|我想听|歌词|唱的歌|纯音乐|轻音乐)/.test(rawQuery) ||
+      /^(听|放|播|来首|搜|点)/.test(cleanQuery)
+    );
 
     if (!isExplicitMusicWordPresent) {
       // 1. Smart Home Device Control Patterns
@@ -886,8 +889,9 @@ export class VoiceCommandService {
 
       // 2. Daily Life Utilities, Tools, and Information Queries
       const isDailyUtility = (
-        // Weather & temperature
-        /(天气|气温|温度|下雨吗|晴天|阴天|刮风|空气质量|冷不冷|热不热|防晒指数)/.test(cleanQuery) ||
+        // Weather & temperature (Requires explicit weather keywords, avoiding song titles like '晴天')
+        /(天气|气温|多少度|下雨吗|今天晴吗|明天晴吗|空气质量|冷不冷|热不热|防晒指数|天气预报)/.test(cleanQuery) ||
+        /^(晴天|阴天|下雨|下雪|刮风)吗$/.test(cleanQuery) ||
         // Alarms, timers, clocks, reminders
         /(几点|几号|星期几|礼拜几|闹钟|倒计时|定时器|提醒我|叫我起床|日程)/.test(cleanQuery) ||
         // Calculations, news, facts, small tools

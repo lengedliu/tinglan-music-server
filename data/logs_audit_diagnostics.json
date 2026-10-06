@@ -1,30 +1,11 @@
 [
   {
-    "id": "log_1791287295816_59qhk",
-    "timestamp": 1791287295816,
-    "timeFormatted": "11:48:15.816",
-    "category": "cast",
-    "level": "info",
-    "traceId": "tr_a5c7lb",
-    "title": "启动歌单投播",
-    "message": "开始为【小爱音箱Pro】连续播放《月半小夜曲 (Acoustic Night)》 (1/6)",
-    "details": {
-      "songTitle": "月半小夜曲 (Acoustic Night)",
-      "artist": "李克勤 / 弦乐室内乐团",
-      "duration": 234,
-      "loopMode": "all"
-    },
-    "targetDid": "did-1789129459008",
-    "deviceName": "小爱音箱Pro",
-    "songId": "song-1"
-  },
-  {
-    "id": "log_1791287296172_6m34o",
-    "timestamp": 1791287296172,
-    "timeFormatted": "11:48:16.172",
+    "id": "log_1791297002001_1wbtp",
+    "timestamp": 1791297002000,
+    "timeFormatted": "14:30:02.000",
     "category": "cast",
     "level": "warn",
-    "traceId": "tr_nk82f9",
+    "traceId": "tr_w5jcyl",
     "title": "【歌单队列切播失败】《月半小夜曲 (Acoustic Night)》",
     "message": "未能成功向音箱【小爱音箱Pro】下发播放指令：所有投播通道均未响应或未实际拉取音频流。请检查音箱网络连通性、DLNA开关或小米账号登录状态。",
     "details": {
@@ -36,39 +17,17 @@
     "deviceName": "xiaomi.wifispeaker.sound"
   },
   {
-    "id": "log_1791287939287_lky93",
-    "timestamp": 1791287939287,
-    "timeFormatted": "11:58:59.287",
-    "category": "cast",
+    "id": "log_1791298953572_f6kih",
+    "timestamp": 1791298953572,
+    "timeFormatted": "15:02:33.572",
+    "category": "system",
     "level": "info",
-    "title": "启动歌单投播",
-    "message": "开始为【小爱音箱Pro】连续播放《Rainy Cafe (午后咖啡馆雨声)》 (1/3)",
-    "traceId": "tr_rz9dv4",
+    "title": "AI 大模型配置已更新",
+    "message": "当前活跃模型切换为: Google Gemini",
+    "traceId": "tr_2748c4",
     "details": {
-      "songTitle": "Rainy Cafe (午后咖啡馆雨声)",
-      "artist": "Lofi Coffee Roaster",
-      "duration": 185,
-      "loopMode": "all"
-    },
-    "targetDid": "did-1789129459008",
-    "deviceName": "小爱音箱Pro",
-    "songId": "song-5"
-  },
-  {
-    "id": "log_1791287939648_l079p",
-    "timestamp": 1791287939648,
-    "timeFormatted": "11:58:59.648",
-    "category": "cast",
-    "level": "warn",
-    "title": "【歌单队列切播失败】《Rainy Cafe (午后咖啡馆雨声)》",
-    "message": "未能成功向音箱【小爱音箱Pro】下发播放指令：所有投播通道均未响应或未实际拉取音频流。请检查音箱网络连通性、DLNA开关或小米账号登录状态。",
-    "traceId": "tr_mqjb9m",
-    "details": {
-      "type": "error",
-      "model": "xiaomi.wifispeaker.sound"
-    },
-    "clientIp": "192.168.31.25",
-    "targetDid": "did-1789129459008",
-    "deviceName": "xiaomi.wifispeaker.sound"
+      "activeProvider": "gemini",
+      "enabled": true
+    }
   }
 ]

@@ -1,0 +1,47 @@
+[
+  {
+    "id": "task_1791297027916_9p9zz",
+    "title": "红日",
+    "artist": "李克勤",
+    "album": "经典精选集",
+    "genre": "流行 / 经典",
+    "requestedBy": "web_user",
+    "status": "searching",
+    "progress": 15,
+    "qualityPreference": "lossless",
+    "downloadDriver": "smart_auto",
+    "createdAt": 1791297027916
+  },
+  {
+    "id": "task_1791296702699_6dbuq",
+    "title": "海阔天空",
+    "artist": "Beyond",
+    "album": "海阔天空 30周年纪念",
+    "genre": "流行 / 经典",
+    "requestedBy": "web_user",
+    "status": "searching",
+    "progress": 15,
+    "qualityPreference": "lossless",
+    "downloadDriver": "smart_auto",
+    "createdAt": 1791296702699
+  },
+  {
+    "id": "task_1791296149825_ze41b",
+    "title": "笑看风云",
+    "artist": "郑少秋",
+    "album": "经典大碟",
+    "genre": "流行 / 经典",
+    "requestedBy": "web_user",
+    "status": "completed",
+    "progress": 100,
+    "qualityPreference": "lossless",
+    "downloadDriver": "smart_auto",
+    "createdAt": 1791296149825,
+    "format": "FLAC 24bit/96kHz",
+    "bitrate": "920 kbps (无损母带)",
+    "fileSize": "31.4 MB",
+    "coverUrl": "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=600&q=80",
+    "filePath": "/app/applet/data/downloads/郑少秋/经典大碟/郑少秋 - 笑看风云.flac",
+    "completedAt": 1791296152471
+  }
+]

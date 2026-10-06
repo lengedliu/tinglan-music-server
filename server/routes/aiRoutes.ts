@@ -4,6 +4,7 @@ import { logEngine } from '../core/logEngine.js';
 import { musicRepository } from '../core/repositories/musicRepository.js';
 import { deviceRepository } from '../core/repositories/deviceRepository.js';
 import { aiSemanticCache } from '../core/aiSemanticCache.js';
+import { getResolvedServerHost, getLocalNetworkIps } from '../xiaomi/miotService.js';
 
 export function createAiRoutes(): Router {
   const router = Router();
@@ -12,9 +13,13 @@ export function createAiRoutes(): Router {
   router.get('/config', (req: Request, res: Response) => {
     try {
       const config = aiService.getMaskedConfig();
+      const resolvedServerHost = getResolvedServerHost();
+      const lanIps = getLocalNetworkIps();
       res.json({
         success: true,
-        config
+        config,
+        resolvedServerHost,
+        lanIps
       });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
@@ -187,6 +192,70 @@ export function createAiRoutes(): Router {
       res.status(500).json({
         success: false,
         error: err.message || 'AI 自动化生成失败'
+      });
+    }
+  });
+
+  // Test AI Skill Webhook / Callback Connectivity
+  router.post('/test-skill-callback', async (req: Request, res: Response) => {
+    const startTime = Date.now();
+    try {
+      const { callbackUrl, authToken } = req.body || {};
+      if (!callbackUrl || !callbackUrl.trim()) {
+        return res.status(400).json({ success: false, error: '请提供有效的回调地址 URL' });
+      }
+
+      const resolvedBaseUrl = getResolvedServerHost();
+      const samplePayload = {
+        event: 'ai_skill_ping_test',
+        timestamp: Date.now(),
+        serverHost: resolvedBaseUrl,
+        message: 'Tinglan AI Skill Webhook Connectivity Test',
+        track: {
+          title: '笑看风云',
+          artist: '郑少秋',
+          album: '经典大碟',
+          genre: '粤语流行 / 经典'
+        },
+        storage: {
+          targetDirectory: '/app/music',
+          suggestedFilename: '郑少秋 - 笑看风云.flac'
+        },
+        syncCallback: {
+          method: 'POST',
+          url: `${resolvedBaseUrl}/api/nas/sync`,
+          scanEndpoint: `${resolvedBaseUrl}/api/music/scan`
+        }
+      };
+
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (authToken && authToken.trim()) {
+        headers['Authorization'] = `Bearer ${authToken.trim()}`;
+      }
+
+      const response = await fetch(callbackUrl.trim(), {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(samplePayload),
+        signal: AbortSignal.timeout(6000)
+      });
+
+      const responseText = await response.text().catch(() => '');
+      const latencyMs = Date.now() - startTime;
+
+      res.json({
+        success: response.ok,
+        status: response.status,
+        statusText: response.statusText,
+        latencyMs,
+        responseSample: responseText.slice(0, 300),
+        payloadSent: samplePayload
+      });
+    } catch (err: any) {
+      res.json({
+        success: false,
+        error: err.message || '连接失败或超时',
+        latencyMs: Date.now() - startTime
       });
     }
   });

@@ -23,7 +23,12 @@ import {
   Send,
   Volume2,
   Database,
-  Trash2
+  Trash2,
+  Link2,
+  Code,
+  ChevronDown,
+  ChevronUp,
+  Download
 } from 'lucide-react';
 import { apiFetch } from '../utils/api';
 import { useTheme } from '../context/ThemeContext';
@@ -53,6 +58,8 @@ export interface AiServiceConfig {
   enableSemanticVoiceSearch: boolean;
   enableLogDiagnostics: boolean;
   enableMusicInsight: boolean;
+  aiSkillCallbackUrl?: string;
+  aiSkillAuthToken?: string;
 }
 
 interface AiModelSettingsTabProps {
@@ -203,6 +210,23 @@ export const AiModelSettingsTab: React.FC<AiModelSettingsTabProps> = ({ onShowTo
   } | null>(null);
   const [clearingCache, setClearingCache] = useState(false);
 
+  // AI Skill Webhook / Callback configuration state
+  const [skillCallbackUrl, setSkillCallbackUrl] = useState('');
+  const [skillAuthToken, setSkillAuthToken] = useState('');
+  const [savingSkillConfig, setSavingSkillConfig] = useState(false);
+  const [skillTestLoading, setSkillTestLoading] = useState(false);
+  const [skillTestResult, setSkillTestResult] = useState<{
+    success: boolean;
+    status?: number;
+    latencyMs?: number;
+    responseSample?: string;
+    error?: string;
+    payloadSent?: any;
+  } | null>(null);
+  const [showPayloadSchema, setShowPayloadSchema] = useState(false);
+  const [resolvedServerHost, setResolvedServerHost] = useState('http://localhost:3000');
+  const [lanIps, setLanIps] = useState<string[]>([]);
+
   const fetchCacheStats = async () => {
     try {
       const res = await apiFetch('/api/ai/cache-stats');
@@ -242,6 +266,22 @@ export const AiModelSettingsTab: React.FC<AiModelSettingsTabProps> = ({ onShowTo
         if (data.success && data.config) {
           setConfig(data.config);
           setSelectedProviderId(data.config.activeProvider || 'deepseek');
+
+          const effectiveHost = (data.resolvedServerHost && !data.resolvedServerHost.includes('localhost') && !data.resolvedServerHost.includes('127.0.0.1'))
+            ? data.resolvedServerHost
+            : (typeof window !== 'undefined' && !window.location.origin.includes('localhost') ? window.location.origin : (data.resolvedServerHost || 'http://localhost:3000'));
+
+          setResolvedServerHost(effectiveHost);
+          if (data.lanIps && Array.isArray(data.lanIps)) setLanIps(data.lanIps);
+
+          let initialCallbackUrl = data.config.aiSkillCallbackUrl || '';
+          if (!initialCallbackUrl || initialCallbackUrl.includes('localhost:3000') || initialCallbackUrl.includes('127.0.0.1:3000')) {
+            initialCallbackUrl = `${effectiveHost}/api/nas/sync`;
+          } else if (initialCallbackUrl && (initialCallbackUrl.includes('localhost') || initialCallbackUrl.includes('127.0.0.1'))) {
+            initialCallbackUrl = initialCallbackUrl.replace(/https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i, effectiveHost);
+          }
+          setSkillCallbackUrl(initialCallbackUrl);
+          setSkillAuthToken(data.config.aiSkillAuthToken || '');
           
           const cur = data.config.providers[data.config.activeProvider || 'deepseek'];
           if (cur) {
@@ -354,6 +394,65 @@ export const AiModelSettingsTab: React.FC<AiModelSettingsTabProps> = ({ onShowTo
       }
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const handleSaveSkillCallback = async () => {
+    if (!config) return;
+    setSavingSkillConfig(true);
+    try {
+      const res = await apiFetch('/api/ai/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          aiSkillCallbackUrl: skillCallbackUrl.trim(),
+          aiSkillAuthToken: skillAuthToken.trim()
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.config) {
+          setConfig(data.config);
+          onShowToast('保存成功', 'AI Skill 外部回调地址与鉴权已更新', 'success');
+        }
+      } else {
+        onShowToast('保存失败', '无法保存回调地址', 'error');
+      }
+    } catch (err: any) {
+      onShowToast('保存异常', err.message, 'error');
+    } finally {
+      setSavingSkillConfig(false);
+    }
+  };
+
+  const handleTestSkillCallback = async () => {
+    if (!skillCallbackUrl.trim()) {
+      onShowToast('请输入回调地址', '请先输入有效的 AI Skill 回调 URL (如 http://nas-ip:8080/skill/download)', 'error');
+      return;
+    }
+    setSkillTestLoading(true);
+    setSkillTestResult(null);
+    try {
+      const res = await apiFetch('/api/ai/test-skill-callback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          callbackUrl: skillCallbackUrl.trim(),
+          authToken: skillAuthToken.trim()
+        })
+      });
+      const data = await res.json();
+      setSkillTestResult(data);
+      if (data.success) {
+        onShowToast('回调通信正常', `HTTP ${data.status} · 耗时 ${data.latencyMs}ms`, 'success');
+      } else {
+        onShowToast('回调测试失败', data.error || `HTTP ${data.status}`, 'error');
+      }
+    } catch (err: any) {
+      setSkillTestResult({ success: false, error: err.message });
+      onShowToast('网络异常', err.message, 'error');
+    } finally {
+      setSkillTestLoading(false);
     }
   };
 
@@ -907,6 +1006,184 @@ export const AiModelSettingsTab: React.FC<AiModelSettingsTabProps> = ({ onShowTo
             </span>
           </div>
         </div>
+      </div>
+
+      {/* 4. AI Skill External Webhook & Callback Config */}
+      <div className={`p-6 sm:p-7 rounded-3xl border space-y-5 transition-colors ${
+        isLight ? 'bg-white border-zinc-200 shadow-sm' : 'bg-zinc-900/40 border-white/10'
+      }`}>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-100 dark:border-white/5">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+              <Link2 className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h4 className={`text-sm font-bold ${isLight ? 'text-zinc-900' : 'text-white'}`}>
+                  AI Skill 外部回调地址与 Webhook 调度
+                </h4>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 font-medium">
+                  调度中心关闭时直连生效
+                </span>
+              </div>
+              <p className={`text-xs mt-0.5 ${isLight ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                当下载调度中心关闭时，系统检测到未收录歌曲将自动通过此回调地址向 AI 外部 Skill 探针派发结构化参数与落盘指令
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-end sm:self-auto flex-wrap">
+            <button
+              type="button"
+              onClick={() => setShowPayloadSchema(prev => !prev)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition cursor-pointer ${
+                isLight ? 'bg-zinc-100 hover:bg-zinc-200 text-zinc-700 border-zinc-200' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-white/5'
+              }`}
+            >
+              <Code className="w-3.5 h-3.5 text-amber-500" />
+              <span>{showPayloadSchema ? '收起参数字典' : '查看参数协议'}</span>
+              {showPayloadSchema ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            </button>
+            <button
+              type="button"
+              onClick={handleTestSkillCallback}
+              disabled={skillTestLoading}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition border cursor-pointer ${
+                isLight ? 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300' : 'bg-amber-950/40 hover:bg-amber-900/50 text-amber-300 border-amber-500/30'
+              } disabled:opacity-50`}
+            >
+              {skillTestLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+              <span>{skillTestLoading ? '正在通信...' : '测试回调连通性'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleSaveSkillCallback}
+              disabled={savingSkillConfig}
+              className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-zinc-950 transition shadow-sm shadow-amber-500/20 disabled:opacity-50 cursor-pointer"
+            >
+              <Save className="w-3.5 h-3.5" />
+              <span>{savingSkillConfig ? '保存中...' : '保存回调配置'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Input fields */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <label className={`text-xs font-bold flex items-center justify-between ${isLight ? 'text-zinc-700' : 'text-zinc-300'}`}>
+              <span className="flex items-center gap-1.5">
+                <Link2 className="w-3.5 h-3.5 text-amber-500" />
+                AI Skill 回调接口 URL (Webhook)
+              </span>
+              <span className="text-[10px] text-zinc-400 font-normal">支持 HTTP / HTTPS</span>
+            </label>
+            <input
+              type="text"
+              value={skillCallbackUrl}
+              onChange={e => setSkillCallbackUrl(e.target.value)}
+              placeholder={`例如：${resolvedServerHost}/api/skill/download`}
+              className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-mono border outline-none transition ${
+                isLight 
+                  ? 'bg-zinc-50 border-zinc-200 focus:border-amber-500 focus:bg-white text-zinc-900' 
+                  : 'bg-zinc-950/60 border-zinc-800 focus:border-amber-500 text-white'
+              }`}
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <label className={`text-xs font-bold flex items-center justify-between ${isLight ? 'text-zinc-700' : 'text-zinc-300'}`}>
+              <span className="flex items-center gap-1.5">
+                <Key className="w-3.5 h-3.5 text-amber-500" />
+                回调鉴权 Bearer Token (可选)
+              </span>
+              <span className="text-[10px] text-zinc-400 font-normal">如不需要鉴权可留空</span>
+            </label>
+            <input
+              type="password"
+              value={skillAuthToken}
+              onChange={e => setSkillAuthToken(e.target.value)}
+              placeholder="Authorization: Bearer sk-..."
+              className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-mono border outline-none transition ${
+                isLight 
+                  ? 'bg-zinc-50 border-zinc-200 focus:border-amber-500 focus:bg-white text-zinc-900' 
+                  : 'bg-zinc-950/60 border-zinc-800 focus:border-amber-500 text-white'
+              }`}
+            />
+          </div>
+        </div>
+
+        {/* Test Result Display */}
+        {skillTestResult && (
+          <div className={`p-3.5 rounded-2xl border text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+            skillTestResult.success
+              ? isLight ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-emerald-950/30 border-emerald-500/30 text-emerald-300'
+              : isLight ? 'bg-red-50 border-red-200 text-red-900' : 'bg-red-950/30 border-red-500/30 text-red-300'
+          }`}>
+            <div className="flex items-center gap-2">
+              {skillTestResult.success ? <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" /> : <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />}
+              <div>
+                <span className="font-bold">
+                  {skillTestResult.success ? `回调连通成功 (HTTP ${skillTestResult.status})` : '回调通信失败'}
+                </span>
+                <span className="ml-2 font-mono text-[11px] opacity-80">耗时: {skillTestResult.latencyMs}ms</span>
+                {skillTestResult.error && <p className="text-[11px] mt-0.5 opacity-90">{skillTestResult.error}</p>}
+              </div>
+            </div>
+            {skillTestResult.responseSample && (
+              <span className="text-[10px] font-mono opacity-70 truncate max-w-xs">
+                响应预览: {skillTestResult.responseSample}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Parameter Protocol Schema Accordion */}
+        {showPayloadSchema && (
+          <div className={`p-4 rounded-2xl border space-y-3 ${isLight ? 'bg-zinc-50 border-zinc-200' : 'bg-zinc-950/80 border-white/5'}`}>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <span className="text-xs font-bold text-amber-500 flex items-center gap-1.5">
+                <Code className="w-4 h-4" />
+                系统派发给 AI Skill 探针的 JSON 回调参数协议：
+              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-zinc-400">局域网串流 Host:</span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold border border-amber-500/20">
+                  {resolvedServerHost}
+                </span>
+              </div>
+            </div>
+            <pre className="text-[11px] font-mono leading-relaxed p-3.5 rounded-xl bg-zinc-900 text-zinc-200 overflow-x-auto border border-white/5">
+{`{
+  "event": "ai_skill_music_download_requested",
+  "timestamp": ${Date.now()},
+  "serverHost": "${resolvedServerHost}",
+  "track": {
+    "title": "笑看风云",
+    "artist": "郑少秋",
+    "album": "经典大碟",
+    "genre": "粤语流行 / 经典"
+  },
+  "storage": {
+    "targetDirectory": "/app/music",
+    "targetFilePath": "/app/music/郑少秋/经典大碟/郑少秋 - 笑看风云.flac",
+    "companionLrcPath": "/app/music/郑少秋/经典大碟/郑少秋 - 笑看风云.lrc"
+  },
+  "syncCallback": {
+    "method": "POST",
+    "url": "${resolvedServerHost}/api/nas/sync",
+    "scanEndpoint": "${resolvedServerHost}/api/music/scan"
+  },
+  "clientContext": {
+    "requestedBy": "voice_ai",
+    "mode": "ai_skill_direct"
+  }
+}`}
+            </pre>
+            <p className="text-[10px] text-zinc-400">
+              💡 说明：AI Skill 探针执行完音频下载并存入 <code className="text-amber-400">storage.targetDirectory</code>（即系统本地 <code className="text-amber-400">app/music</code>）后，主动向 <code className="text-amber-400">{resolvedServerHost}/api/nas/sync</code> 发送 POST 请求即可自动完成曲库入库。
+            </p>
+          </div>
+        )}
       </div>
 
       {/* 5. Voice Semantic Playground & Mood Queue Live Simulation (Items 1 & 2) */}
