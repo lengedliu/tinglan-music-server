@@ -747,6 +747,47 @@ export class AiService {
         .sort((a, b) => b.score - a.score);
 
       if (matchedList.length === 0) {
+        // Strategy 1 Fallback: When neither the target song nor the artist is found in local library,
+        // don't drop the ball or stay silent! Auto-assemble a recommendation radio from favorites or library songs!
+        const requestedTargetTitle = (intent.targetSongTitle || '').trim();
+        const requestedArtist = (intent.targetArtist || '').trim();
+        const pool = songs.filter(s => s.isFavorite).length >= 3
+          ? songs.filter(s => s.isFavorite)
+          : songs;
+
+        if (pool.length > 0) {
+          const fallbackPrimary = pool[0];
+          const fallbackQueue = pool.slice(0, 8);
+          const genreOrMood = intent.targetGenre || intent.moodSceneTitle || '精选相似流派';
+
+          let tts = '';
+          if (requestedTargetTitle && requestedArtist) {
+            tts = `本地曲库暂未收录《${requestedTargetTitle}》及${requestedArtist}的歌曲，已为您推荐相似风格的《${fallbackPrimary.title}》`;
+          } else if (requestedArtist) {
+            tts = `本地曲库暂未收录${requestedArtist}的歌曲，已为您推荐相似风格的《${fallbackPrimary.title}》`;
+          } else if (requestedTargetTitle) {
+            tts = `本地曲库暂未收录《${requestedTargetTitle}》，已为您推荐相似风格的《${fallbackPrimary.title}》`;
+          } else {
+            tts = `好的，为您开启${genreOrMood}推荐电台，首曲播放《${fallbackPrimary.title}》`;
+          }
+
+          const fallbackResult: AiVoiceMatchResult = {
+            matched: true,
+            isMoodQueue: true,
+            queueTitle: `${genreOrMood}推荐电台`,
+            primarySong: fallbackPrimary,
+            playlistSongs: fallbackQueue,
+            songId: fallbackPrimary.id,
+            songTitle: fallbackPrimary.title,
+            artist: fallbackPrimary.artist,
+            reason: `本地曲库未收录【${requestedArtist ? requestedArtist + ' · ' : ''}${requestedTargetTitle || '目标曲目'}】，已启动智能兜底电台，推荐相似风格《${fallbackPrimary.title}》`,
+            ttsResponse: tts
+          };
+
+          aiSemanticCache.set(queryText, fallbackResult);
+          return fallbackResult;
+        }
+
         return {
           matched: false,
           reason: `已理解意图为【${intent.targetSongTitle || intent.targetArtist || intent.moodSceneTitle || '特定风格'}】，但在本地曲库中未检索到匹配曲目`
@@ -757,6 +798,7 @@ export class AiService {
 
       // Check if user specifically requested a song, but we had to substitute another song by the artist
       const requestedTargetTitle = (intent.targetSongTitle || '').trim();
+      const requestedArtist = (intent.targetArtist || '').trim();
       const isMood = Boolean(intent.isMoodOrScene) && !requestedTargetTitle;
       const queueTitle = intent.queueTitle || intent.moodSceneTitle || (isMood ? '心境电台' : `${primary.title} 专属电台`);
 
@@ -797,16 +839,51 @@ export class AiService {
         primaryTitle.toLowerCase().includes(requestedTargetTitle.toLowerCase()) || 
         requestedTargetTitle.toLowerCase().includes(primaryTitle.toLowerCase());
 
+      const hasArtistInLibrary = requestedArtist ? songs.some(s => {
+        const sArtist = (s.artist || '').toLowerCase();
+        const req = requestedArtist.toLowerCase();
+        return sArtist.includes(req) || req.includes(sArtist);
+      }) : false;
+
+      const isArtistMatched = !requestedArtist || (
+        (primary.artist || '').toLowerCase().includes(requestedArtist.toLowerCase()) ||
+        requestedArtist.toLowerCase().includes((primary.artist || '').toLowerCase())
+      );
+
       let tts = intent.suggestedTts;
 
-      if (!isMood && requestedTargetTitle && !isTargetSongMatched) {
-        // The requested song was NOT found in local library, but we found other songs by the artist
-        const artistName = primary.artist || intent.targetArtist || '该歌手';
-        tts = `未找到您想要的歌曲《${requestedTargetTitle}》，为您播放${artistName}的其它歌曲《${primaryTitle}》`;
-      } else if (!tts) {
+      if (!isMood) {
+        if (requestedTargetTitle && !isTargetSongMatched && hasArtistInLibrary && isArtistMatched) {
+          // Level 2: Same artist exists in library, target song missing
+          const artistName = primary.artist || requestedArtist || '该歌手';
+          tts = `未找到您想要的歌曲《${requestedTargetTitle}》，为您播放${artistName}的其它歌曲《${primaryTitle}》`;
+        } else if ((requestedTargetTitle || requestedArtist) && (!hasArtistInLibrary || !isArtistMatched)) {
+          // Level 3 (Strategy 1): Both target song and artist absent, recommend similar genre/style
+          if (requestedTargetTitle && requestedArtist) {
+            tts = `本地曲库暂未收录《${requestedTargetTitle}》及${requestedArtist}的歌曲，已为您推荐相似风格的《${primaryTitle}》`;
+          } else if (requestedArtist) {
+            tts = `本地曲库暂未收录${requestedArtist}的歌曲，已为您推荐相似风格的《${primaryTitle}》`;
+          } else {
+            tts = `本地曲库暂未收录《${requestedTargetTitle}》，已为您推荐相似风格的《${primaryTitle}》`;
+          }
+        }
+      }
+
+      if (!tts) {
         tts = isMood
           ? `好的，为您开启${queueTitle}，首曲播放${primary.artist}的《${primary.title}》`
           : `好的，为您播放${primary.artist}的《${primary.title}》`;
+      }
+
+      let reasonText = '';
+      if (!isMood && requestedTargetTitle && !isTargetSongMatched && hasArtistInLibrary && isArtistMatched) {
+        reasonText = `曲库未收录《${requestedTargetTitle}》，已智能为您推荐播放歌手【${primary.artist}】的其它歌曲《${primary.title}》`;
+      } else if (!isMood && (requestedTargetTitle || requestedArtist) && (!hasArtistInLibrary || !isArtistMatched)) {
+        reasonText = `本地曲库未收录【${requestedArtist ? requestedArtist + ' · ' : ''}${requestedTargetTitle || '目标曲目'}】，已启动智能兜底电台，推荐相似风格《${primary.title}》`;
+      } else if (isMood) {
+        reasonText = `命中心境标签【${intent.moodSceneTitle || intent.keywords?.slice(0, 3).join('/')}】(已创建 ${queueSongs.length} 首心境队列)`;
+      } else {
+        reasonText = `精准匹配: 歌手《${primary.artist}》/ 曲目《${primary.title}》(已附带 ${queueSongs.length} 首连续电台)`;
       }
 
       const result: AiVoiceMatchResult = {
@@ -818,11 +895,7 @@ export class AiService {
         songId: primary.id,
         songTitle: primary.title,
         artist: primary.artist,
-        reason: (!isMood && requestedTargetTitle && !isTargetSongMatched)
-          ? `曲库未收录《${requestedTargetTitle}》，已智能为您推荐播放歌手【${primary.artist}】的其它歌曲《${primary.title}》`
-          : isMood
-          ? `命中心境标签【${intent.moodSceneTitle || intent.keywords?.slice(0, 3).join('/')}】(已创建 ${queueSongs.length} 首心境队列)`
-          : `精准匹配: 歌手《${primary.artist}》/ 曲目《${primary.title}》(已附带 ${queueSongs.length} 首连续电台)`,
+        reason: reasonText,
         ttsResponse: tts
       };
 

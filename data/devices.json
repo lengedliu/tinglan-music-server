@@ -31,6 +31,7 @@
       "requiresAppIos": true,
       "optimalPlayType": 1
     },
-    "lastSeen": "2026-09-24T06:12:54.603Z"
+    "lastSeen": "2026-09-24T06:12:54.603Z",
+    "isPlaying": false
   }
 ]

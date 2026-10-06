@@ -1024,6 +1024,14 @@ export class VoiceCommandService {
 
         return { matched: true, summary: result.summary };
       } catch (err: any) {
+        // If literal rule failed to find a song/playlist and AI semantic voice search is enabled,
+        // don't terminate early! Let the AI Large Language Model intervene with deep semantic comprehension!
+        const aiConfig = aiService.getConfig();
+        if ((rule.actionType === 'play_song_search' || rule.actionType === 'play_playlist') && aiConfig.enabled && aiConfig.enableSemanticVoiceSearch) {
+          console.log(`[VoiceCommandService] Literal rule "${rule.name}" failed: ${err.message}. Seamlessly falling through to AI Semantic Engine.`);
+          continue;
+        }
+
         this.addLog({
           id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
           timestamp: Date.now(),

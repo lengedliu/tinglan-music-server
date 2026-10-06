@@ -105,5 +105,41 @@
       "activeProvider": "gemini",
       "enabled": true
     }
+  },
+  {
+    "id": "log_1791251329047_b4je2",
+    "timestamp": 1791251329047,
+    "timeFormatted": "01:48:49.047",
+    "category": "cast",
+    "level": "info",
+    "title": "启动歌单投播",
+    "message": "开始为【小爱音箱Pro】连续播放《Rainy Cafe (午后咖啡馆雨声)》 (1/3)",
+    "traceId": "tr_3kkof2",
+    "details": {
+      "songTitle": "Rainy Cafe (午后咖啡馆雨声)",
+      "artist": "Lofi Coffee Roaster",
+      "duration": 185,
+      "loopMode": "all"
+    },
+    "targetDid": "did-1789129459008",
+    "deviceName": "小爱音箱Pro",
+    "songId": "song-5"
+  },
+  {
+    "id": "log_1791251329407_oc9ag",
+    "timestamp": 1791251329407,
+    "timeFormatted": "01:48:49.407",
+    "category": "cast",
+    "level": "warn",
+    "title": "【歌单队列切播失败】《Rainy Cafe (午后咖啡馆雨声)》",
+    "message": "未能成功向音箱【小爱音箱Pro】下发播放指令：所有投播通道均未响应或未实际拉取音频流。请检查音箱网络连通性、DLNA开关或小米账号登录状态。",
+    "traceId": "tr_yivq08",
+    "details": {
+      "type": "error",
+      "model": "xiaomi.wifispeaker.sound"
+    },
+    "clientIp": "192.168.31.25",
+    "targetDid": "did-1789129459008",
+    "deviceName": "xiaomi.wifispeaker.sound"
   }
 ]
