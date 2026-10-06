@@ -978,7 +978,23 @@ export class VoiceCommandService {
       return 0;
     });
 
+    // Scheme 2: Fast Pre-Router for complex mood, scene, style, or lyric requests
+    const aiConfig = aiService.getConfig();
+    const isAiSemanticAvailable = Boolean(aiConfig.enabled && aiConfig.enableSemanticVoiceSearch);
+
+    const isComplexSemanticQuery = isAiSemanticAvailable && (
+      /(轻松|解压|治愈|伤感|难过|开心|快乐|安静|热血|孤独|emo|助眠|睡觉|看书|阅读|学习|下雨|雨天|开车|自驾|运动|健身|跑步|工作|写代码|发呆|冥想|纯音乐|轻音乐|古风|摇滚|爵士|民谣|电音|嘻哈|说唱|港乐|粤语经典|欧美流行|民乐|古典乐|白噪音|钢琴曲|吉他曲|大提琴)/.test(cleanQuery) ||
+      /(适合|关于|类似|歌词|很有感觉|节奏|推荐点|来点|放点).*(的|歌|曲|音乐)/.test(cleanQuery) ||
+      cleanQuery.includes('歌词里有') ||
+      cleanQuery.includes('天青色')
+    );
+
     for (const rule of enabledRules) {
+      // If this query is an obvious complex semantic/mood/scene request, skip naive literal song search and pass directly to AI
+      if (isComplexSemanticQuery && rule.actionType === 'play_song_search') {
+        continue;
+      }
+
       const sortedPhrases = [...rule.triggerPhrases].sort((a, b) => b.length - a.length);
 
       const matchedPhrase = sortedPhrases.find(phrase => {
@@ -1024,10 +1040,9 @@ export class VoiceCommandService {
 
         return { matched: true, summary: result.summary };
       } catch (err: any) {
-        // If literal rule failed to find a song/playlist and AI semantic voice search is enabled,
-        // don't terminate early! Let the AI Large Language Model intervene with deep semantic comprehension!
-        const aiConfig = aiService.getConfig();
-        if ((rule.actionType === 'play_song_search' || rule.actionType === 'play_playlist') && aiConfig.enabled && aiConfig.enableSemanticVoiceSearch) {
+        // Scheme 1: Fallback on Miss - If literal rule failed to find a song/playlist and AI is enabled,
+        // don't abort with error! Let the AI Large Language Model take over with deep semantic comprehension!
+        if ((rule.actionType === 'play_song_search' || rule.actionType === 'play_playlist') && isAiSemanticAvailable) {
           console.log(`[VoiceCommandService] Literal rule "${rule.name}" failed: ${err.message}. Seamlessly falling through to AI Semantic Engine.`);
           continue;
         }
@@ -1052,8 +1067,7 @@ export class VoiceCommandService {
     }
 
     // 2. AI Large Language Model Semantic Voice Matching Fallback
-    const aiConfig = aiService.getConfig();
-    if (aiConfig.enabled && aiConfig.enableSemanticVoiceSearch) {
+    if (isAiSemanticAvailable) {
       const songs = this.getSongsFn ? this.getSongsFn() : [];
       if (songs.length > 0) {
         try {

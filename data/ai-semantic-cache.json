@@ -1,6 +1,6 @@
 {
-  "totalHits": 0,
-  "savedAt": 1791251328832,
+  "totalHits": 1,
+  "savedAt": 1791270260370,
   "entries": [
     {
       "query": "歌词里有天青色等烟雨的歌",
@@ -263,9 +263,9 @@
         "reason": "命中心境标签【轻松随心听电台】(已创建 3 首心境队列)",
         "ttsResponse": "好的，为您开启轻松心境电台"
       },
-      "hitCount": 1,
+      "hitCount": 2,
       "createdAt": 1791251325832,
-      "lastHitAt": 1791251325832
+      "lastHitAt": 1791270257370
     }
   ]
 }

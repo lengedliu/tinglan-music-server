@@ -1,8 +1,57 @@
 {
-  "queue": [],
+  "queue": [
+    {
+      "id": "song-5",
+      "title": "Rainy Cafe (午后咖啡馆雨声)",
+      "artist": "Lofi Coffee Roaster",
+      "album": "ChillHop & Ambient Soundscapes",
+      "duration": 185,
+      "url": "/api/stream/song-5.mp3",
+      "coverUrl": "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?auto=format&fit=crop&w=600&q=80",
+      "lyrics": "[00:00.00]Rainy Cafe - 午后微雨与醇香\n[00:10.00]纯音乐放空曲目\n[00:25.00]雨丝敲击着木质窗棂\n[00:45.00]小爱音箱伴您静享惬意午后\n[01:10.00]研磨咖啡豆的沙沙声与低音贝斯共鸣\n[01:35.00]放松心情，沉浸在这片安宁之中",
+      "genre": "Lo-Fi / Relaxing",
+      "year": 2024,
+      "bitrate": "320kbps MP3",
+      "fileSize": "7.1 MB",
+      "isFavorite": false,
+      "source": "local"
+    },
+    {
+      "id": "song-1",
+      "title": "月半小夜曲 (Acoustic Night)",
+      "artist": "李克勤 / 弦乐室内乐团",
+      "album": "港乐经典·发烧重现",
+      "duration": 234,
+      "url": "/api/stream/song-1.mp3",
+      "coverUrl": "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=600&q=80",
+      "lyrics": "[00:00.00]月半小夜曲 - 弦乐原声版\n[00:04.00]词：向雪怀 曲：河合奈保子\n[00:08.50]演奏：Tinglan 听澜 Hi-Fi 发烧工作室\n[00:15.00]哪怕面对冷冰冰的墙壁\n[00:22.00]深深的一声叹息\n[00:29.00]仍难忘你的笑语盈盈\n[00:36.00]仍难舍你的柔情似蜜\n[00:44.00]月亮为何还在夜空高挂\n[00:51.50]似这半月儿静听幽咽的吉他\n[00:58.50]幽幽提琴在低诉我心声\n[01:05.50]如泣如诉如醉如痴\n[01:13.00]我的心仍在期待你的归期\n[01:20.50]小爱音箱正在高保真投放此曲\n[01:28.00]提琴轻诉，如风拂面\n[01:36.00]夜深沉，乐声犹在耳畔\n[01:50.00]（间奏·纯净吉他独奏）\n[02:10.00]月半小夜曲 - Tinglan 听澜音乐流媒体",
+      "genre": "Classic Pop / Acoustic",
+      "year": 2021,
+      "bitrate": "320kbps MP3",
+      "fileSize": "9.2 MB",
+      "isFavorite": false,
+      "source": "local"
+    },
+    {
+      "id": "song-2",
+      "title": "春江花月夜 (Moonlit Spring River)",
+      "artist": "中央民族乐团 / 古筝与箫",
+      "album": "国乐大典·东方神韵",
+      "duration": 278,
+      "url": "/api/stream/song-2.mp3",
+      "coverUrl": "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=600&q=80",
+      "lyrics": "[00:00.00]春江花月夜 - 古筝箫韵\n[00:06.00]古曲改编 / 高保真无损母带\n[00:14.00]春江潮水连海平，海上明月共潮生\n[00:28.00]滟滟随波千万里，何处春江无月明\n[00:42.00]江流宛转绕芳甸，月照花林皆似霰\n[00:56.00]空里流霜不觉飞，汀上白沙看不见\n[01:12.00]江天一色无纤尘，皎皎空中孤月轮\n[01:26.00]江畔何人初见月？江月何年初照人？\n[01:42.00]人生代代无穷已，江月年年望相似\n[02:00.00]（古筝泛音如流水潺潺）\n[02:25.00]此时相望不相闻，愿逐月华流照君\n[02:45.00]鸿雁长飞光不度，鱼龙潜跃水成文",
+      "genre": "Traditional / Ambient",
+      "year": 2023,
+      "bitrate": "FLAC 24bit/96kHz",
+      "fileSize": "28.4 MB",
+      "isFavorite": false,
+      "source": "local"
+    }
+  ],
   "currentIndex": 0,
   "loopMode": "all",
-  "targetDid": "",
-  "targetDeviceName": "",
-  "updatedAt": "2026-10-06T01:48:45.833Z"
+  "targetDid": "did-1789129459008",
+  "targetDeviceName": "小爱音箱Pro",
+  "updatedAt": "2026-10-06T07:04:36.516Z"
 }
