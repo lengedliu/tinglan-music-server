@@ -437,6 +437,29 @@ export const LogsViewer: React.FC = () => {
                 <Cpu className="w-3.5 h-3.5 text-amber-500" />
                 <span>自动化调度 ({stats.automation})</span>
               </button>
+              <button
+                onClick={() => setActiveCategory('system')}
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-medium transition whitespace-nowrap cursor-pointer ${
+                  activeCategory === 'system'
+                    ? isLight ? 'bg-purple-50 text-purple-700 border border-purple-300 font-semibold' : 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
+                    : isLight ? 'text-zinc-600 hover:text-purple-600 hover:bg-purple-50/50' : 'text-zinc-400 hover:text-purple-400 hover:bg-zinc-800/50'
+                }`}
+              >
+                <Database className="w-3.5 h-3.5 text-purple-500" />
+                <span>系统核心 ({stats.system})</span>
+              </button>
+              <button
+                onClick={() => setSearchQuery(searchQuery === 'AI Skill' ? '' : 'AI Skill')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition whitespace-nowrap cursor-pointer ${
+                  searchQuery === 'AI Skill'
+                    ? 'bg-purple-600 text-white border border-purple-500 shadow-md shadow-purple-500/20 font-bold'
+                    : isLight ? 'bg-purple-50/60 hover:bg-purple-100 text-purple-700 border border-purple-200' : 'bg-purple-950/20 hover:bg-purple-900/30 text-purple-300 border border-purple-500/30'
+                }`}
+                title="一键筛选所有 AI Skill 原生流程执行日志"
+              >
+                <Bot className="w-3.5 h-3.5 text-purple-400" />
+                <span>AI Skill 流程专栏</span>
+              </button>
             </div>
 
             {/* Controls */}
@@ -726,10 +749,16 @@ export const LogsViewer: React.FC = () => {
                       </div>
 
                       {/* Tier 2: Event Title */}
-                      <div className={`mt-2 text-sm tracking-tight flex items-center gap-2 ${
+                      <div className={`mt-2 text-sm tracking-tight flex items-center gap-2 flex-wrap ${
                         isLight ? 'text-zinc-900 font-semibold' : 'text-zinc-100 font-semibold'
                       }`}>
                         <span>{log.title}</span>
+                        {log.title.includes('AI Skill') && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-600 dark:text-purple-300 border border-purple-500/20 font-bold flex items-center gap-1">
+                            <Bot className="w-3 h-3 text-purple-400" />
+                            <span>AI Skill 原生直连</span>
+                          </span>
+                        )}
                       </div>
 
                       {/* Tier 3: Body & Structured Parameter Pills */}

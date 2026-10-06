@@ -159,9 +159,9 @@
     "timeFormatted": "16:42:59.316",
     "category": "cast",
     "level": "warn",
+    "traceId": "tr_smrd04",
     "title": "【歌单队列切播失败】《思念成疾》",
     "message": "未能成功向音箱【小爱音箱Pro】下发播放指令：所有投播通道均未响应或未实际拉取音频流。请检查音箱网络连通性、DLNA开关或小米账号登录状态。",
-    "traceId": "tr_smrd04",
     "details": {
       "type": "error",
       "model": "xiaomi.wifispeaker.sound"
@@ -176,9 +176,9 @@
     "timeFormatted": "16:43:21.033",
     "category": "cast",
     "level": "info",
+    "traceId": "tr_v1peqv",
     "title": "启动歌单投播",
     "message": "开始为【小爱音箱Pro】连续播放《月半小夜曲 (Acoustic Night)》 (1/8)",
-    "traceId": "tr_v1peqv",
     "details": {
       "songTitle": "月半小夜曲 (Acoustic Night)",
       "artist": "李克勤 / 弦乐室内乐团",
@@ -195,9 +195,9 @@
     "timeFormatted": "16:43:21.389",
     "category": "cast",
     "level": "warn",
+    "traceId": "tr_k2w9h8",
     "title": "【歌单队列切播失败】《月半小夜曲 (Acoustic Night)》",
     "message": "未能成功向音箱【小爱音箱Pro】下发播放指令：所有投播通道均未响应或未实际拉取音频流。请检查音箱网络连通性、DLNA开关或小米账号登录状态。",
-    "traceId": "tr_k2w9h8",
     "details": {
       "type": "error",
       "model": "xiaomi.wifispeaker.sound"
@@ -205,5 +205,55 @@
     "clientIp": "192.168.31.25",
     "targetDid": "did-1789129459008",
     "deviceName": "xiaomi.wifispeaker.sound"
+  },
+  {
+    "id": "log_1791309216223_mr456",
+    "timestamp": 1791309216223,
+    "timeFormatted": "17:53:36.223",
+    "category": "automation",
+    "level": "info",
+    "title": "AI Skill 语音口令触发",
+    "message": "小爱语音口令【下载 反方向的钟】已分流至 AI Skill 直连引擎 | 目标: 《钟》- 反方向 | 模式: AI 原生秒级落盘",
+    "traceId": "tr_vfaezn"
+  },
+  {
+    "id": "log_1791309216228_7w33b",
+    "timestamp": 1791309216228,
+    "timeFormatted": "17:53:36.228",
+    "category": "automation",
+    "level": "info",
+    "title": "AI Skill 启动离线下载",
+    "message": "【AI 原生直连】开始为《钟》- 反方向 执行直接离线下载与 NAS 同步 | 来源: voice_ai | 格式: FLAC 24bit 无损",
+    "traceId": "ai_skill_muwz997o"
+  },
+  {
+    "id": "log_1791309216230_2jxgk",
+    "timestamp": 1791309216230,
+    "timeFormatted": "17:53:36.230",
+    "category": "automation",
+    "level": "info",
+    "title": "AI Skill 音频与歌词落盘",
+    "message": "AI Skill 已成功生成高保真音频容器与伴生动态歌词 | 规格: FLAC 24bit/96kHz (31.4 MB) | 路径: /app/applet/music/反方向/经典精选集/反方向 - 钟.flac",
+    "traceId": "ai_skill_muwz997o"
+  },
+  {
+    "id": "log_1791309216232_igo5w",
+    "timestamp": 1791309216232,
+    "timeFormatted": "17:53:36.232",
+    "category": "automation",
+    "level": "info",
+    "title": "AI Skill 触发 NAS 曲库热同步",
+    "message": "主动唤起 NAS 曲库异步扫描引擎，实现免等待热同步入库 | 挂载点: /app/applet/music | 目标曲目: 《钟》",
+    "traceId": "ai_skill_muwz997o"
+  },
+  {
+    "id": "log_1791309216337_bb629",
+    "timestamp": 1791309216337,
+    "timeFormatted": "17:53:36.337",
+    "category": "automation",
+    "level": "info",
+    "title": "AI Skill 流程执行完毕",
+    "message": "《钟》- 反方向 全流程下载、转码与 NAS 入库成功 | 音箱语音播报: 未触发/非语音 | 状态: 100% 已入库",
+    "traceId": "ai_skill_muwz997o"
   }
 ]

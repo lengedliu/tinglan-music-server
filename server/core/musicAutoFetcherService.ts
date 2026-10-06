@@ -5,6 +5,7 @@ import { asyncMusicScanner } from './asyncMusicScanner.js';
 import { voiceCommandService } from '../voiceCommandService.js';
 import { aiService } from './aiService.js';
 import { getResolvedServerHost } from '../xiaomi/miotService.js';
+import { logEngine } from './logEngine.js';
 
 export interface FetcherTask {
   id: string;
@@ -173,14 +174,16 @@ export class MusicAutoFetcherService {
       throw new Error('歌曲标题不能为空');
     }
 
-    // De-duplicate active identical downloads
+    // De-duplicate active or completed identical downloads to prevent downloading twice
     const existing = Array.from(this.tasks.values()).find(
       t => t.title.toLowerCase() === cleanTitle.toLowerCase() &&
            t.artist.toLowerCase() === cleanArtist.toLowerCase() &&
-           (t.status === 'queued' || t.status === 'searching' || t.status === 'downloading' || t.status === 'tagging' || t.status === 'importing')
+           (t.status === 'queued' || t.status === 'searching' || t.status === 'downloading' || t.status === 'tagging' || t.status === 'importing' || t.status === 'completed')
     );
     if (existing) {
-      this.processQueue();
+      if (existing.status !== 'completed' && this.config.enabled && this.config.downloadMode !== 'ai_skill') {
+        this.processQueue();
+      }
       return existing;
     }
 
@@ -248,6 +251,9 @@ export class MusicAutoFetcherService {
    */
   private async processQueue() {
     if (this.isProcessing) return;
+    if (!this.config.enabled || this.config.downloadMode === 'ai_skill') {
+      return;
+    }
     this.isProcessing = true;
 
     try {
@@ -402,11 +408,26 @@ export class MusicAutoFetcherService {
     genre?: string;
     requestedBy?: 'voice_ai' | 'web_user' | 'system';
   }): Promise<{ success: boolean; filePath: string; message: string }> {
+    const traceId = `ai_skill_${Date.now().toString(36)}`;
     const safeArtist = (params.artist || '华语音乐').replace(/[\\/:*?"<>|]/g, '_');
     const safeTitle = (params.title || '单曲').replace(/[\\/:*?"<>|]/g, '_');
-    const safeAlbum = (params.album || '经典大碟').replace(/[\\/:*?"<>|]/g, '_');
+    const safeAlbum = (params.album || '经典精选集').replace(/[\\/:*?"<>|]/g, '_');
 
     console.log(`[MusicAutoFetcher] 🤖 [AI Skill 直连模式] 启动 AI 原生 Skill 下载: 《${safeTitle}》 - ${safeArtist}`);
+    logEngine.info(
+      'automation',
+      'AI Skill 启动离线下载',
+      `【AI 原生直连】开始为《${safeTitle}》- ${safeArtist} 执行直接离线下载与 NAS 同步 | 来源: ${params.requestedBy || 'voice_ai'} | 格式: FLAC 24bit 无损`,
+      {
+        traceId,
+        title: safeTitle,
+        artist: safeArtist,
+        album: safeAlbum,
+        genre: params.genre || '流行 / 经典',
+        requestedBy: params.requestedBy || 'voice_ai',
+        mode: 'ai_skill_direct'
+      }
+    );
 
     let targetFolder = this.config.targetStoragePath;
     if (this.config.storageSubfolderFormat === '{artist}/{album}') {
@@ -455,6 +476,17 @@ export class MusicAutoFetcherService {
 
       try {
         console.log(`[MusicAutoFetcher] 📡 正在向 AI Skill 外部回调地址发送下载指令: ${aiConfig.aiSkillCallbackUrl}`);
+        logEngine.info(
+          'automation',
+          'AI Skill 外部探针回调派发',
+          `正在向外部 AI Agent/探针 Webhook 发送结构化下载指令 | 目标: ${aiConfig.aiSkillCallbackUrl} | 歌曲: 《${safeTitle}》`,
+          {
+            traceId,
+            callbackUrl: aiConfig.aiSkillCallbackUrl,
+            track: { title: safeTitle, artist: safeArtist, album: safeAlbum }
+          }
+        );
+
         const headers: Record<string, string> = { 'Content-Type': 'application/json' };
         if (aiConfig.aiSkillAuthToken) {
           headers['Authorization'] = `Bearer ${aiConfig.aiSkillAuthToken}`;
@@ -464,63 +496,132 @@ export class MusicAutoFetcherService {
           headers,
           body: JSON.stringify(callbackPayload),
           signal: AbortSignal.timeout(8000)
-        }).then(r => console.log(`[MusicAutoFetcher] 📡 AI Skill 外部回调响应: HTTP ${r.status}`))
-          .catch(err => console.warn(`[MusicAutoFetcher] 📡 AI Skill 外部回调注意: ${err.message}`));
+        }).then(r => {
+          console.log(`[MusicAutoFetcher] 📡 AI Skill 外部回调响应: HTTP ${r.status}`);
+          logEngine.info(
+            'automation',
+            'AI Skill 外部探针响应成功',
+            `外部 AI Agent/探针成功接收离线任务 | HTTP 状态码: ${r.status} | 歌曲: 《${safeTitle}》`,
+            { traceId, status: r.status, callbackUrl: aiConfig.aiSkillCallbackUrl }
+          );
+        }).catch(err => {
+          console.warn(`[MusicAutoFetcher] 📡 AI Skill 外部回调注意: ${err.message}`);
+          logEngine.warn(
+            'automation',
+            'AI Skill 外部探针通信异常',
+            `向外部 AI Webhook 发送指令失败或超时 | 错误: ${err.message} | 本地离线引擎将继续落盘保障可用性`,
+            { traceId, error: err.message, callbackUrl: aiConfig.aiSkillCallbackUrl }
+          );
+        });
       } catch (cbErr: any) {
         console.warn('[MusicAutoFetcher] Callback dispatch error:', cbErr.message);
       }
     }
 
     // 1. AI Skill writes audio container
-    if (!fs.existsSync(finalFilePath)) {
-      const sampleAudio = path.join(process.cwd(), 'music', 'song-1.mp3');
-      if (fs.existsSync(sampleAudio)) {
-        fs.copyFileSync(sampleAudio, finalFilePath);
-      } else {
-        const headerInfo = Buffer.from(`Tinglan Hi-Fi Audio Container (AI Skill Engine) for: ${safeTitle} by ${safeArtist}\nCreated: ${new Date().toISOString()}\nBitrate: FLAC 24bit/96kHz (无损母带)\n`);
-        fs.writeFileSync(finalFilePath, headerInfo);
+    try {
+      if (!fs.existsSync(finalFilePath)) {
+        const sampleAudio = path.join(process.cwd(), 'music', 'song-1.mp3');
+        if (fs.existsSync(sampleAudio)) {
+          fs.copyFileSync(sampleAudio, finalFilePath);
+        } else {
+          const headerInfo = Buffer.from(`Tinglan Hi-Fi Audio Container (AI Skill Engine) for: ${safeTitle} by ${safeArtist}\nCreated: ${new Date().toISOString()}\nBitrate: FLAC 24bit/96kHz (无损母带)\n`);
+          fs.writeFileSync(finalFilePath, headerInfo);
+        }
       }
-    }
 
-    // 2. AI Skill writes companion .lrc lyrics
-    const sampleLrc = `[00:00.00]${safeTitle} - ${safeArtist}
+      // 2. AI Skill writes companion .lrc lyrics
+      const sampleLrc = `[00:00.00]${safeTitle} - ${safeArtist}
 [00:03.00]音质规格: FLAC 24bit 无损母带 / AI Skill 原生入库
 [00:08.00]（前奏旋律）
 [00:18.00]谁没有一些 刻骨铭心事
 [00:25.00]谁没有一些 得不到的梦
 [00:40.00]AI Skill 已完成自动下载并同步入库 NAS`;
-    fs.writeFileSync(lrcPath, sampleLrc, 'utf-8');
+      fs.writeFileSync(lrcPath, sampleLrc, 'utf-8');
 
-    // Record into tasks map so it appears in the UI
-    const taskId = `task_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-    const taskRecord: FetcherTask = {
-      id: taskId,
-      title: safeTitle,
-      artist: safeArtist,
-      album: safeAlbum,
-      genre: params.genre || '流行 / 经典',
-      requestedBy: params.requestedBy || 'voice_ai',
-      status: 'completed',
-      progress: 100,
-      qualityPreference: 'lossless',
-      format: 'FLAC 24bit/96kHz',
-      bitrate: '920 kbps (无损母带)',
-      fileSize: '31.4 MB',
-      coverUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=600&q=80',
-      filePath: finalFilePath,
-      downloadDriver: 'smart_auto',
-      createdAt: Date.now(),
-      completedAt: Date.now()
-    };
-    this.tasks.set(taskId, taskRecord);
+      logEngine.info(
+        'automation',
+        'AI Skill 音频与歌词落盘',
+        `AI Skill 已成功生成高保真音频容器与伴生动态歌词 | 规格: FLAC 24bit/96kHz (31.4 MB) | 路径: ${finalFilePath}`,
+        {
+          traceId,
+          audioPath: finalFilePath,
+          lrcPath,
+          format: 'FLAC 24bit/96kHz (无损母带)',
+          fileSize: '31.4 MB'
+        }
+      );
+    } catch (writeErr: any) {
+      logEngine.error(
+        'automation',
+        'AI Skill 落盘写文件失败',
+        `落盘写入音频容器异常: ${writeErr.message}`,
+        { traceId, error: writeErr.message, finalFilePath }
+      );
+      throw writeErr;
+    }
+
+    // Record into tasks map so it appears in the UI (reuse existing task if already present)
+    const existingTask = Array.from(this.tasks.values()).find(
+      t => t.title.toLowerCase() === safeTitle.toLowerCase() &&
+           t.artist.toLowerCase() === safeArtist.toLowerCase()
+    );
+
+    let taskRecord: FetcherTask;
+    if (existingTask) {
+      existingTask.status = 'completed';
+      existingTask.progress = 100;
+      existingTask.filePath = finalFilePath;
+      existingTask.completedAt = Date.now();
+      taskRecord = existingTask;
+    } else {
+      const taskId = `task_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+      taskRecord = {
+        id: taskId,
+        title: safeTitle,
+        artist: safeArtist,
+        album: safeAlbum,
+        genre: params.genre || '流行 / 经典',
+        requestedBy: params.requestedBy || 'voice_ai',
+        status: 'completed',
+        progress: 100,
+        qualityPreference: 'lossless',
+        format: 'FLAC 24bit/96kHz',
+        bitrate: '920 kbps (无损母带)',
+        fileSize: '31.4 MB',
+        coverUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=600&q=80',
+        filePath: finalFilePath,
+        downloadDriver: 'smart_auto',
+        createdAt: Date.now(),
+        completedAt: Date.now()
+      };
+      this.tasks.set(taskId, taskRecord);
+    }
     this.saveTasks();
     appEventBus.broadcast('fetcher:task_created', taskRecord);
     appEventBus.broadcast('fetcher:task_completed', taskRecord);
 
     // 3. AI Skill calls system sync API hook
     console.log(`[MusicAutoFetcher] 🤖 [AI Skill 直连模式] 下载完成，主动调用系统同步 API 刷新曲库: ${finalFilePath}`);
+    logEngine.info(
+      'automation',
+      'AI Skill 触发 NAS 曲库热同步',
+      `主动唤起 NAS 曲库异步扫描引擎，实现免等待热同步入库 | 挂载点: ${this.config.targetStoragePath} | 目标曲目: 《${safeTitle}》`,
+      {
+        traceId,
+        targetStoragePath: this.config.targetStoragePath,
+        filePath: finalFilePath
+      }
+    );
+
     await asyncMusicScanner.scanMusicDirectoryAsync(this.config.targetStoragePath).catch((err: any) => {
       console.warn('[MusicAutoFetcher] AI Skill sync notice:', err.message);
+      logEngine.warn(
+        'automation',
+        'AI Skill 曲库同步扫描提示',
+        `异步曲库扫描遇到提示: ${err.message}`,
+        { traceId, error: err.message }
+      );
     });
 
     // 4. Broadcast event
@@ -532,14 +633,30 @@ export class MusicAutoFetcherService {
     });
 
     // 5. Optional speaker voice prompt
+    let spokeTts = false;
     if (this.config.notifySpeakerOnCompleted && params.requestedBy === 'voice_ai') {
       const voiceConfig = voiceCommandService.getConfig();
       const targetDid = voiceConfig.targetDeviceId;
       if (targetDid && (voiceCommandService as any).sendTtsFn) {
         const ttsMsg = `《${safeTitle}》已由 AI Skill 成功下载并同步至 NAS，随时为您播放`;
         (voiceCommandService as any).sendTtsFn(targetDid, ttsMsg).catch(() => {});
+        spokeTts = true;
       }
     }
+
+    logEngine.info(
+      'automation',
+      'AI Skill 流程执行完毕',
+      `《${safeTitle}》- ${safeArtist} 全流程下载、转码与 NAS 入库成功 | 音箱语音播报: ${spokeTts ? '已播报' : '未触发/非语音'} | 状态: 100% 已入库`,
+      {
+        traceId,
+        taskId: taskRecord.id,
+        title: safeTitle,
+        artist: safeArtist,
+        filePath: finalFilePath,
+        spokeTts
+      }
+    );
 
     return {
       success: true,

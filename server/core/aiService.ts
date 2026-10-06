@@ -4,6 +4,7 @@ import { GoogleGenAI } from '@google/genai';
 import { computeSongMatchScore } from '../pinyinHelper.js';
 import { aiSemanticCache } from './aiSemanticCache.js';
 import { musicAutoFetcherService } from './musicAutoFetcherService.js';
+import { logEngine } from './logEngine.js';
 
 export type AiProviderId = 'deepseek' | 'qwen' | 'zhipu' | 'gemini' | 'custom';
 
@@ -819,20 +820,28 @@ export class AiService {
               const downloadTitle = (requestedTargetTitle || `${requestedArtist}的热门金曲`).replace(/[《》「」『』"']/g, '').trim();
               const downloadArtist = (requestedArtist || '华语歌手').replace(/[《》「」『』"']/g, '').trim();
 
-              // Always enqueue into scheduler so task appears and progresses in AI 离线下载调度中心
-              musicAutoFetcherService.enqueueTask({
-                title: downloadTitle,
-                artist: downloadArtist,
-                genre: intent.targetGenre || '流行 / 经典',
-                requestedBy: 'voice_ai'
-              });
-
               if (isSchedulerActive) {
+                // 调度中心开启：仅投递至队列
+                musicAutoFetcherService.enqueueTask({
+                  title: downloadTitle,
+                  artist: downloadArtist,
+                  album: '经典精选集',
+                  genre: intent.targetGenre || '流行 / 经典',
+                  requestedBy: 'voice_ai'
+                });
                 console.log(`[AiService] 🚀 [调度中心模式 - 零匹配补库] 自动调度后台离线下载并入库 NAS: 《${downloadTitle}》 - ${downloadArtist}`);
               } else {
+                // 调度中心关闭：仅由 AI Skill 直连引擎下载
+                logEngine.info(
+                  'automation',
+                  'AI Skill 语义搜歌零匹配补库',
+                  `曲库未命中目标曲目，AI Skill 已介入启动直接离线补库 | 目标: 《${downloadTitle}》- ${downloadArtist}`,
+                  { title: downloadTitle, artist: downloadArtist, requestedBy: 'voice_ai' }
+                );
                 musicAutoFetcherService.executeAiSkillDirectDownload({
                   title: downloadTitle,
                   artist: downloadArtist,
+                  album: '经典精选集',
                   genre: intent.targetGenre || '流行 / 经典',
                   requestedBy: 'voice_ai'
                 }).catch((e: any) => console.warn('[AiService] AI skill direct download error in zero-match fallback:', e.message));
@@ -966,20 +975,28 @@ export class AiService {
             const cleanDownloadTitle = (requestedTargetTitle || '目标单曲').replace(/[《》「」『』"']/g, '').trim();
             const cleanDownloadArtist = (requestedArtist || '华语音乐').replace(/[《》「」『』"']/g, '').trim();
 
-            // Always enqueue task so user sees it in AI 离线下载调度中心
-            musicAutoFetcherService.enqueueTask({
-              title: cleanDownloadTitle,
-              artist: cleanDownloadArtist,
-              genre: intent.targetGenre || '流行 / 经典',
-              requestedBy: 'voice_ai'
-            });
-
             if (isSchedulerActive) {
+              // 调度中心开启：仅投递至队列
+              musicAutoFetcherService.enqueueTask({
+                title: cleanDownloadTitle,
+                artist: cleanDownloadArtist,
+                album: '经典精选集',
+                genre: intent.targetGenre || '流行 / 经典',
+                requestedBy: 'voice_ai'
+              });
               console.log(`[AiService] 🚀 [调度中心模式] 自动调度后台离线下载并入库 NAS: 《${cleanDownloadTitle}》 - ${cleanDownloadArtist}`);
             } else {
+              // 调度中心关闭：仅由 AI Skill 直连引擎下载
+              logEngine.info(
+                'automation',
+                'AI Skill 智能搜歌补库触发',
+                `点歌缺歌自动触发 AI Skill 直连下载 | 目标: 《${cleanDownloadTitle}》- ${cleanDownloadArtist} | 来源: 小爱语音助手`,
+                { title: cleanDownloadTitle, artist: cleanDownloadArtist, requestedBy: 'voice_ai' }
+              );
               musicAutoFetcherService.executeAiSkillDirectDownload({
                 title: cleanDownloadTitle,
                 artist: cleanDownloadArtist,
+                album: '经典精选集',
                 genre: intent.targetGenre || '流行 / 经典',
                 requestedBy: 'voice_ai'
               }).catch((e: any) => console.warn('[AiService] AI skill direct download error:', e.message));

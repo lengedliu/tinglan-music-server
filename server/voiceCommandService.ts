@@ -6,6 +6,7 @@ import { computeSongMatchScore } from './pinyinHelper';
 import { xiaomiCircuitBreaker } from './circuitBreaker';
 import { aiService } from './core/aiService.js';
 import { musicAutoFetcherService } from './core/musicAutoFetcherService.js';
+import { logEngine } from './core/logEngine.js';
 
 export interface VoiceCommandRule {
   id: string;
@@ -1559,25 +1560,39 @@ export class VoiceCommandService {
       try {
         const fetcherCfg = musicAutoFetcherService.getConfig();
         const isSchedulerActive = Boolean(fetcherCfg.enabled && fetcherCfg.downloadMode !== 'ai_skill');
-        
-        // Always record task in queue so it is visible in the AI 离线下载调度中心 UI
-        musicAutoFetcherService.enqueueTask({
-          title: downloadTitle,
-          artist: downloadArtist,
-          genre: '流行 / 经典',
-          requestedBy: 'voice_ai'
-        });
 
         if (isSchedulerActive) {
-          console.log(`[VoiceCommandService] 🚀 [离线下载] 自动调度后台离线下载并入库 NAS: 《${downloadTitle}》 - ${downloadArtist}`);
+          // 调度中心开启：仅投递至调度流水线队列，避免双重触发
+          musicAutoFetcherService.enqueueTask({
+            title: downloadTitle,
+            artist: downloadArtist,
+            album: '经典精选集',
+            genre: '流行 / 经典',
+            requestedBy: 'voice_ai'
+          });
+          console.log(`[VoiceCommandService] 🚀 [调度中心模式] 自动调度后台离线下载并入库 NAS: 《${downloadTitle}》 - ${downloadArtist}`);
         } else {
+          // 调度中心关闭：仅由 AI Skill 直连引擎秒级落盘并入库，绝对不重复入队
+          logEngine.info(
+            'automation',
+            'AI Skill 语音口令触发',
+            `小爱语音口令【${rawQuery}】已分流至 AI Skill 直连引擎 | 目标: 《${downloadTitle}》- ${downloadArtist} | 模式: AI 原生秒级落盘`,
+            {
+              query: rawQuery,
+              title: downloadTitle,
+              artist: downloadArtist,
+              source,
+              deviceId
+            }
+          );
           musicAutoFetcherService.executeAiSkillDirectDownload({
             title: downloadTitle,
             artist: downloadArtist,
+            album: '经典精选集',
             genre: '流行 / 经典',
             requestedBy: 'voice_ai'
           }).catch(e => console.warn('[VoiceCommandService] AI Skill download error:', e.message));
-          console.log(`[VoiceCommandService] 🤖 [离线下载] 自动使用 AI Skill 下载并同步 NAS: 《${downloadTitle}》 - ${downloadArtist}`);
+          console.log(`[VoiceCommandService] 🤖 [AI Skill 直连模式] 自动使用 AI Skill 下载并同步 NAS: 《${downloadTitle}》 - ${downloadArtist}`);
         }
       } catch (fetchErr: any) {
         console.warn('[VoiceCommandService] Failed to trigger auto fetcher:', fetchErr.message);
