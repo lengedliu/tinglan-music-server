@@ -370,19 +370,28 @@ export const PlayQueueDrawer: React.FC<PlayQueueDrawerProps> = ({
 
           <div className="flex items-center gap-1">
             {currentIndex >= 0 && (
-              <button
-                type="button"
-                onClick={() => scrollToCurrentSong(true)}
-                className={`flex items-center gap-1 transition px-2 py-1 rounded-lg text-xs font-semibold cursor-pointer ${
+              <div className="relative group/locate flex items-center">
+                <button
+                  type="button"
+                  onClick={() => scrollToCurrentSong(true)}
+                  className={`p-1.5 rounded-lg transition flex items-center justify-center cursor-pointer ${
+                    isLight
+                      ? 'text-orange-600 hover:text-orange-700 bg-orange-50 hover:bg-orange-100 border border-orange-200/80 shadow-sm'
+                      : 'text-[#FF6700] hover:text-[#ff7f24] bg-[#FF6700]/15 hover:bg-[#FF6700]/25 border border-[#FF6700]/30 shadow-[0_0_10px_rgba(255,103,0,0.15)]'
+                  }`}
+                  title="定位到正在播放"
+                  aria-label="定位到正在播放"
+                >
+                  <Target className="w-4 h-4 text-[#FF6700]" />
+                </button>
+                <div className={`pointer-events-none absolute -bottom-7 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-md text-[10px] whitespace-nowrap opacity-0 group-hover/locate:opacity-100 transition-opacity duration-150 z-50 shadow-md ${
                   isLight
-                    ? 'bg-orange-50 text-orange-600 hover:bg-orange-100 border border-orange-200/80 shadow-sm'
-                    : 'bg-[#FF6700]/15 text-[#FF6700] hover:bg-[#FF6700]/25 border border-[#FF6700]/30 shadow-[0_0_10px_rgba(255,103,0,0.15)]'
-                }`}
-                title="一键平滑滚动定位至正在播放的歌曲"
-              >
-                <Target className="w-3.5 h-3.5 text-[#FF6700]" />
-                <span>定位当前</span>
-              </button>
+                    ? 'bg-zinc-800 text-white'
+                    : 'bg-zinc-900 border border-white/10 text-zinc-200'
+                }`}>
+                  定位到正在播放
+                </div>
+              </div>
             )}
 
             {onPrev && (
