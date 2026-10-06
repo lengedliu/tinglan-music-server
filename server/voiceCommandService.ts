@@ -877,15 +877,15 @@ export class VoiceCommandService {
         activeSession.lastCurrentIndex = (activeSession.lastCurrentIndex + 1) % activeSession.lastQueueSongs.length;
         const nextSong = activeSession.lastQueueSongs[activeSession.lastCurrentIndex];
         
-        if (this.playSongFn) {
-          await this.playSongFn(nextSong, undefined, deviceId);
-        }
-        activeSession.lastTimestamp = now;
-        activeSession.lastMatchedSongId = nextSong.id;
-
         const ttsText = `好的，为您切换至《${nextSong.title}》`;
         if (this.sendTtsFn && deviceId) {
           await this.sendTtsFn(deviceId, ttsText).catch(() => {});
+          const delayMs = Math.min(Math.max(ttsText.length * 200, 1500), 4000);
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
+
+        if (this.playSongFn) {
+          await this.playSongFn(nextSong, undefined, deviceId);
         }
 
         const summary = `AI 多轮意图切歌: 《${nextSong.title}》 - ${nextSong.artist} (${activeSession.lastCurrentIndex + 1}/${activeSession.lastQueueSongs.length})`;
@@ -922,14 +922,17 @@ export class VoiceCommandService {
               if (songToPlay) {
                 if (this.earlyStopFn) await this.earlyStopFn(deviceId).catch(() => {});
 
+                if (this.sendTtsFn && deviceId && aiResult.ttsResponse) {
+                  await this.sendTtsFn(deviceId, aiResult.ttsResponse).catch(() => {});
+                  const ttsCharCount = (aiResult.ttsResponse || '').length;
+                  const delayMs = Math.min(Math.max(ttsCharCount * 220, 1800), 4500);
+                  await new Promise(resolve => setTimeout(resolve, delayMs));
+                }
+
                 if (this.playSongsQueueFn && Array.isArray(aiResult.playlistSongs) && aiResult.playlistSongs.length > 1) {
                   await this.playSongsQueueFn(aiResult.playlistSongs, 0, deviceId);
                 } else if (this.playSongFn) {
                   await this.playSongFn(songToPlay, undefined, deviceId);
-                }
-
-                if (this.sendTtsFn && deviceId && aiResult.ttsResponse) {
-                  await this.sendTtsFn(deviceId, aiResult.ttsResponse).catch(() => {});
                 }
 
                 // Update session
@@ -1053,14 +1056,17 @@ export class VoiceCommandService {
               if (this.earlyStopFn) await this.earlyStopFn(deviceId).catch(() => {});
 
               // Item 2: Continuous Dynamic Mood Queue Playback
+              if (this.sendTtsFn && deviceId && aiResult.ttsResponse) {
+                await this.sendTtsFn(deviceId, aiResult.ttsResponse).catch(() => {});
+                const ttsCharCount = (aiResult.ttsResponse || '').length;
+                const delayMs = Math.min(Math.max(ttsCharCount * 220, 1800), 4500);
+                await new Promise(resolve => setTimeout(resolve, delayMs));
+              }
+
               if (this.playSongsQueueFn && Array.isArray(aiResult.playlistSongs) && aiResult.playlistSongs.length > 1) {
                 await this.playSongsQueueFn(aiResult.playlistSongs, 0, deviceId);
               } else if (this.playSongFn) {
                 await this.playSongFn(songToPlay, undefined, deviceId);
-              }
-
-              if (this.sendTtsFn && deviceId && aiResult.ttsResponse) {
-                await this.sendTtsFn(deviceId, aiResult.ttsResponse).catch(() => {});
               }
 
               // Update active dialogue session for multi-turn conversational follow-ups

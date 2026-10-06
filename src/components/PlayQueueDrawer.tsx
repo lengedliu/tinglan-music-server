@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { ListMusic, X, Play, Trash2, Shuffle, Disc, Repeat, Repeat1, Radio, SkipForward, SkipBack, ArrowRightLeft, Check, Loader2, Sparkles } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { ListMusic, X, Play, Trash2, Shuffle, Disc, Repeat, Repeat1, Radio, SkipForward, SkipBack, ArrowRightLeft, Check, Loader2, Sparkles, Target } from 'lucide-react';
 import { Song, XiaomiDevice } from '../types';
 import { formatTime } from '../utils/lyricParser';
 import { useTheme } from '../context/ThemeContext';
@@ -84,9 +84,32 @@ export const PlayQueueDrawer: React.FC<PlayQueueDrawerProps> = ({
     }
   }, [showHandover]);
 
-  if (!isOpen) return null;
-
+  const scrollRef = useRef<HTMLDivElement>(null);
   const currentIndex = playlist.findIndex(s => s.id === currentSong?.id);
+
+  const scrollToCurrentSong = useCallback((smooth = true) => {
+    if (!scrollRef.current || currentIndex < 0) return;
+    const itemHeight = 68; // 64px height + 4px margin
+    const containerHeight = scrollRef.current.clientHeight || 500;
+    const targetTop = Math.max(0, currentIndex * itemHeight - (containerHeight / 2 - itemHeight / 2));
+    
+    scrollRef.current.scrollTo({
+      top: targetTop,
+      behavior: smooth ? 'smooth' : 'auto'
+    });
+  }, [currentIndex]);
+
+  // Auto-locate current song when drawer opens or current song changes
+  useEffect(() => {
+    if (isOpen && currentIndex >= 0) {
+      const timer = setTimeout(() => {
+        scrollToCurrentSong(true);
+      }, 120);
+      return () => clearTimeout(timer);
+    }
+  }, [isOpen, currentSong?.id, currentIndex, scrollToCurrentSong]);
+
+  if (!isOpen) return null;
 
   const handleExecuteTransfer = async (targetDev: any) => {
     try {
@@ -346,6 +369,22 @@ export const PlayQueueDrawer: React.FC<PlayQueueDrawerProps> = ({
           </div>
 
           <div className="flex items-center gap-1">
+            {currentIndex >= 0 && (
+              <button
+                type="button"
+                onClick={() => scrollToCurrentSong(true)}
+                className={`flex items-center gap-1 transition px-2 py-1 rounded-lg text-xs font-semibold cursor-pointer ${
+                  isLight
+                    ? 'bg-orange-50 text-orange-600 hover:bg-orange-100 border border-orange-200/80 shadow-sm'
+                    : 'bg-[#FF6700]/15 text-[#FF6700] hover:bg-[#FF6700]/25 border border-[#FF6700]/30 shadow-[0_0_10px_rgba(255,103,0,0.15)]'
+                }`}
+                title="一键平滑滚动定位至正在播放的歌曲"
+              >
+                <Target className="w-3.5 h-3.5 text-[#FF6700]" />
+                <span>定位当前</span>
+              </button>
+            )}
+
             {onPrev && (
               <button
                 onClick={onPrev}
@@ -386,6 +425,7 @@ export const PlayQueueDrawer: React.FC<PlayQueueDrawerProps> = ({
         {/* High Performance Virtualized Queue List (Scheme 4) */}
         <div className="flex-1 overflow-hidden p-3">
           <VirtualList<Song>
+            scrollRef={scrollRef}
             items={playlist}
             itemHeight={68}
             className={`h-full w-full pr-1 scrollbar-thin ${isLight ? 'scrollbar-thumb-zinc-300' : 'scrollbar-thumb-zinc-800'}`}
