@@ -1915,7 +1915,11 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
     if (!checkMiotControlPermission(req, res)) return;
     try {
       const updated = voiceCommandService.updateConfig(req.body);
-      res.json({ success: true, config: updated });
+      res.json({
+        success: true,
+        config: updated,
+        status: voiceCommandService.getStatus()
+      });
     } catch (err: any) {
       res.status(400).json({ success: false, error: err.message });
     }
@@ -1928,15 +1932,18 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
     const isEnabled = enabled !== undefined ? Boolean(enabled) : !voiceCommandService.getStatus().enabled;
 
     if (isEnabled) {
-      voiceCommandService.updateConfig({ targetDeviceId: miotConfig.activeDeviceId });
+      voiceCommandService.updateConfig({ targetDeviceId: miotConfig.activeDeviceId, enabled: true });
       voiceCommandService.start();
     } else {
+      voiceCommandService.updateConfig({ enabled: false });
       voiceCommandService.stop();
     }
 
     res.json({
       success: true,
       enabled: voiceCommandService.getStatus().enabled,
+      status: voiceCommandService.getStatus(),
+      config: voiceCommandService.getConfig(),
       message: isEnabled ? '已启用小爱同学语音点歌拦截引擎' : '已停用语音指令轮询'
     });
   });

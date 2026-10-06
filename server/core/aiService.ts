@@ -5,6 +5,7 @@ import { computeSongMatchScore } from '../pinyinHelper.js';
 import { aiSemanticCache } from './aiSemanticCache.js';
 import { musicAutoFetcherService } from './musicAutoFetcherService.js';
 import { logEngine } from './logEngine.js';
+import { getResolvedServerHost } from '../xiaomi/miotService.js';
 
 export type AiProviderId = 'deepseek' | 'qwen' | 'zhipu' | 'gemini' | 'custom';
 
@@ -39,6 +40,70 @@ export interface AiTestResult {
   reply?: string;
   modelUsed?: string;
   error?: string;
+}
+
+/**
+ * 判断用户语音/文本指令是否属于明确的下载歌曲需求
+ */
+export function isSongDownloadQuery(query: string): boolean {
+  if (!query) return false;
+  const clean = query.trim();
+  return /^(下载歌曲|下载一首|帮我下载|离线下载|下载|下首歌|下歌曲|下周董|帮我下|下一下|搜一下下载|找歌下载)/.test(clean) ||
+         clean.startsWith('下载') ||
+         clean.startsWith('帮我下载') ||
+         clean.includes('下载歌曲') ||
+         clean.includes('离线下载');
+}
+
+/**
+ * 构造输入给大模型/AI Agent 的 Prompt 参数结构
+ * 仅在指令要求下载歌曲时，才动态提供 inboundWebhookUrl 回调端点
+ */
+export function buildAiPromptPayload(
+  query: string,
+  options: { model?: string; temperature?: number; serverHost?: string; downloadMode?: string } = {}
+) {
+  const isDownload = isSongDownloadQuery(query);
+  const host = options.serverHost || getResolvedServerHost();
+
+  // 严格判断是否处于 AI Skill 直连下载模式
+  let currentDownloadMode = options.downloadMode;
+  if (!currentDownloadMode) {
+    try {
+      const cfg = musicAutoFetcherService.getConfig();
+      currentDownloadMode = cfg?.downloadMode || 'ai_skill';
+    } catch {
+      currentDownloadMode = 'ai_skill';
+    }
+  }
+
+  const isAiSkillMode = currentDownloadMode === 'ai_skill';
+  const isAiSkillDownload = isDownload && isAiSkillMode;
+
+  const payload: {
+    model: string;
+    temperature: number;
+    systemPrompt: string;
+    userPrompt: string;
+    inboundWebhookUrl?: string;
+    inboundWebhookMethod?: string;
+  } = {
+    model: options.model || 'gemini-3.8-flash',
+    temperature: options.temperature ?? 0.2,
+    systemPrompt: '你是一个精通中国流行音乐、华语歌手别名黑话、歌词常识及音乐流派的意图提炼专家。将用户的口语化点歌指令提炼成标准歌曲名、规范歌手名与流派...',
+    // 🌟 仅在 AI Skill 模式下调度下载时，后缀指令置为 \n请帮我下载此歌曲；其它模式保留原有的提炼指令
+    userPrompt: isAiSkillDownload
+      ? `用户语音指令: "${query}"\n请帮我下载此歌曲`
+      : `用户语音指令: "${query}"\n请提炼音乐检索结构化参数并输出 JSON`
+  };
+
+  // 🌟 仅在 AI Skill 模式且指令要求下载歌曲时，才动态注入 Inbound Webhook 回调端点
+  if (isAiSkillDownload) {
+    payload.inboundWebhookUrl = `${host}/api/skill/notify-completed`;
+    payload.inboundWebhookMethod = 'POST';
+  }
+
+  return payload;
 }
 
 export interface AiVoiceMatchResult {
@@ -588,6 +653,9 @@ export class AiService {
     }
 
     // Stage 1: Intent Extraction via LLM
+    const resolvedServerHost = getResolvedServerHost();
+    const inboundWebhookUrl = `${resolvedServerHost}/api/skill/notify-completed`;
+
     const systemPrompt = `你是一个精通中国流行音乐、华语歌手别名黑话、歌词常识及音乐流派的意图提炼专家。
 你的任务是将用户的口语化、情绪化、模糊点歌指令，提炼成结构化的音乐检索参数，用于在家庭局域网本地曲库中秒级搜库。
 

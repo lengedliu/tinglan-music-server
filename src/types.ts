@@ -320,6 +320,7 @@ export interface VoiceListenerConfig {
   ttsFeedbackEnabled: boolean;
   adaptivePollingEnabled?: boolean;
   earlyInterceptionEnabled?: boolean;
+  requireDownloadConfirmation?: boolean;
   rules: VoiceCommandRule[];
 }
 

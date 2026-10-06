@@ -448,10 +448,26 @@ export class MusicAutoFetcherService {
     const aiConfig = aiService.getConfig();
     if (aiConfig.aiSkillCallbackUrl && aiConfig.aiSkillCallbackUrl.trim()) {
       const resolvedBaseUrl = getResolvedServerHost();
+      const inboundWebhookUrl = `${resolvedBaseUrl}/api/skill/notify-completed`;
       const callbackPayload = {
         event: 'ai_skill_music_download_requested',
         timestamp: Date.now(),
         serverHost: resolvedBaseUrl,
+        inboundWebhookUrl,
+        inboundWebhookMethod: 'POST',
+        inboundWebhook: {
+          url: inboundWebhookUrl,
+          method: 'POST',
+          description: '下载完成后请向此接口发送 POST 请求通知本系统即时入库 NAS 与语音播报',
+          examplePayload: {
+            title: safeTitle,
+            artist: safeArtist,
+            album: safeAlbum,
+            genre: params.genre || '流行 / 经典',
+            filePath: finalFilePath,
+            notifySpeaker: true
+          }
+        },
         track: {
           title: safeTitle,
           artist: safeArtist,

@@ -1,0 +1,38 @@
+[
+  {
+    "id": "slang_zhoujielun_1",
+    "slangTerm": "周节轮",
+    "targetType": "artist",
+    "targetValue": "周杰伦",
+    "notes": "语音同音错别字矫正",
+    "hitCount": 12,
+    "createdAt": 1791052266615
+  },
+  {
+    "id": "slang_zhoujielun_2",
+    "slangTerm": "周董",
+    "targetType": "artist",
+    "targetValue": "周杰伦",
+    "notes": "歌手常见江湖别称/黑话",
+    "hitCount": 9,
+    "createdAt": 1791138666615
+  },
+  {
+    "id": "slang_xuezhiqian",
+    "slangTerm": "薛之潜",
+    "targetType": "artist",
+    "targetValue": "薛之谦",
+    "notes": "语音同音错别字矫正",
+    "hitCount": 5,
+    "createdAt": 1791138666615
+  },
+  {
+    "id": "slang_haige",
+    "slangTerm": "嗨歌",
+    "targetType": "playlist",
+    "targetValue": "favorites",
+    "notes": "曲风黑话自动定位收藏歌单",
+    "hitCount": 15,
+    "createdAt": 1791225066615
+  }
+]

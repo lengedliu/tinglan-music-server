@@ -262,6 +262,7 @@ export function createAuthMiddleware(options: AuthMiddlewareOptions) {
     if (
       fullPath.startsWith('/api/stream') ||
       fullPath.startsWith('/api/tts') ||
+      fullPath.startsWith('/api/skill') ||
       (fullPath.startsWith('/api/songs/') && (fullPath.endsWith('/stream') || fullPath.endsWith('/cover')))
     ) {
       return next();

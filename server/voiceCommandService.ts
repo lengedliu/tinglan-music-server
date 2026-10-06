@@ -52,7 +52,17 @@ export interface VoiceListenerConfig {
   ttsFeedbackEnabled: boolean;
   adaptivePollingEnabled?: boolean;
   earlyInterceptionEnabled?: boolean;
+  requireDownloadConfirmation?: boolean;
   rules: VoiceCommandRule[];
+}
+
+export interface PendingDownloadContext {
+  title: string;
+  artist?: string;
+  album?: string;
+  genre?: string;
+  timestamp: number;
+  rawQuery?: string;
 }
 
 export interface DialogueSessionContext {
@@ -62,6 +72,7 @@ export interface DialogueSessionContext {
   lastQueueSongs: Song[];
   lastCurrentIndex: number;
   lastTimestamp: number;
+  pendingDownload?: PendingDownloadContext;
 }
 
 const VOICE_CONFIG_FILE = path.join(process.cwd(), 'data', 'voice-config.json');
@@ -219,6 +230,7 @@ export class VoiceCommandService {
     ttsFeedbackEnabled: true,
     adaptivePollingEnabled: true,
     earlyInterceptionEnabled: true,
+    requireDownloadConfirmation: true,
     rules: DEFAULT_RULES
   };
 
@@ -509,11 +521,14 @@ export class VoiceCommandService {
   public updateConfig(partial: Partial<VoiceListenerConfig>) {
     this.config = { ...this.config, ...partial };
     this.saveConfig();
-    if (this.config.enabled && !this.isRunning) {
-      this.start();
-    } else if (!this.config.enabled && this.isRunning) {
-      this.stop();
+    if (partial.enabled !== undefined) {
+      if (this.config.enabled && !this.isRunning) {
+        this.start();
+      } else if (!this.config.enabled && this.isRunning) {
+        this.stop();
+      }
     }
+    return { ...this.config };
   }
 
   public getDialogueLogs(limit = 100): VoiceDialogueLog[] {
@@ -876,6 +891,108 @@ export class VoiceCommandService {
     }
 
     // =========================================================================
+    // Tier -1: Pending Download Confirmation Session (下载前二次语音确认)
+    // 监听用户回答“是/下载吧/好的/要”或“否/不用/算了/取消”
+    // =========================================================================
+    const sessionKey = deviceId || 'global';
+    const activeSession = this.sessionContextMap.get(sessionKey);
+
+    if (activeSession && activeSession.pendingDownload && (now - activeSession.pendingDownload.timestamp < 45000)) {
+      const pending = activeSession.pendingDownload;
+      const isAffirmative = /^(是|是的|下载|下载吧|好的|好|好啊|要|要下|确认|行|可以|对|对的|需要|帮我下|下吧|恩|嗯|确认下载|快下载|赶紧下|同意|行啊|准了|下)$/i.test(cleanQuery) ||
+                            cleanQuery === '下载' || cleanQuery === '要下载' || cleanQuery === '好的下载';
+      const isNegative = /^(不|不是|不要|不用|不用了|算了|取消|别下|不用下|不要了|不听了|否|放弃|不下载|不要下载|拒绝|不用了谢谢|算了不要了)$/i.test(cleanQuery);
+
+      if (isAffirmative) {
+        // 用户确认下载
+        delete activeSession.pendingDownload;
+        const targetDid = deviceId || this.config.targetDeviceId;
+        const ttsText = '好的，已为您启动后台离线下载，完成后将自动同步至NAS';
+        if (this.sendTtsFn && targetDid) {
+          await this.sendTtsFn(targetDid, ttsText).catch(() => {});
+        }
+
+        const downloadTitle = pending.title;
+        const downloadArtist = pending.artist || '华语音乐';
+
+        try {
+          const fetcherCfg = musicAutoFetcherService.getConfig();
+          const isSchedulerActive = Boolean(fetcherCfg.enabled && fetcherCfg.downloadMode !== 'ai_skill');
+
+          if (isSchedulerActive) {
+            musicAutoFetcherService.enqueueTask({
+              title: downloadTitle,
+              artist: downloadArtist,
+              album: pending.album || '经典精选集',
+              genre: pending.genre || '流行 / 经典',
+              requestedBy: 'voice_ai'
+            });
+            console.log(`[VoiceCommandService] 🚀 [语音确认下载] 调度中心模式：已创建下载任务《${downloadTitle}》 - ${downloadArtist}`);
+          } else {
+            logEngine.info(
+              'automation',
+              'AI Skill 语音确认下载触发',
+              `用户语音确认下载【${downloadTitle}】 | 歌手: ${downloadArtist} | 模式: AI Skill 原生秒级落盘`,
+              { title: downloadTitle, artist: downloadArtist, source, deviceId }
+            );
+            musicAutoFetcherService.executeAiSkillDirectDownload({
+              title: downloadTitle,
+              artist: downloadArtist,
+              album: pending.album || '经典精选集',
+              genre: pending.genre || '流行 / 经典',
+              requestedBy: 'voice_ai'
+            }).catch(e => console.warn('[VoiceCommandService] AI Skill download error:', e.message));
+            console.log(`[VoiceCommandService] 🤖 [语音确认下载] AI Skill 模式：已启动直连下载《${downloadTitle}》 - ${downloadArtist}`);
+          }
+        } catch (fetchErr: any) {
+          console.warn('[VoiceCommandService] Failed to trigger fetcher after confirmation:', fetchErr.message);
+        }
+
+        const summary = `用户语音确认下载 (已创建离线下载任务: 《${downloadTitle}》 - ${downloadArtist}，下载完成将自动同步至NAS)`;
+        this.addLog({
+          id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          timestamp: Date.now(),
+          queryText: rawQuery,
+          matchedRuleId: 'rule_download_confirmed',
+          matchedRuleName: '语音确认下载歌曲 (用户确认执行)',
+          actionSummary: summary,
+          status: 'matched',
+          source,
+          deviceId,
+          deviceName,
+          slangApplied,
+          slangTerm: matchedSlangTerm
+        });
+        return { matched: true, summary };
+      } else if (isNegative) {
+        // 用户取消下载
+        delete activeSession.pendingDownload;
+        const targetDid = deviceId || this.config.targetDeviceId;
+        const ttsText = '好的，已取消下载';
+        if (this.sendTtsFn && targetDid) {
+          await this.sendTtsFn(targetDid, ttsText).catch(() => {});
+        }
+
+        const summary = `用户语音取消下载: 《${pending.title}》`;
+        this.addLog({
+          id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          timestamp: Date.now(),
+          queryText: rawQuery,
+          matchedRuleId: 'rule_download_cancelled',
+          matchedRuleName: '语音取消下载歌曲 (用户拒绝)',
+          actionSummary: summary,
+          status: 'matched',
+          source,
+          deviceId,
+          deviceName,
+          slangApplied,
+          slangTerm: matchedSlangTerm
+        });
+        return { matched: true, summary };
+      }
+    }
+
+    // =========================================================================
     // Tier 0: Direct Download Command Interception (口令以“下载”开头)
     // 检查曲库是否存在：若存在小爱回答“如您要下载的歌曲已存在”；若不存在播报“已为您启动后台离线下载”并加入下载队列
     // =========================================================================
@@ -951,8 +1068,6 @@ export class VoiceCommandService {
     }
 
     // Item 4: Multi-turn Dialogue Follow-up & Correction Check (90s window)
-    const sessionKey = deviceId || 'global';
-    const activeSession = this.sessionContextMap.get(sessionKey);
     const isSessionValid = activeSession && (now - activeSession.lastTimestamp < 90000);
 
     if (isSessionValid) {
@@ -1548,14 +1663,62 @@ export class VoiceCommandService {
       console.log(`[VoiceCommandService] 📥 [曲库已收录] 指令: "${rawQuery}" -> 小爱播报: "${ttsText}" (已收录《${matchedExistingSong.title}》)`);
       return { matched: true, summary };
     } else {
-      // 2. 曲库不存在：播报“已为您启动后台离线下载”并启动后台离线下载
+      const downloadTitle = extractedTitle || rawTarget || '单曲';
+      const downloadArtist = extractedArtist || '华语音乐';
+
+      // 🌟 若开启了下载前二次确认：先向用户询问“是否需要为您下载？”，等待用户回答 是/否
+      if (this.config.requireDownloadConfirmation !== false) {
+        const sessionKey = deviceId || 'global';
+        const activeSession = this.sessionContextMap.get(sessionKey) || {
+          lastQuery: rawQuery,
+          lastMatchedSongId: '',
+          lastMoodTitle: '',
+          lastQueueSongs: [],
+          lastCurrentIndex: 0,
+          lastTimestamp: Date.now()
+        };
+
+        activeSession.pendingDownload = {
+          title: downloadTitle,
+          artist: downloadArtist,
+          album: '经典精选集',
+          genre: '流行 / 经典',
+          timestamp: Date.now(),
+          rawQuery
+        };
+        activeSession.lastTimestamp = Date.now();
+        this.sessionContextMap.set(sessionKey, activeSession);
+
+        const ttsText = `本地曲库暂未收录《${downloadTitle}》，是否需要为您下载并同步至NAS？`;
+        if (this.sendTtsFn && targetDid) {
+          await this.sendTtsFn(targetDid, ttsText).catch(() => {});
+        }
+
+        const summary = `曲库未收录《${downloadTitle}》，已发起语音询问：“是否需要为您下载？”（等待用户回答 是/否）`;
+        this.addLog({
+          id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          timestamp: Date.now(),
+          queryText: rawQuery,
+          matchedRuleId: 'rule_download_confirm_prompt',
+          matchedRuleName: '离线下载歌曲 (发起二次确认)',
+          actionSummary: summary,
+          status: 'matched',
+          source,
+          deviceId,
+          deviceName,
+          slangApplied,
+          slangTerm: matchedSlangTerm
+        });
+
+        console.log(`[VoiceCommandService] ❓ [发起下载二次确认] 指令: "${rawQuery}" -> 小爱询问: "${ttsText}"`);
+        return { matched: true, summary };
+      }
+
+      // 2. 静默直连模式：直接启动离线下载并播报
       const ttsText = '已为您启动后台离线下载';
       if (this.sendTtsFn && targetDid) {
         await this.sendTtsFn(targetDid, ttsText).catch(() => {});
       }
-
-      const downloadTitle = extractedTitle || rawTarget || '单曲';
-      const downloadArtist = extractedArtist || '华语音乐';
 
       try {
         const fetcherCfg = musicAutoFetcherService.getConfig();

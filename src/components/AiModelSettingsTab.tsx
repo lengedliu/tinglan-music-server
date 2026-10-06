@@ -28,7 +28,8 @@ import {
   Code,
   ChevronDown,
   ChevronUp,
-  Download
+  Download,
+  Copy
 } from 'lucide-react';
 import { apiFetch } from '../utils/api';
 import { useTheme } from '../context/ThemeContext';
@@ -224,8 +225,15 @@ export const AiModelSettingsTab: React.FC<AiModelSettingsTabProps> = ({ onShowTo
     payloadSent?: any;
   } | null>(null);
   const [showPayloadSchema, setShowPayloadSchema] = useState(false);
+  const [showInboundSchema, setShowInboundSchema] = useState(false);
+  const [showPromptSchema, setShowPromptSchema] = useState(true);
+  const [promptExampleMode, setPromptExampleMode] = useState<'download' | 'playback'>('download');
+  const [copiedPromptPayload, setCopiedPromptPayload] = useState(false);
   const [resolvedServerHost, setResolvedServerHost] = useState('http://localhost:3000');
   const [lanIps, setLanIps] = useState<string[]>([]);
+  const [copiedInboundWebhook, setCopiedInboundWebhook] = useState(false);
+  const [testingInbound, setTestingInbound] = useState(false);
+  const [inboundTestResult, setInboundTestResult] = useState<any>(null);
 
   const fetchCacheStats = async () => {
     try {
@@ -275,8 +283,8 @@ export const AiModelSettingsTab: React.FC<AiModelSettingsTabProps> = ({ onShowTo
           if (data.lanIps && Array.isArray(data.lanIps)) setLanIps(data.lanIps);
 
           let initialCallbackUrl = data.config.aiSkillCallbackUrl || '';
-          if (!initialCallbackUrl || initialCallbackUrl.includes('localhost:3000') || initialCallbackUrl.includes('127.0.0.1:3000')) {
-            initialCallbackUrl = `${effectiveHost}/api/nas/sync`;
+          if (initialCallbackUrl && initialCallbackUrl.includes('/api/nas/sync')) {
+            initialCallbackUrl = '';
           } else if (initialCallbackUrl && (initialCallbackUrl.includes('localhost') || initialCallbackUrl.includes('127.0.0.1'))) {
             initialCallbackUrl = initialCallbackUrl.replace(/https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i, effectiveHost);
           }
@@ -453,6 +461,74 @@ export const AiModelSettingsTab: React.FC<AiModelSettingsTabProps> = ({ onShowTo
       onShowToast('网络异常', err.message, 'error');
     } finally {
       setSkillTestLoading(false);
+    }
+  };
+
+  const handleCopyInboundWebhook = () => {
+    const url = `${resolvedServerHost}/api/skill/notify-completed`;
+    navigator.clipboard?.writeText(url);
+    setCopiedInboundWebhook(true);
+    onShowToast('复制成功', `已复制回调通知接口 URL: ${url}`, 'success');
+    setTimeout(() => setCopiedInboundWebhook(false), 2500);
+  };
+
+  const handleCopyPromptPayload = (mode: 'download' | 'playback' = promptExampleMode) => {
+    const currentActiveModel = config.providers[config.activeProvider]?.model || "gemini-3.8-flash";
+    const payloadObj: any = {
+      model: currentActiveModel,
+      temperature: config.temperature ?? 0.2,
+      systemPrompt: "你是一个精通中国流行音乐、华语歌手别名黑话、歌词常识及音乐流派的意图提炼专家。将用户的口语化点歌指令提炼成标准歌曲名、规范歌手名与流派...",
+      userPrompt: mode === 'download' 
+        ? "用户语音指令: \"下周董天青色等烟雨那首歌\"\n请帮我下载此歌曲"
+        : "用户语音指令: \"放一首适合下雨天看书的轻音乐\"\n请提炼音乐检索结构化参数并输出 JSON"
+    };
+
+    if (mode === 'download') {
+      payloadObj.inboundWebhookUrl = `${resolvedServerHost}/api/skill/notify-completed`;
+      payloadObj.inboundWebhookMethod = "POST";
+    }
+
+    const payload = JSON.stringify(payloadObj, null, 2);
+    navigator.clipboard?.writeText(payload);
+    setCopiedPromptPayload(true);
+    onShowToast(
+      '复制成功',
+      mode === 'download'
+        ? '已复制下载类 Prompt 参数 JSON (包含 Inbound Webhook 回调端点)'
+        : '已复制普通点播 Prompt 参数 JSON (纯意图提炼，无回调端点)',
+      'success'
+    );
+    setTimeout(() => setCopiedPromptPayload(false), 2500);
+  };
+
+  const handleTestInboundWebhook = async () => {
+    setTestingInbound(true);
+    setInboundTestResult(null);
+    try {
+      const res = await apiFetch('/api/skill/notify-completed', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(skillAuthToken.trim() ? { 'Authorization': `Bearer ${skillAuthToken.trim()}` } : {})
+        },
+        body: JSON.stringify({
+          title: '七里香',
+          artist: '周杰伦',
+          album: '经典精选集',
+          notifySpeaker: true
+        })
+      });
+      const data = await res.json();
+      setInboundTestResult(data);
+      if (res.ok && data.success) {
+        onShowToast('模拟接收成功', data.message || '系统已成功接收回调通知并同步 NAS 曲库', 'success');
+      } else {
+        onShowToast('回调处理失败', data.error || '请求未被成功处理', 'error');
+      }
+    } catch (err: any) {
+      onShowToast('网络错误', err.message || '请求失败', 'error');
+    } finally {
+      setTestingInbound(false);
     }
   };
 
@@ -1008,151 +1084,422 @@ export const AiModelSettingsTab: React.FC<AiModelSettingsTabProps> = ({ onShowTo
         </div>
       </div>
 
-      {/* 4. AI Skill External Webhook & Callback Config */}
-      <div className={`p-6 sm:p-7 rounded-3xl border space-y-5 transition-colors ${
+      {/* 4. AI Skill Webhook & Inbound Receiver Center */}
+      <div className={`p-6 sm:p-7 rounded-3xl border space-y-6 transition-colors ${
         isLight ? 'bg-white border-zinc-200 shadow-sm' : 'bg-zinc-900/40 border-white/10'
       }`}>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-zinc-100 dark:border-white/5">
           <div className="flex items-center gap-2.5">
-            <div className="p-2 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
-              <Link2 className="w-5 h-5" />
+            <div className="p-2 rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20">
+              <Bot className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
                 <h4 className={`text-sm font-bold ${isLight ? 'text-zinc-900' : 'text-white'}`}>
-                  AI Skill 外部回调地址与 Webhook 调度
+                  AI Skill 技能联动与 Webhook 调度中心
                 </h4>
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 font-medium">
-                  调度中心关闭时直连生效
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-600 dark:text-purple-400 border border-purple-500/20 font-medium">
+                  双向联动支持
                 </span>
               </div>
               <p className={`text-xs mt-0.5 ${isLight ? 'text-zinc-500' : 'text-zinc-400'}`}>
-                当下载调度中心关闭时，系统检测到未收录歌曲将自动通过此回调地址向 AI 外部 Skill 探针派发结构化参数与落盘指令
+                支持外部 AI 技能下载完成后回调通知本应用热更新入库，以及向外部下载探针派发任务
               </p>
             </div>
           </div>
-
-          <div className="flex items-center gap-2 self-end sm:self-auto flex-wrap">
-            <button
-              type="button"
-              onClick={() => setShowPayloadSchema(prev => !prev)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition cursor-pointer ${
-                isLight ? 'bg-zinc-100 hover:bg-zinc-200 text-zinc-700 border-zinc-200' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-white/5'
-              }`}
-            >
-              <Code className="w-3.5 h-3.5 text-amber-500" />
-              <span>{showPayloadSchema ? '收起参数字典' : '查看参数协议'}</span>
-              {showPayloadSchema ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-            </button>
-            <button
-              type="button"
-              onClick={handleTestSkillCallback}
-              disabled={skillTestLoading}
-              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition border cursor-pointer ${
-                isLight ? 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300' : 'bg-amber-950/40 hover:bg-amber-900/50 text-amber-300 border-amber-500/30'
-              } disabled:opacity-50`}
-            >
-              {skillTestLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-              <span>{skillTestLoading ? '正在通信...' : '测试回调连通性'}</span>
-            </button>
-            <button
-              type="button"
-              onClick={handleSaveSkillCallback}
-              disabled={savingSkillConfig}
-              className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-zinc-950 transition shadow-sm shadow-amber-500/20 disabled:opacity-50 cursor-pointer"
-            >
-              <Save className="w-3.5 h-3.5" />
-              <span>{savingSkillConfig ? '保存中...' : '保存回调配置'}</span>
-            </button>
-          </div>
         </div>
 
-        {/* Input fields */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <label className={`text-xs font-bold flex items-center justify-between ${isLight ? 'text-zinc-700' : 'text-zinc-300'}`}>
-              <span className="flex items-center gap-1.5">
-                <Link2 className="w-3.5 h-3.5 text-amber-500" />
-                AI Skill 回调接口 URL (Webhook)
+        {/* 核心板块 1: 【满足本意】本应用接收外部 AI Skill 完成通知的回调端点 (Inbound Webhook) */}
+        <div className={`p-5 rounded-2xl border space-y-4 ${
+          isLight ? 'bg-purple-50/40 border-purple-200' : 'bg-purple-950/20 border-purple-500/30'
+        }`}>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <span className="p-2 rounded-xl bg-purple-600 text-white shadow-md shadow-purple-500/30">
+                <Download className="w-4 h-4" />
               </span>
-              <span className="text-[10px] text-zinc-400 font-normal">支持 HTTP / HTTPS</span>
-            </label>
-            <input
-              type="text"
-              value={skillCallbackUrl}
-              onChange={e => setSkillCallbackUrl(e.target.value)}
-              placeholder={`例如：${resolvedServerHost}/api/skill/download`}
-              className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-mono border outline-none transition ${
-                isLight 
-                  ? 'bg-zinc-50 border-zinc-200 focus:border-amber-500 focus:bg-white text-zinc-900' 
-                  : 'bg-zinc-950/60 border-zinc-800 focus:border-amber-500 text-white'
-              }`}
-            />
-          </div>
-
-          <div className="space-y-1.5">
-            <label className={`text-xs font-bold flex items-center justify-between ${isLight ? 'text-zinc-700' : 'text-zinc-300'}`}>
-              <span className="flex items-center gap-1.5">
-                <Key className="w-3.5 h-3.5 text-amber-500" />
-                回调鉴权 Bearer Token (可选)
-              </span>
-              <span className="text-[10px] text-zinc-400 font-normal">如不需要鉴权可留空</span>
-            </label>
-            <input
-              type="password"
-              value={skillAuthToken}
-              onChange={e => setSkillAuthToken(e.target.value)}
-              placeholder="Authorization: Bearer sk-..."
-              className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-mono border outline-none transition ${
-                isLight 
-                  ? 'bg-zinc-50 border-zinc-200 focus:border-amber-500 focus:bg-white text-zinc-900' 
-                  : 'bg-zinc-950/60 border-zinc-800 focus:border-amber-500 text-white'
-              }`}
-            />
-          </div>
-        </div>
-
-        {/* Test Result Display */}
-        {skillTestResult && (
-          <div className={`p-3.5 rounded-2xl border text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
-            skillTestResult.success
-              ? isLight ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-emerald-950/30 border-emerald-500/30 text-emerald-300'
-              : isLight ? 'bg-red-50 border-red-200 text-red-900' : 'bg-red-950/30 border-red-500/30 text-red-300'
-          }`}>
-            <div className="flex items-center gap-2">
-              {skillTestResult.success ? <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" /> : <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />}
               <div>
-                <span className="font-bold">
-                  {skillTestResult.success ? `回调连通成功 (HTTP ${skillTestResult.status})` : '回调通信失败'}
-                </span>
-                <span className="ml-2 font-mono text-[11px] opacity-80">耗时: {skillTestResult.latencyMs}ms</span>
-                {skillTestResult.error && <p className="text-[11px] mt-0.5 opacity-90">{skillTestResult.error}</p>}
+                <div className="flex items-center gap-2">
+                  <h5 className={`text-xs font-bold ${isLight ? 'text-zinc-900' : 'text-white'}`}>
+                    本应用接收外部 AI Skill 完成通知的回调端点 (Inbound Webhook)
+                  </h5>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-600 dark:text-purple-300 font-bold border border-purple-500/30">
+                    外部下载完成后呼叫此地址
+                  </span>
+                </div>
+                <p className={`text-[11px] mt-0.5 ${isLight ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                  在您外部的 AI 技能（如小爱自定义技能、外部智能体、下载机器人）中配置此 URL。外部下载完成后向此接口 POST 发送通知，本系统将自动热更新入库并联动小爱音箱播报。
+                </p>
               </div>
             </div>
-            {skillTestResult.responseSample && (
-              <span className="text-[10px] font-mono opacity-70 truncate max-w-xs">
-                响应预览: {skillTestResult.responseSample}
-              </span>
-            )}
-          </div>
-        )}
 
-        {/* Parameter Protocol Schema Accordion */}
-        {showPayloadSchema && (
-          <div className={`p-4 rounded-2xl border space-y-3 ${isLight ? 'bg-zinc-50 border-zinc-200' : 'bg-zinc-950/80 border-white/5'}`}>
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <span className="text-xs font-bold text-amber-500 flex items-center gap-1.5">
-                <Code className="w-4 h-4" />
-                系统派发给 AI Skill 探针的 JSON 回调参数协议：
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={handleCopyInboundWebhook}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition cursor-pointer ${
+                  copiedInboundWebhook
+                    ? 'bg-emerald-500 text-white border-emerald-400'
+                    : isLight
+                    ? 'bg-white hover:bg-zinc-50 text-purple-700 border-purple-200 shadow-sm'
+                    : 'bg-zinc-800 hover:bg-zinc-700 text-purple-300 border-purple-500/40'
+                }`}
+              >
+                {copiedInboundWebhook ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                <span>{copiedInboundWebhook ? '已复制接收地址' : '复制回调 URL'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleTestInboundWebhook}
+                disabled={testingInbound}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white transition shadow-sm shadow-purple-500/20 disabled:opacity-50 cursor-pointer"
+              >
+                {testingInbound ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+                <span>{testingInbound ? '正在模拟接收...' : '模拟外部回调入库'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowInboundSchema(prev => !prev)}
+                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-medium border transition cursor-pointer ${
+                  isLight ? 'bg-white hover:bg-zinc-50 text-zinc-600 border-zinc-200' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-white/5'
+                }`}
+              >
+                <Code className="w-3.5 h-3.5 text-purple-500" />
+                <span>{showInboundSchema ? '收起参数' : '查看协议'}</span>
+                {showInboundSchema ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+              </button>
+            </div>
+          </div>
+
+          {/* Webhook Endpoint Display */}
+          <div className={`p-3 rounded-xl border flex items-center justify-between gap-3 font-mono text-xs ${
+            isLight ? 'bg-white border-purple-200/80 text-purple-950' : 'bg-zinc-950/80 border-purple-500/20 text-purple-200'
+          }`}>
+            <div className="flex items-center gap-2 truncate">
+              <span className="text-[10px] px-2 py-0.5 rounded bg-purple-500/10 text-purple-600 dark:text-purple-400 font-bold border border-purple-500/20 shrink-0">
+                POST
               </span>
+              <span className="truncate select-all font-semibold">{resolvedServerHost}/api/skill/notify-completed</span>
+            </div>
+            <span className="text-[10px] text-zinc-400 shrink-0 font-sans hidden sm:inline">（免 Session 登录，支持 Bearer 鉴权）</span>
+          </div>
+
+          {/* Inbound Test Result preview */}
+          {inboundTestResult && (
+            <div className={`p-3 rounded-xl border text-xs flex items-center justify-between gap-2 ${
+              inboundTestResult.success
+                ? isLight ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-emerald-950/30 border-emerald-500/30 text-emerald-300'
+                : isLight ? 'bg-red-50 border-red-200 text-red-900' : 'bg-red-950/30 border-red-500/30 text-red-300'
+            }`}>
               <div className="flex items-center gap-2">
-                <span className="text-[10px] text-zinc-400">局域网串流 Host:</span>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold border border-amber-500/20">
-                  {resolvedServerHost}
+                {inboundTestResult.success ? <CheckCircle2 className="w-4 h-4 text-emerald-500" /> : <AlertCircle className="w-4 h-4 text-red-500" />}
+                <span>{inboundTestResult.message || (inboundTestResult.success ? '成功接收完成通知并同步 NAS 曲库' : '处理失败')}</span>
+              </div>
+              {inboundTestResult.speakerNotified && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400">音箱已联动播报</span>
+              )}
+            </div>
+          )}
+
+          {/* Collapsible Inbound Protocol Schema Accordion */}
+          {showInboundSchema && (
+            <div className={`p-4 rounded-xl border space-y-3 ${isLight ? 'bg-white border-purple-200' : 'bg-zinc-950/90 border-purple-500/30'}`}>
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-purple-500 flex items-center gap-1.5">
+                  <Code className="w-4 h-4" />
+                  外部 AI 技能下载完成后，回调通知本应用的 JSON 结构：
                 </span>
+                <span className="text-[10px] text-zinc-400">Content-Type: application/json</span>
+              </div>
+              <pre className="text-[11px] font-mono leading-relaxed p-3.5 rounded-xl bg-zinc-900 text-zinc-200 overflow-x-auto border border-white/5">
+{`// 请求方式: POST ${resolvedServerHost}/api/skill/notify-completed
+{
+  "title": "七里香",            // [必填] 歌曲名
+  "artist": "周杰伦",          // [可选] 歌手名（默认华语音乐）
+  "album": "经典精选集",        // [可选] 专辑名
+  "genre": "流行 / 经典",       // [可选] 流派风格
+  "filePath": "/app/applet/music/周杰伦/经典精选集/周杰伦 - 七里香.flac", // [可选] 物理落盘路径
+  "notifySpeaker": true        // [可选] 是否触发小爱音箱语音提醒（默认 true）
+}`}
+              </pre>
+              <div className="text-[11px] space-y-1 text-zinc-500 dark:text-zinc-400">
+                <p>💡 <b>cURL 测试命令示例：</b></p>
+                <pre className="text-[10px] font-mono p-2 rounded bg-zinc-900 text-zinc-300 overflow-x-auto">
+{`curl -X POST "${resolvedServerHost}/api/skill/notify-completed" \\
+  -H "Content-Type: application/json" \\
+  -d '{"title":"七里香","artist":"周杰伦","notifySpeaker":true}'`}
+                </pre>
               </div>
             </div>
-            <pre className="text-[11px] font-mono leading-relaxed p-3.5 rounded-xl bg-zinc-900 text-zinc-200 overflow-x-auto border border-white/5">
+          )}
+
+          {/* 🌟 核心参数协议: 输入给大模型的 Prompt 参数 (条件化按需提供 Inbound Webhook) */}
+          <div className={`p-4 rounded-xl border space-y-3 ${
+            isLight ? 'bg-purple-50/70 border-purple-200' : 'bg-purple-950/40 border-purple-500/40'
+          }`}>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="p-1 rounded-md bg-purple-600 text-white">
+                  <Bot className="w-3.5 h-3.5" />
+                </span>
+                <span className={`text-xs font-bold ${isLight ? 'text-zinc-900' : 'text-white'}`}>
+                  输入给大模型的 Prompt 参数结构（按需条件化注入）
+                </span>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-600 dark:text-purple-300 font-mono font-medium">
+                  仅下载指令提供 Inbound Webhook
+                </span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleCopyPromptPayload(promptExampleMode)}
+                  className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium border transition cursor-pointer ${
+                    copiedPromptPayload
+                      ? 'bg-emerald-500 text-white border-emerald-400'
+                      : isLight
+                      ? 'bg-white hover:bg-zinc-50 text-purple-700 border-purple-200'
+                      : 'bg-zinc-800 hover:bg-zinc-700 text-purple-300 border-white/10'
+                  }`}
+                >
+                  {copiedPromptPayload ? <CheckCircle2 className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                  <span>{copiedPromptPayload ? '已复制 Prompt 参数' : '复制当前 JSON 参数'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowPromptSchema(prev => !prev)}
+                  className={`p-1 rounded-lg border text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200 transition cursor-pointer ${
+                    isLight ? 'bg-white border-zinc-200' : 'bg-zinc-800 border-white/10'
+                  }`}
+                >
+                  {showPromptSchema ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+            </div>
+
+            {/* Mode Switcher Pills */}
+            <div className="flex items-center gap-2 pt-1 flex-wrap">
+              <span className={`text-[11px] font-semibold ${isLight ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                指令场景切换:
+              </span>
+              <button
+                type="button"
+                onClick={() => setPromptExampleMode('download')}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                  promptExampleMode === 'download'
+                    ? 'bg-purple-600 text-white shadow-sm'
+                    : isLight
+                    ? 'bg-white text-zinc-600 hover:bg-purple-50 border border-zinc-200'
+                    : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 border border-white/5'
+                }`}
+              >
+                <Download className="w-3 h-3" />
+                <span>① AI Skill 模式调度下载 (附带请帮我下载此歌曲与回调端点)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setPromptExampleMode('playback')}
+                className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                  promptExampleMode === 'playback'
+                    ? 'bg-purple-600 text-white shadow-sm'
+                    : isLight
+                    ? 'bg-white text-zinc-600 hover:bg-purple-50 border border-zinc-200'
+                    : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700 border border-white/5'
+                }`}
+              >
+                <Radio className="w-3 h-3" />
+                <span>② 其它模式/普通点播 (保留原有提炼指令，不附带回调)</span>
+              </button>
+            </div>
+
+            <p className={`text-[11px] leading-relaxed ${isLight ? 'text-zinc-600' : 'text-zinc-400'}`}>
+              {promptExampleMode === 'download' ? (
+                <span>
+                  🟢 <b>AI Skill 模式调度下载</b>（如“下周董天青色等烟雨那首歌”、“帮我下载青花瓷”）：<code>userPrompt</code> 后缀置为 <code>\n请帮我下载此歌曲</code>，并<b>动态附带</b> <code>inboundWebhookUrl</code> 与 <code>inboundWebhookMethod: "POST"</code> 参数，便于外部技能完成下载后直接发起回调入库。
+                </span>
+              ) : (
+                <span>
+                  ⚪ <b>其它模式/普通点播/心境电台指令</b>（如“放一首下雨天看书的歌”、“播放晴天”）：<code>userPrompt</code> 保留原有的 <code>\n请提炼音乐检索结构化参数并输出 JSON</code>，<b>不附带</b> <code>inboundWebhookUrl</code> 参数，节省网络带宽与 Token 消耗。
+                </span>
+              )}
+            </p>
+
+            {showPromptSchema && (
+              <pre className="text-[11px] font-mono leading-relaxed p-3.5 rounded-xl bg-zinc-900 text-zinc-200 overflow-x-auto border border-white/10 shadow-inner">
+{promptExampleMode === 'download' ? `{
+  "model": "${activeProvider?.model || 'gemini-3.8-flash'}",
+  "temperature": ${config.temperature ?? 0.2},
+  "systemPrompt": "你是一个精通中国流行音乐、华语歌手别名黑话、歌词常识及音乐流派的意图提炼专家。将用户的口语化点歌指令提炼成标准歌曲名、规范歌手名与流派...",
+  "userPrompt": "用户语音指令: \\"下周董天青色等烟雨那首歌\\"\\n请帮我下载此歌曲",
+  "inboundWebhookUrl": "${resolvedServerHost}/api/skill/notify-completed",
+  "inboundWebhookMethod": "POST"
+}` : `{
+  "model": "${activeProvider?.model || 'gemini-3.8-flash'}",
+  "temperature": ${config.temperature ?? 0.2},
+  "systemPrompt": "你是一个精通中国流行音乐、华语歌手别名黑话、歌词常识及音乐流派的意图提炼专家。将用户的口语化点歌指令提炼成标准歌曲名、规范歌手名与流派...",
+  "userPrompt": "用户语音指令: \\"放一首适合下雨天看书的轻音乐\\"\\n请提炼音乐检索结构化参数并输出 JSON"
+}`}
+              </pre>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 text-[11px]">
+              <div className={`p-2.5 rounded-lg border ${isLight ? 'bg-white/80 border-purple-100 text-zinc-700' : 'bg-zinc-900/60 border-purple-500/20 text-zinc-300'}`}>
+                <div className="font-semibold text-purple-600 dark:text-purple-400 flex items-center gap-1">
+                  <span>🎯</span> 条件判断机制
+                </div>
+                <div className="text-[10px] mt-0.5 text-zinc-500 dark:text-zinc-400">
+                  正则匹配 <code>/^(下载|帮我下|下首歌|下歌曲|下周董|找歌下载)/</code>，命中下载意图才提供端点
+                </div>
+              </div>
+              <div className={`p-2.5 rounded-lg border ${isLight ? 'bg-white/80 border-purple-100 text-zinc-700' : 'bg-zinc-900/60 border-purple-500/20 text-zinc-300'}`}>
+                <div className="font-semibold text-purple-600 dark:text-purple-400 flex items-center gap-1">
+                  <span>⚡</span> 收益与优势
+                </div>
+                <div className="text-[10px] mt-0.5 text-zinc-500 dark:text-zinc-400">
+                  普通点播零多余参数、零误触回调；下载需求无缝闭环通知与 NAS 自动入库
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* 辅助板块 2: 【可选拓展】向外部下载机器人/探针下发任务的派发地址 (Outbound Dispatch) */}
+        <div className={`p-5 rounded-2xl border space-y-4 ${
+          isLight ? 'bg-zinc-50 border-zinc-200' : 'bg-zinc-950/50 border-white/5'
+        }`}>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <span className="p-1.5 rounded-lg bg-amber-500 text-zinc-950 shadow-sm shadow-amber-500/20">
+                <Link2 className="w-4 h-4" />
+              </span>
+              <div>
+                <h5 className={`text-xs font-bold ${isLight ? 'text-zinc-900' : 'text-white'}`}>
+                  向外部下载探针下发任务的派发地址 (Outbound Dispatch，可选)
+                </h5>
+                <p className={`text-[11px] ${isLight ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                  若您希望系统在发现缺歌时“主动呼叫外部下载脚本/机器人”，才需在此填写其接收地址。如无外部下载服务，留空即可。
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0 flex-wrap">
+              <button
+                type="button"
+                onClick={() => setShowPayloadSchema(prev => !prev)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition cursor-pointer ${
+                  isLight ? 'bg-white hover:bg-zinc-100 text-zinc-700 border-zinc-200' : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-white/5'
+                }`}
+              >
+                <Code className="w-3.5 h-3.5 text-amber-500" />
+                <span>{showPayloadSchema ? '收起派发协议' : '查看派发协议'}</span>
+                {showPayloadSchema ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+              </button>
+              <button
+                type="button"
+                onClick={handleTestSkillCallback}
+                disabled={skillTestLoading}
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition border cursor-pointer ${
+                  isLight ? 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-300' : 'bg-amber-950/40 hover:bg-amber-900/50 text-amber-300 border-amber-500/30'
+                } disabled:opacity-50`}
+              >
+                {skillTestLoading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                <span>{skillTestLoading ? '正在通信...' : '测试派发连通性'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveSkillCallback}
+                disabled={savingSkillConfig}
+                className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-zinc-950 transition shadow-sm shadow-amber-500/20 disabled:opacity-50 cursor-pointer"
+              >
+                <Save className="w-3.5 h-3.5" />
+                <span>{savingSkillConfig ? '保存中...' : '保存配置'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Input fields */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className={`text-xs font-bold flex items-center justify-between ${isLight ? 'text-zinc-700' : 'text-zinc-300'}`}>
+                <span className="flex items-center gap-1.5">
+                  <Link2 className="w-3.5 h-3.5 text-amber-500" />
+                  外部下载探针 Webhook 地址 (留空即不外发)
+                </span>
+                <span className="text-[10px] text-zinc-400 font-normal">支持 HTTP / HTTPS</span>
+              </label>
+              <input
+                type="text"
+                value={skillCallbackUrl}
+                onChange={e => setSkillCallbackUrl(e.target.value)}
+                placeholder="例如：http://192.168.1.100:8088/api/download (选填)"
+                className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-mono border outline-none transition ${
+                  isLight 
+                    ? 'bg-white border-zinc-200 focus:border-amber-500 text-zinc-900' 
+                    : 'bg-zinc-950/60 border-zinc-800 focus:border-amber-500 text-white'
+                }`}
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className={`text-xs font-bold flex items-center justify-between ${isLight ? 'text-zinc-700' : 'text-zinc-300'}`}>
+                <span className="flex items-center gap-1.5">
+                  <Key className="w-3.5 h-3.5 text-amber-500" />
+                  鉴权 Bearer Token (外部派发/接收通用，可选)
+                </span>
+                <span className="text-[10px] text-zinc-400 font-normal">如不需要鉴权可留空</span>
+              </label>
+              <input
+                type="password"
+                value={skillAuthToken}
+                onChange={e => setSkillAuthToken(e.target.value)}
+                placeholder="Authorization: Bearer sk-... (选填)"
+                className={`w-full px-3.5 py-2.5 rounded-xl text-xs font-mono border outline-none transition ${
+                  isLight 
+                    ? 'bg-white border-zinc-200 focus:border-amber-500 text-zinc-900' 
+                    : 'bg-zinc-950/60 border-zinc-800 focus:border-amber-500 text-white'
+                }`}
+              />
+            </div>
+          </div>
+
+          {/* Test Result Display */}
+          {skillTestResult && (
+            <div className={`p-3.5 rounded-2xl border text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+              skillTestResult.success
+                ? isLight ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-emerald-950/30 border-emerald-500/30 text-emerald-300'
+                : isLight ? 'bg-red-50 border-red-200 text-red-900' : 'bg-red-950/30 border-red-500/30 text-red-300'
+            }`}>
+              <div className="flex items-center gap-2">
+                {skillTestResult.success ? <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" /> : <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />}
+                <div>
+                  <span className="font-bold">
+                    {skillTestResult.success ? `探针连通成功 (HTTP ${skillTestResult.status})` : '探针通信失败'}
+                  </span>
+                  <span className="ml-2 font-mono text-[11px] opacity-80">耗时: {skillTestResult.latencyMs}ms</span>
+                  {skillTestResult.error && <p className="text-[11px] mt-0.5 opacity-90">{skillTestResult.error}</p>}
+                </div>
+              </div>
+              {skillTestResult.responseSample && (
+                <span className="text-[10px] font-mono opacity-70 truncate max-w-xs">
+                  响应预览: {skillTestResult.responseSample}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Parameter Protocol Schema Accordion */}
+          {showPayloadSchema && (
+            <div className={`p-4 rounded-xl border space-y-3 ${isLight ? 'bg-white border-zinc-200' : 'bg-zinc-950/80 border-white/5'}`}>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <span className="text-xs font-bold text-amber-500 flex items-center gap-1.5">
+                  <Code className="w-4 h-4" />
+                  系统派发给外部下载探针的 JSON 参数格式：
+                </span>
+                <span className="text-[10px] text-zinc-400">仅在配置了外部探针且缺歌时下发</span>
+              </div>
+              <pre className="text-[11px] font-mono leading-relaxed p-3.5 rounded-xl bg-zinc-900 text-zinc-200 overflow-x-auto border border-white/5">
 {`{
   "event": "ai_skill_music_download_requested",
   "timestamp": ${Date.now()},
@@ -1160,30 +1507,23 @@ export const AiModelSettingsTab: React.FC<AiModelSettingsTabProps> = ({ onShowTo
   "track": {
     "title": "笑看风云",
     "artist": "郑少秋",
-    "album": "经典大碟",
+    "album": "经典精选集",
     "genre": "粤语流行 / 经典"
   },
   "storage": {
     "targetDirectory": "/app/music",
-    "targetFilePath": "/app/music/郑少秋/经典大碟/郑少秋 - 笑看风云.flac",
-    "companionLrcPath": "/app/music/郑少秋/经典大碟/郑少秋 - 笑看风云.lrc"
+    "targetFilePath": "/app/music/郑少秋/经典精选集/郑少秋 - 笑看风云.flac",
+    "companionLrcPath": "/app/music/郑少秋/经典精选集/郑少秋 - 笑看风云.lrc"
   },
   "syncCallback": {
     "method": "POST",
-    "url": "${resolvedServerHost}/api/nas/sync",
-    "scanEndpoint": "${resolvedServerHost}/api/music/scan"
-  },
-  "clientContext": {
-    "requestedBy": "voice_ai",
-    "mode": "ai_skill_direct"
+    "url": "${resolvedServerHost}/api/skill/notify-completed"
   }
 }`}
-            </pre>
-            <p className="text-[10px] text-zinc-400">
-              💡 说明：AI Skill 探针执行完音频下载并存入 <code className="text-amber-400">storage.targetDirectory</code>（即系统本地 <code className="text-amber-400">app/music</code>）后，主动向 <code className="text-amber-400">{resolvedServerHost}/api/nas/sync</code> 发送 POST 请求即可自动完成曲库入库。
-            </p>
-          </div>
-        )}
+              </pre>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* 5. Voice Semantic Playground & Mood Queue Live Simulation (Items 1 & 2) */}

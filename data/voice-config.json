@@ -1,9 +1,10 @@
 {
-  "enabled": true,
+  "enabled": false,
   "pollIntervalMs": 3000,
   "ttsFeedbackEnabled": true,
   "adaptivePollingEnabled": true,
-  "earlyInterceptionEnabled": true,
+  "earlyInterceptionEnabled": false,
+  "requireDownloadConfirmation": true,
   "rules": [
     {
       "id": "rule_control_resume",

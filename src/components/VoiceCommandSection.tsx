@@ -54,6 +54,7 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
   const [logs, setLogs] = useState<VoiceDialogueLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isUpdating, setIsUpdating] = useState(false);
+  const [isTogglingListener, setIsTogglingListener] = useState(false);
   const [isPollingNow, setIsPollingNow] = useState(false);
   const [pollNowMessage, setPollNowMessage] = useState<{ text: string; type: 'success' | 'warning' | 'error' } | null>(null);
 
@@ -107,7 +108,7 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
   const handleToggleListener = async () => {
     if (!status && !config) return;
     const willEnable = !status?.isRunning;
-    setIsUpdating(true);
+    setIsTogglingListener(true);
     try {
       const res = await apiFetch('/api/miot/voice/toggle', {
         method: 'POST',
@@ -117,18 +118,20 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
       if (res.ok) {
         const data = await res.json();
         if (data.success) {
-          setStatus(data.status);
-          setConfig(data.config);
+          if (data.status) setStatus(data.status);
+          if (data.config) setConfig(data.config);
         }
       }
     } catch (err: any) {
       console.error('Toggle voice listener error:', err);
     } finally {
-      setIsUpdating(false);
+      setIsTogglingListener(false);
     }
   };
 
   const handleUpdateConfig = async (partial: Partial<VoiceListenerConfig>) => {
+    // Optimistically update local config immediately
+    setConfig(prev => prev ? ({ ...prev, ...partial }) : null);
     setIsUpdating(true);
     try {
       const res = await apiFetch('/api/miot/voice/config', {
@@ -139,8 +142,8 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
       if (res.ok) {
         const data = await res.json();
         if (data.success) {
-          setStatus(data.status);
-          setConfig(data.config);
+          if (data.status) setStatus(data.status);
+          if (data.config) setConfig(data.config);
         }
       }
     } catch (err: any) {
@@ -372,7 +375,7 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
             <button
               type="button"
               onClick={handleToggleListener}
-              disabled={isUpdating}
+              disabled={isTogglingListener}
               className={`px-5 py-2.5 rounded-2xl text-xs font-bold flex items-center justify-center gap-2 transition cursor-pointer flex-1 sm:flex-initial shadow-lg ${
                 status?.isRunning
                   ? 'bg-zinc-800 hover:bg-zinc-700 text-amber-300 border border-amber-500/20'
@@ -442,7 +445,7 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
         )}
 
         {/* Settings Bar */}
-        <div className="mt-6 pt-5 border-t border-white/10 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+        <div className="mt-6 pt-5 border-t border-white/10 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 text-xs">
           {/* Target Speaker Selector */}
           <div className="space-y-1.5">
             <label className="text-zinc-400 font-medium flex items-center gap-1.5">
@@ -481,7 +484,7 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
                   : 'bg-zinc-950 border-white/10 text-zinc-400'
               }`}
             >
-              <span>{config?.adaptivePollingEnabled !== false ? '已开启 (突发800ms/闲时退避)' : '固定频率模式'}</span>
+              <span>{config?.adaptivePollingEnabled !== false ? '已开启 (突发800ms)' : '固定频率模式'}</span>
               <span className={`w-2 h-2 rounded-full ${config?.adaptivePollingEnabled !== false ? 'bg-blue-400 animate-pulse' : 'bg-zinc-600'}`} />
             </button>
           </div>
@@ -490,7 +493,7 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
           <div className="space-y-1.5">
             <label className="text-zinc-400 font-medium flex items-center gap-1.5">
               <Zap className="w-3.5 h-3.5 text-amber-400" />
-              <span>抢播快速熔断 (截断官方音源)</span>
+              <span>抢播快速熔断</span>
             </label>
             <button
               type="button"
@@ -507,11 +510,32 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
             </button>
           </div>
 
+          {/* Download Confirmation Toggle */}
+          <div className="space-y-1.5">
+            <label className="text-zinc-400 font-medium flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-purple-400" />
+              <span>下载前语音二次确认</span>
+            </label>
+            <button
+              type="button"
+              onClick={() => handleUpdateConfig({ requireDownloadConfirmation: !(config?.requireDownloadConfirmation !== false) })}
+              className={`w-full py-2 px-3 rounded-xl border flex items-center justify-between transition cursor-pointer ${
+                config?.requireDownloadConfirmation !== false
+                  ? 'bg-purple-500/10 border-purple-500/30 text-purple-300'
+                  : 'bg-zinc-950 border-white/10 text-zinc-400'
+              }`}
+              title="缺歌时小爱会先询问“是否需要为您下载？”，听到“是/下载吧”才执行落盘；若说“不用/算了”则取消下载"
+            >
+              <span>{config?.requireDownloadConfirmation !== false ? '已开启 (先问后下)' : '静默直接下载'}</span>
+              <span className={`w-2 h-2 rounded-full ${config?.requireDownloadConfirmation !== false ? 'bg-purple-400 animate-pulse' : 'bg-zinc-600'}`} />
+            </button>
+          </div>
+
           {/* TTS Response Toggle */}
           <div className="space-y-1.5">
             <label className="text-zinc-400 font-medium flex items-center gap-1.5">
               <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
-              <span>命中后音箱语音应答</span>
+              <span>音箱语音应答</span>
             </label>
             <button
               type="button"
@@ -522,7 +546,7 @@ export const VoiceCommandSection: React.FC<VoiceCommandSectionProps> = ({
                   : 'bg-zinc-950 border-white/10 text-zinc-400'
               }`}
             >
-              <span>{config?.ttsFeedbackEnabled ? '已开启应答朗读' : '静默点歌 (不应答)'}</span>
+              <span>{config?.ttsFeedbackEnabled ? '已开启应答朗读' : '静默点歌'}</span>
               <span className={`w-2 h-2 rounded-full ${config?.ttsFeedbackEnabled ? 'bg-emerald-400 animate-pulse' : 'bg-zinc-600'}`} />
             </button>
           </div>
