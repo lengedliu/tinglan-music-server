@@ -191,8 +191,8 @@ const DEFAULT_RULES: VoiceCommandRule[] = [
   // 3. Intelligent song search (matched after high-priority controls)
   {
     id: 'rule_search_song',
-    name: '智能搜歌点歌',
-    triggerPhrases: ['点歌', '来一首', '放一首', '我想听', '播放歌曲', '来首', '放首', '听', '放', '播', '搜', '来一曲', '放一曲'],
+    name: '智能搜歌点歌与下载',
+    triggerPhrases: ['点歌', '来一首', '放一首', '我想听', '播放歌曲', '来首', '放首', '听', '放', '播', '搜', '来一曲', '放一曲', '下载歌曲', '帮我下载', '下载一首', '下载', '下歌曲', '下首'],
     actionType: 'play_song_search',
     ttsFeedback: '好的，为您播放 {title}',
     enabled: true
@@ -870,8 +870,8 @@ export class VoiceCommandService {
     // and daily tools are NEVER hijacked by private music services or AI models!
     // =========================================================================
     const isExplicitMusicWordPresent = (
-      /(音乐|歌曲|歌单|电台|专辑|歌手|原唱|周杰伦|播放|放一首|来一首|放首歌|我想听|歌词|唱的歌|纯音乐|轻音乐)/.test(rawQuery) ||
-      /^(听|放|播|来首|搜|点)/.test(cleanQuery)
+      /(音乐|歌曲|歌单|电台|专辑|歌手|原唱|周杰伦|播放|放一首|来一首|放首歌|我想听|歌词|唱的歌|纯音乐|轻音乐|下载|离线|下载歌曲|帮我下载)/.test(rawQuery) ||
+      /^(听|放|播|来首|搜|点|下)/.test(cleanQuery)
     );
 
     if (!isExplicitMusicWordPresent) {

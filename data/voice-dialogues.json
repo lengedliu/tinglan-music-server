@@ -1,1 +1,44 @@
-[]
+[
+  {
+    "id": "log_1791301868529_7r57",
+    "timestamp": 1791301868529,
+    "queryText": "帮我下载歌曲笑看风云",
+    "matchedRuleId": "rule_ai_semantic",
+    "matchedRuleName": "AI 心境电台 (Gemini)",
+    "actionSummary": "好的，为您开启精选相似流派推荐电台，没有找到想要的歌，首曲播放《月半小夜曲》 (已编排 8 首连续播放)",
+    "status": "matched",
+    "source": "test_manual",
+    "deviceId": "did-1789129459008",
+    "deviceName": "小爱音箱Pro",
+    "slangApplied": false,
+    "slangTerm": ""
+  },
+  {
+    "id": "log_1791301813507_4g7c",
+    "timestamp": 1791301813507,
+    "queryText": "帮我下载歌曲笑看风云",
+    "matchedRuleId": "rule_ai_semantic",
+    "matchedRuleName": "AI 心境电台 (Gemini)",
+    "actionSummary": "好的，为您开启精选相似流派推荐电台，没有找到想要的歌，首曲播放《月半小夜曲》 (已编排 8 首连续播放)",
+    "status": "matched",
+    "source": "test_manual",
+    "deviceId": "did-1789129459008",
+    "deviceName": "小爱音箱Pro",
+    "slangApplied": false,
+    "slangTerm": ""
+  },
+  {
+    "id": "log_1791297002005_jb5x",
+    "timestamp": 1791297002005,
+    "queryText": "放李克勤的红日",
+    "matchedRuleId": "rule_ai_semantic",
+    "matchedRuleName": "AI 心境电台 (Gemini)",
+    "actionSummary": "好的，为您播放李克勤 / 弦乐室内乐团的《月半小夜曲 (Acoustic Night)》 (已编排 1 首连续播放)",
+    "status": "matched",
+    "source": "test_manual",
+    "deviceId": "did-1789129459008",
+    "deviceName": "小爱音箱Pro",
+    "slangApplied": false,
+    "slangTerm": ""
+  }
+]

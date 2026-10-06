@@ -97,12 +97,12 @@
       "source": "local"
     },
     {
-      "id": "song-郑少秋_-_笑看风云-3k",
-      "title": "笑看风云",
-      "artist": "郑少秋",
+      "id": "song-Beyond_-_海阔天空-3h",
+      "title": "海阔天空",
+      "artist": "Beyond",
       "album": "本地音乐",
       "duration": 180,
-      "url": "/api/stream/song-郑少秋_-_笑看风云-3k",
+      "url": "/api/stream/song-Beyond_-_海阔天空-3h",
       "coverUrl": "/covers/default.jpg",
       "lyrics": "",
       "genre": "流行",
@@ -111,11 +111,27 @@
       "fileSize": "0.0 MB",
       "isFavorite": false,
       "source": "local"
+    },
+    {
+      "id": "song-song-1-ps0x",
+      "title": "song-1",
+      "artist": "未知歌手",
+      "album": "本地音乐",
+      "duration": 30,
+      "url": "/api/stream/song-song-1-ps0x",
+      "coverUrl": "/covers/default.jpg",
+      "lyrics": "",
+      "genre": "流行",
+      "year": 2026,
+      "bitrate": "320 kbps",
+      "fileSize": "1.1 MB",
+      "isFavorite": false,
+      "source": "local"
     }
   ],
   "currentIndex": 0,
   "loopMode": "all",
   "targetDid": "did-1789129459008",
   "targetDeviceName": "小爱音箱Pro",
-  "updatedAt": "2026-10-06T14:29:56.789Z"
+  "updatedAt": "2026-10-06T15:51:03.305Z"
 }
