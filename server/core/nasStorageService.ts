@@ -175,25 +175,51 @@ export class NasStorageService {
 
     // SMB / Samba Test
     if (cfg.type === 'smb') {
-      const host = (cfg.serverUrl || '').replace(/^(?:smb:\/\/|\\\\)/i, '').replace(/[\/\\]+.*$/, '');
-      const shareName = cfg.shareName || (cfg.basePath || '').replace(/^[\\\/]+/, '').split(/[\\\/]/)[0] || 'music';
+      const host = (cfg.serverUrl || '').replace(/^(?:smb:\/\/|\\\\)/i, '').replace(/[\/\\]+.*$/, '').trim();
+      const shareName = cfg.shareName || (cfg.basePath || '').replace(/^[\\\/]+/, '').split(/[\\\/]/)[0] || 'media';
       if (!host) {
-        throw new Error('请输入 SMB 共享主机 IP 或名称 (如 192.168.1.100)');
+        throw new Error('请输入 SMB 共享主机 IP 或名称 (如 192.168.50.153)');
       }
+
+      const isPrivateLanIp = /^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/.test(host);
 
       const smb = new SMB2({
         share: `\\\\${host}\\${shareName}`,
         domain: cfg.domain || 'WORKGROUP',
         username: cfg.username || 'guest',
         password: cfg.password || '',
-        autoCloseTimeout: 10000
+        autoCloseTimeout: 8000
       });
 
       return new Promise((resolve, reject) => {
+        let isSettled = false;
+        const timeoutTimer = setTimeout(() => {
+          if (!isSettled) {
+            isSettled = true;
+            try { smb.disconnect(); } catch {}
+            const lanHint = isPrivateLanIp
+              ? `\n\n💡 提示：检测到您配置的是家庭局域网私有 IP（${host}）。如果您当前在云端 Web 预览环境测试，云端服务器无法跨公网直连您家中的私网 NAS。请将听澜部署在本地家庭 NAS / Docker 局域网中运行，或在云端使用已做内网穿透的 WebDAV 地址。`
+              : '';
+            reject(new Error(`连接 SMB 服务器 (${host}:445) 超时，无法建立 TCP 会话。${lanHint}`));
+          }
+        }, 5000);
+
         smb.readdir('', (err: any, files: string[]) => {
+          if (isSettled) return;
+          isSettled = true;
+          clearTimeout(timeoutTimer);
           const latencyMs = Date.now() - startTime;
           if (err) {
-            return reject(new Error(`SMB 共享连接失败: ${err.message || '请检查账号权限与共享名'}`));
+            const errMsg = err.message || '';
+            let friendlyDetail = errMsg;
+            if (errMsg.includes('STATUS_LOGON_FAILURE') || errMsg.includes('STATUS_ACCESS_DENIED')) {
+              friendlyDetail = `认证失败（${errMsg}）：请检查 SMB 用户名、密码及在 NAS 上对「${shareName}」共享文件夹的读写权限`;
+            } else if (errMsg.includes('STATUS_BAD_NETWORK_NAME')) {
+              friendlyDetail = `共享名不存在（${errMsg}）：请核对 NAS 上的共享文件夹名称是否为「${shareName}」`;
+            } else if (errMsg.includes('ECONNREFUSED') || errMsg.includes('EHOSTUNREACH') || errMsg.includes('ETIMEDOUT')) {
+              friendlyDetail = `网络无法连通（${errMsg}）：无法连接至 ${host}:445，请确认 NAS 已开启 SMB 服务且防火墙放行 445 端口`;
+            }
+            return reject(new Error(`SMB 共享连接失败: ${friendlyDetail}`));
           }
           const audioFiles = (files || []).filter(f => SUPPORTED_EXTS.has(path.extname(f).toLowerCase()));
           resolve({
