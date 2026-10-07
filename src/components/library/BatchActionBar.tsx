@@ -6,6 +6,7 @@ import {
   ListPlus, 
   FolderPlus, 
   FolderMinus, 
+  Trash2, 
   X 
 } from 'lucide-react';
 import { Song, Playlist, XiaomiDevice } from '../../types';
@@ -26,6 +27,7 @@ export interface BatchActionBarProps {
   onBatchAddToQueue?: (songs: Song[]) => void;
   onBatchAddToPlaylist?: (songIds: string[], playlistId: string) => void;
   onBatchRemoveFromPlaylist?: (songIds: string[], playlistId: string) => void;
+  onBatchDelete?: (songIds: string[]) => void;
   onExitBatchMode: () => void;
 }
 
@@ -45,6 +47,7 @@ export const BatchActionBar: React.FC<BatchActionBarProps> = memo(({
   onBatchAddToQueue,
   onBatchAddToPlaylist,
   onBatchRemoveFromPlaylist,
+  onBatchDelete,
   onExitBatchMode
 }) => {
   const [showBatchPlaylistDropdown, setShowBatchPlaylistDropdown] = useState(false);
@@ -151,10 +154,25 @@ export const BatchActionBar: React.FC<BatchActionBarProps> = memo(({
             onClick={() => {
               onBatchRemoveFromPlaylist(Array.from(selectedBatchSongIds), selectedPlaylistId);
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 text-xs font-semibold border border-rose-500/30 transition"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-xs font-semibold border border-amber-500/30 transition"
           >
             <FolderMinus className="w-3.5 h-3.5" />
             <span>移出此歌单</span>
+          </button>
+        )}
+
+        {/* Batch Delete Selected Songs */}
+        {onBatchDelete && (
+          <button
+            id="btn-batch-delete-songs"
+            onClick={() => {
+              onBatchDelete(Array.from(selectedBatchSongIds));
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-md shadow-rose-600/20 transition cursor-pointer"
+            title="物理删除已选中的歌曲文件"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>删除选定</span>
           </button>
         )}
 

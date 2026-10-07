@@ -47,7 +47,7 @@ export interface FetcherTask {
 
 export interface FetcherConfig {
   enabled: boolean;
-  downloadMode: 'scheduler' | 'ai_skill';
+  downloadMode: 'ai_skill';
   autoTriggerOnMissingVoiceQuery: boolean;
   defaultQuality: 'lossless' | 'high' | 'standard';
   storageSubfolderFormat: '{artist}/{album}' | '{artist}' | 'flat';
@@ -68,6 +68,7 @@ export const MusicAutoFetcherTab: React.FC<MusicAutoFetcherTabProps> = ({ onShow
   const [tasks, setTasks] = useState<FetcherTask[]>([]);
   const [stats, setStats] = useState({ total: 0, active: 0, completed: 0 });
   const [config, setConfig] = useState<FetcherConfig | null>(null);
+  const [aiConfigured, setAiConfigured] = useState<boolean>(true);
   const [isLoading, setIsLoading] = useState(true);
   const [isSavingConfig, setIsSavingConfig] = useState(false);
 
@@ -106,11 +107,20 @@ export const MusicAutoFetcherTab: React.FC<MusicAutoFetcherTabProps> = ({ onShow
 
   const fetchConfig = useCallback(async () => {
     try {
-      const res = await apiFetch('/api/fetcher/config');
-      if (res.ok) {
-        const data = await res.json();
+      const [fRes, aRes] = await Promise.all([
+        apiFetch('/api/fetcher/config'),
+        apiFetch('/api/ai/config')
+      ]);
+      if (fRes.ok) {
+        const data = await fRes.json();
         if (data.success) {
           setConfig(data.config);
+        }
+      }
+      if (aRes.ok) {
+        const aData = await aRes.json();
+        if (aData.success && aData.config) {
+          setAiConfigured(Boolean(aData.config.isAiConfigured || aData.config.aiSkillCallbackUrl));
         }
       }
     } catch (err: any) {
@@ -369,65 +379,40 @@ export const MusicAutoFetcherTab: React.FC<MusicAutoFetcherTabProps> = ({ onShow
         </div>
       </div>
 
-      {/* Master Toggle: Scheduler Center vs AI Skill Direct Mode */}
+      {/* Master Mode Banner: AI Agent Skill Engine Status */}
       <div className={`p-5 sm:p-6 rounded-3xl border transition-all ${
-        isLight ? 'bg-white border-zinc-200 shadow-sm' : 'bg-zinc-900/40 border-white/10'
+        !aiConfigured
+          ? isLight ? 'bg-amber-500/5 border-amber-500/30' : 'bg-amber-500/10 border-amber-500/20'
+          : isLight ? 'bg-white border-zinc-200 shadow-sm' : 'bg-zinc-900/40 border-white/10'
       }`}>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3.5">
             <div className={`p-3 rounded-2xl ${
-              config?.enabled !== false 
-                ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20' 
+              !aiConfigured 
+                ? 'bg-amber-500/20 text-amber-500 border border-amber-500/30'
                 : 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
             }`}>
-              {config?.enabled !== false ? <Download className="w-5 h-5" /> : <Bot className="w-5 h-5" />}
+              {!aiConfigured ? <AlertCircle className="w-5 h-5" /> : <Bot className="w-5 h-5" />}
             </div>
             <div>
               <div className="flex items-center gap-2">
                 <h4 className={`text-sm font-bold ${isLight ? 'text-zinc-900' : 'text-white'}`}>
-                  {config?.enabled !== false ? '⚡ 当前模式：启用下载调度中心 (Scheduler Mode)' : '🤖 当前模式：使用 AI 自身 Skill 下载 (AI Skill Mode)'}
+                  {!aiConfigured ? '⚠️ 尚未配置 AI 大模型 API Key 或外部 Webhook' : '🤖 当前引擎：AI Agent 大模型 Skill 驱动直连模式'}
                 </h4>
                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                  config?.enabled !== false
+                  !aiConfigured
                     ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20'
                     : 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
                 }`}>
-                  {config?.enabled !== false ? '● 调度中心启用' : '● AI Skill 直连'}
+                  {!aiConfigured ? '○ 未激活 Key' : '● AI Skill 就绪'}
                 </span>
               </div>
               <p className={`text-xs mt-1 ${isLight ? 'text-zinc-500' : 'text-zinc-400'}`}>
-                {config?.enabled !== false 
-                  ? '开启状态（推荐）：使用内置离线下载调度中心进行多任务流水线队列管理、进度监控与断点续传。' 
-                  : '关闭状态：绕过调度中心排队，由 AI 核心 Skill 智能体直接调用探针秒级落盘并主动通知 NAS 挂载同步。'}
+                {!aiConfigured
+                  ? '系统已自动关闭虚拟假记录展示。在「AI 大模型中枢」填入 Key 后，即可激活真正的 AI 智能体 Skill 检索下载与 NAS 入库功能。'
+                  : '纯粹由 AI Agent 大模型 Skill 驱动，通过注入回调链接与结构化意图秒级检索全网真实音源、抓取歌词并同步 NAS 曲库。'}
               </p>
             </div>
-          </div>
-
-          <div className="flex items-center gap-2 self-end sm:self-auto flex-shrink-0">
-            <button
-              onClick={() => handleUpdateConfig({ enabled: true, downloadMode: 'scheduler' })}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition border cursor-pointer ${
-                config?.enabled !== false
-                  ? 'bg-amber-500 text-zinc-950 border-amber-400 shadow-md shadow-amber-500/20 font-bold'
-                  : isLight
-                  ? 'bg-zinc-100 hover:bg-zinc-200 text-zinc-600 border-zinc-200'
-                  : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400 border-white/5'
-              }`}
-            >
-              开启调度中心
-            </button>
-            <button
-              onClick={() => handleUpdateConfig({ enabled: false, downloadMode: 'ai_skill' })}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition border cursor-pointer ${
-                config?.enabled === false
-                  ? 'bg-purple-600 text-white border-purple-500 shadow-md shadow-purple-500/20 font-bold'
-                  : isLight
-                  ? 'bg-zinc-100 hover:bg-zinc-200 text-zinc-600 border-zinc-200'
-                  : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-400 border-white/5'
-              }`}
-            >
-              使用 AI Skill 下载
-            </button>
           </div>
         </div>
       </div>

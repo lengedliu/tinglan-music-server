@@ -212,9 +212,9 @@
     "timeFormatted": "01:28:22.225",
     "category": "automation",
     "level": "info",
+    "traceId": "tr_lqlr8m",
     "title": "AI Skill 语义搜歌零匹配补库",
-    "message": "曲库未命中目标曲目，AI Skill 已介入启动直接离线补库 | 目标: 《我可以》- 华语歌手",
-    "traceId": "tr_lqlr8m"
+    "message": "曲库未命中目标曲目，AI Skill 已介入启动直接离线补库 | 目标: 《我可以》- 华语歌手"
   },
   {
     "id": "log_1791336502231_nj2cq",
@@ -222,9 +222,9 @@
     "timeFormatted": "01:28:22.231",
     "category": "automation",
     "level": "info",
+    "traceId": "ai_skill_muxfi386",
     "title": "AI Skill 启动离线下载",
-    "message": "【AI 原生直连】开始为《我可以》- 华语歌手 执行直接离线下载与 NAS 同步 | 来源: voice_ai | 格式: FLAC 24bit 无损",
-    "traceId": "ai_skill_muxfi386"
+    "message": "【AI 原生直连】开始为《我可以》- 华语歌手 执行直接离线下载与 NAS 同步 | 来源: voice_ai | 格式: FLAC 24bit 无损"
   },
   {
     "id": "log_1791336502232_716ia",
@@ -232,8 +232,38 @@
     "timeFormatted": "01:28:22.232",
     "category": "automation",
     "level": "info",
+    "traceId": "ai_skill_muxfi386",
     "title": "AI Agent 核心服务调起",
-    "message": "已向配置的大模型 AI Agent (gemini-3.8-flash) 传入 Prompt 结构化参数进行下载调度思考 | 目标: 《我可以》- 华语歌手",
-    "traceId": "ai_skill_muxfi386"
+    "message": "已向配置的大模型 AI Agent (gemini-3.8-flash) 传入 Prompt 结构化参数进行下载调度思考 | 目标: 《我可以》- 华语歌手"
+  },
+  {
+    "id": "log_1791343435705_28jou",
+    "timestamp": 1791343435705,
+    "timeFormatted": "03:23:55.705",
+    "category": "automation",
+    "level": "info",
+    "title": "AI Skill 语义搜歌零匹配补库",
+    "message": "曲库未命中目标曲目，AI Skill 已介入启动直接离线补库 | 目标: 《青花瓷》- 华语歌手",
+    "traceId": "tr_57gecc"
+  },
+  {
+    "id": "log_1791343435710_hdyj8",
+    "timestamp": 1791343435710,
+    "timeFormatted": "03:23:55.710",
+    "category": "automation",
+    "level": "info",
+    "title": "AI Skill 启动离线下载",
+    "message": "【AI 原生直连】开始为《青花瓷》- 华语歌手 执行直接离线下载与 NAS 同步 | 来源: voice_ai | 格式: FLAC 24bit 无损",
+    "traceId": "ai_skill_muxjmp4u"
+  },
+  {
+    "id": "log_1791343435712_7piab",
+    "timestamp": 1791343435712,
+    "timeFormatted": "03:23:55.712",
+    "category": "automation",
+    "level": "info",
+    "title": "AI Agent 核心服务调起",
+    "message": "已向配置的大模型 AI Agent (gemini-3.8-flash) 传入 Prompt 结构化参数进行下载调度思考 | 目标: 《青花瓷》- 华语歌手",
+    "traceId": "ai_skill_muxjmp4u"
   }
 ]

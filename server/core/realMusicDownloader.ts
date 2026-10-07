@@ -148,16 +148,24 @@ export class RealMusicDownloader {
       fetchedLrc = true;
     }
 
-    // 5. 兜底防护：如果线上网络下载遇到极特殊网络封锁，生成高品质专属母带容器，确保 100% 流程可用
+    // 5. 如果未命中任何真实音源直链，返回下载失败状态，不生成假文件或模拟数据
     if (!downloadedAudio) {
-      const sampleAudio = path.join(process.cwd(), 'music', 'song-1.mp3');
-      if (fs.existsSync(sampleAudio)) {
-        fs.copyFileSync(sampleAudio, params.targetFilePath);
-      } else {
-        const headerInfo = Buffer.from(`Tinglan Real Audio Container for: ${cleanTitle} by ${cleanArtist}\nCreated: ${new Date().toISOString()}\nQuality: ${fileFormat}\n`);
-        fs.writeFileSync(params.targetFilePath, headerInfo);
-      }
-      sourceUsed = '听澜本地母带容器引擎 (高可用兜底)';
+      logEngine.warn(
+        'automation',
+        '真实在线音源未命中',
+        `全网音源库未检索到《${cleanTitle}》- ${cleanArtist} 的有效音频流`,
+        { traceId, title: cleanTitle, artist: cleanArtist }
+      );
+      return {
+        success: false,
+        audioPath: '',
+        lrcPath: '',
+        bitrate: '',
+        format: '',
+        fileSizeMb: 0,
+        source: '未匹配到全网音源',
+        lyricsFetched: false
+      };
     }
 
     const stat = fs.statSync(params.targetFilePath);

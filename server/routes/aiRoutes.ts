@@ -17,7 +17,10 @@ export function createAiRoutes(): Router {
       const lanIps = getLocalNetworkIps();
       res.json({
         success: true,
-        config,
+        config: {
+          ...config,
+          isAiConfigured: aiService.isAiConfigured()
+        },
         resolvedServerHost,
         lanIps
       });

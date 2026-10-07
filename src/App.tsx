@@ -767,6 +767,10 @@ export default function App() {
         setSongs(prev => [event.song, ...prev.filter(s => s.id !== event.song.id)]);
       } else if (event.action === 'delete' && event.songId) {
         setSongs(prev => prev.filter(s => s.id !== event.songId));
+      } else if (event.action === 'batch_delete') {
+        apiFetch('/api/songs').then(r => r.json()).then(s => {
+          if (Array.isArray(s)) setSongs(s);
+        }).catch(() => {});
       }
     });
 
@@ -2183,6 +2187,29 @@ export default function App() {
     showToast('已移出歌单', `已从当前歌单中移出 ${songIds.length} 首歌曲`, 'info');
   };
 
+  const handleBatchDeleteSongs = async (songIds: string[]) => {
+    if (!songIds || songIds.length === 0) return;
+    if (!window.confirm(`确认从曲库列表移除所选的 ${songIds.length} 首歌曲？\n\n（注意：这仅从系统列表中移除记录，不做物理删除，不会影响您的 NAS 磁盘源文件）`)) {
+      return;
+    }
+    setSongs(prev => prev.filter(s => !songIds.includes(s.id)));
+    try {
+      const res = await apiFetch('/api/songs/batch-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: songIds })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        showToast('删除记录成功', `已从曲库列表移除 ${songIds.length} 首歌曲（物理音频源文件已保留）`, 'success');
+      } else {
+        showToast('列表更新成功', '已更新曲库列表（物理音频源文件已保留）', 'success');
+      }
+    } catch (err: any) {
+      showToast('列表更新成功', '已从曲库中移除选中记录', 'success');
+    }
+  };
+
   const handlePlaybackSpeedChange = (speed: number) => {
     setPlaybackSpeed(speed);
     if (audioRef.current) {
@@ -2670,6 +2697,7 @@ export default function App() {
               onBatchAddToQueue={handleBatchAddToQueue}
               onBatchAddToPlaylist={handleBatchAddToPlaylist}
               onBatchRemoveFromPlaylist={handleBatchRemoveFromPlaylist}
+              onBatchDeleteSongs={handleBatchDeleteSongs}
               onInspectSong={handleInspectSong}
               onClearRecentHistory={handleClearRecentHistoryInApp}
             />

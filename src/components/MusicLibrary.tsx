@@ -83,6 +83,7 @@ export interface MusicLibraryProps {
   onBatchAddToQueue?: (songs: Song[]) => void;
   onBatchAddToPlaylist?: (songIds: string[], playlistId: string) => void;
   onBatchRemoveFromPlaylist?: (songIds: string[], playlistId: string) => void;
+  onBatchDeleteSongs?: (songIds: string[]) => void;
   onInspectSong?: (song: Song) => void;
   onClearRecentHistory?: () => void;
 }
@@ -113,6 +114,7 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
   onBatchAddToQueue,
   onBatchAddToPlaylist,
   onBatchRemoveFromPlaylist,
+  onBatchDeleteSongs,
   onInspectSong,
   onClearRecentHistory
 }) => {
@@ -384,6 +386,13 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
     clearBatchSelection,
     exitBatchMode
   } = useSongSelection(filteredSongs);
+
+  const handleBatchDelete = useCallback((songIds: string[]) => {
+    if (onBatchDeleteSongs) {
+      onBatchDeleteSongs(songIds);
+    }
+    exitBatchMode();
+  }, [onBatchDeleteSongs, exitBatchMode]);
 
   // Reset page & selection when search, tab, or sort changes
   useEffect(() => {
@@ -896,6 +905,7 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
         onBatchAddToQueue={onBatchAddToQueue}
         onBatchAddToPlaylist={onBatchAddToPlaylist}
         onBatchRemoveFromPlaylist={onBatchRemoveFromPlaylist}
+        onBatchDelete={handleBatchDelete}
         onExitBatchMode={exitBatchMode}
       />
 
@@ -978,7 +988,8 @@ export const MusicLibrary = memo(MusicLibraryComponent, (prevProps, nextProps) =
     prevProps.isPlaying === nextProps.isPlaying &&
     prevProps.activeDevice?.did === nextProps.activeDevice?.did &&
     prevProps.isCasting === nextProps.isCasting &&
-    prevProps.isScanning === nextProps.isScanning
+    prevProps.isScanning === nextProps.isScanning &&
+    prevProps.onBatchDeleteSongs === nextProps.onBatchDeleteSongs
   );
 });
 

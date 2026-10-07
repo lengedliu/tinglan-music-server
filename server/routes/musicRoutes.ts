@@ -408,6 +408,54 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
     res.status(404).json({ error: 'Song not found' });
   });
 
+  // Batch delete songs
+  router.post('/batch-delete', (req: Request, res: Response) => {
+    const clientUser = (req as any).user;
+    if (clientUser && clientUser.role !== 'admin') {
+      return res.status(403).json({ success: false, error: '权限不足：普通用户无权批量删除曲目，仅管理员允许操作' });
+    }
+    if (!clientUser && options.hasAdminAccount && options.hasAdminAccount()) {
+      return res.status(403).json({ success: false, error: '安全拦截：批量删除物理曲目属于高危管理操作，请登录管理员账号方可执行' });
+    }
+
+    const { ids } = req.body || {};
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ success: false, error: '请提供要删除的歌曲 ID 列表' });
+    }
+
+    const idSet = new Set(ids.map(String));
+    let storedSongs = getSongs();
+    const removedSongs = storedSongs.filter(s => idSet.has(s.id) || idSet.has(path.basename(s.id)));
+    storedSongs = storedSongs.filter(s => !idSet.has(s.id) && !idSet.has(path.basename(s.id)));
+
+    setSongs(storedSongs);
+
+    // Also clean song references from playlists
+    const storedPlaylists = getPlaylists();
+    let plModified = false;
+    for (const pl of storedPlaylists) {
+      if (pl.songIds && pl.songIds.length > 0) {
+        const origLen = pl.songIds.length;
+        pl.songIds = pl.songIds.filter(id => !idSet.has(id));
+        if (pl.songIds.length < origLen) plModified = true;
+      }
+    }
+    if (plModified) setPlaylists(storedPlaylists);
+
+    appEventBus.broadcast('library:change', {
+      action: 'batch_delete',
+      count: removedSongs.length,
+      total: storedSongs.length
+    });
+
+    return res.json({
+      success: true,
+      message: `已成功从曲库中移除 ${removedSongs.length} 首歌曲`,
+      count: removedSongs.length,
+      total: storedSongs.length
+    });
+  });
+
   // Clear all songs from library
   router.delete('/', (req: Request, res: Response) => {
     const clientUser = (req as any).user;

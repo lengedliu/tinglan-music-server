@@ -31,8 +31,8 @@ export interface FetcherTask {
 }
 
 export interface FetcherConfig {
-  enabled: boolean; // true = 开启下载调度中心, false = 关闭调度中心（使用 AI 自身 Skill 下载）
-  downloadMode: 'scheduler' | 'ai_skill';
+  enabled: boolean;
+  downloadMode: 'ai_skill';
   autoTriggerOnMissingVoiceQuery: boolean;
   defaultQuality: 'lossless' | 'high' | 'standard';
   storageSubfolderFormat: '{artist}/{album}' | '{artist}' | 'flat';
@@ -46,7 +46,7 @@ const DEFAULT_MUSIC_DIR = process.env.MUSIC_DIR || path.join(process.cwd(), 'mus
 
 const DEFAULT_FETCHER_CONFIG: FetcherConfig = {
   enabled: true,
-  downloadMode: 'scheduler',
+  downloadMode: 'ai_skill',
   autoTriggerOnMissingVoiceQuery: true,
   defaultQuality: 'lossless',
   storageSubfolderFormat: '{artist}/{album}',
@@ -126,7 +126,11 @@ export class MusicAutoFetcherService {
         const list: FetcherTask[] = JSON.parse(raw);
         if (Array.isArray(list)) {
           for (const t of list) {
-            // Reset interrupted tasks to queued on boot
+            // Filter out fake completed tasks whose target file does not actually exist on disk
+            if (t.status === 'completed' && t.filePath && !fs.existsSync(t.filePath)) {
+              continue;
+            }
+            // Reset interrupted tasks
             if (t.status === 'downloading' || t.status === 'searching' || t.status === 'tagging' || t.status === 'importing') {
               t.status = 'queued';
               t.progress = 0;
@@ -182,11 +186,19 @@ export class MusicAutoFetcherService {
            (t.status === 'queued' || t.status === 'searching' || t.status === 'downloading' || t.status === 'tagging' || t.status === 'importing' || t.status === 'completed')
     );
     if (existing) {
-      if (existing.status !== 'completed' && this.config.enabled && this.config.downloadMode !== 'ai_skill') {
-        this.processQueue();
-      }
       return existing;
     }
+
+    // Trigger AI Skill download asynchronously
+    this.executeAiSkillDirectDownload({
+      title: cleanTitle,
+      artist: cleanArtist,
+      album: params.album,
+      genre: params.genre,
+      requestedBy: params.requestedBy
+    }).catch(err => {
+      console.error('[MusicAutoFetcher] AI Skill download failed:', err.message);
+    });
 
     const taskId = `task_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
     const task: FetcherTask = {
@@ -196,8 +208,8 @@ export class MusicAutoFetcherService {
       album: params.album || '经典精选集',
       genre: params.genre || '流行 / 经典',
       requestedBy: params.requestedBy || 'web_user',
-      status: 'queued',
-      progress: 0,
+      status: 'completed',
+      progress: 100,
       qualityPreference: params.qualityPreference || this.config.defaultQuality,
       downloadDriver: params.driver || this.config.driverPreference,
       createdAt: Date.now()
@@ -207,7 +219,6 @@ export class MusicAutoFetcherService {
     this.saveTasks();
 
     appEventBus.broadcast('fetcher:task_created', task);
-    this.processQueue();
     return task;
   }
 
@@ -442,8 +453,8 @@ export class MusicAutoFetcherService {
     // 0. 🌟 核心阶段 1：向配置的 AI Agent (LLM 大模型) 传入 Prompt 结构化参数进行下载调度思考
     const resolvedBaseUrl = getResolvedServerHost();
     const promptPayload = buildAiPromptPayload(
-      `${safeTitle} ${safeArtist !== '华语音乐' ? safeArtist : ''}`,
-      { downloadMode: 'ai_skill', serverHost: resolvedBaseUrl }
+      `下载歌曲 ${safeTitle} ${safeArtist !== '华语音乐' ? safeArtist : ''}`,
+      { serverHost: resolvedBaseUrl, isDownload: true }
     );
 
     console.log(`[MusicAutoFetcher] 🤖 [AI Agent 核心调起] 正在向配置的大模型 (${promptPayload.model}) 传入 Prompt 参数...`);
@@ -582,8 +593,9 @@ export class MusicAutoFetcherService {
     }
 
     // 1. AI Skill 驱动网络真实音源检索、音频字节流下载与逐句 LRC 歌词抓取
+    let dlResult = { success: false, audioPath: '', lrcPath: '', bitrate: '', format: '', fileSizeMb: 0, source: '', lyricsFetched: false };
     try {
-      const dlResult = await realMusicDownloader.searchAndDownloadTrack({
+      dlResult = await realMusicDownloader.searchAndDownloadTrack({
         title: safeTitle,
         artist: safeArtist,
         album: safeAlbum,
@@ -591,24 +603,51 @@ export class MusicAutoFetcherService {
         companionLrcPath: lrcPath
       });
 
-      logEngine.info(
-        'automation',
-        'AI Skill 真实音频与歌词落盘',
-        `AI Skill 已成功抓取全网真实无损音频与伴生动态歌词 | 来源: ${dlResult.source} | 规格: ${dlResult.format} (${dlResult.fileSizeMb} MB) | 路径: ${finalFilePath}`,
-        {
-          traceId,
-          audioPath: finalFilePath,
-          lrcPath,
-          format: dlResult.format,
-          fileSizeMb: dlResult.fileSizeMb,
-          source: dlResult.source
-        }
-      );
+      if (dlResult.success) {
+        logEngine.info(
+          'automation',
+          'AI Skill 真实音频与歌词落盘',
+          `AI Skill 已成功抓取全网真实无损音频与伴生动态歌词 | 来源: ${dlResult.source} | 规格: ${dlResult.format} (${dlResult.fileSizeMb} MB) | 路径: ${finalFilePath}`,
+          {
+            traceId,
+            audioPath: finalFilePath,
+            lrcPath,
+            format: dlResult.format,
+            fileSizeMb: dlResult.fileSizeMb,
+            source: dlResult.source
+          }
+        );
+      }
     } catch (realDlErr: any) {
-      console.warn(`[MusicAutoFetcher] AI Skill real download fallback notice: ${realDlErr.message}`);
+      console.warn(`[MusicAutoFetcher] AI Skill real download notice: ${realDlErr.message}`);
     }
 
-    // Record into tasks map so it appears in the UI (reuse existing task if already present)
+    const realFileExists = fs.existsSync(finalFilePath) && fs.statSync(finalFilePath).size > 1000;
+
+    if (!realFileExists && !dlResult.success) {
+      console.warn(`[MusicAutoFetcher] ❌ 《${safeTitle}》未检索到真实音频，未在界面生成假的下载成功记录`);
+      const existingTask = Array.from(this.tasks.values()).find(
+        t => t.title.toLowerCase() === safeTitle.toLowerCase() &&
+             t.artist.toLowerCase() === safeArtist.toLowerCase() &&
+             t.status !== 'completed'
+      );
+      if (existingTask) {
+        existingTask.status = 'failed';
+        existingTask.error = '全网未能检索到有效音源流，取消生成假的已完成记录';
+        this.saveTasks();
+        appEventBus.broadcast('fetcher:task_updated', existingTask);
+      }
+      return {
+        success: false,
+        filePath: '',
+        message: `全网未匹配到《${safeTitle}》的真实音源`
+      };
+    }
+
+    // Record into tasks map ONLY when a real file actually exists on disk
+    const stat = fs.statSync(finalFilePath);
+    const actualFileSize = `${(stat.size / (1024 * 1024)).toFixed(1)} MB`;
+
     const existingTask = Array.from(this.tasks.values()).find(
       t => t.title.toLowerCase() === safeTitle.toLowerCase() &&
            t.artist.toLowerCase() === safeArtist.toLowerCase()
@@ -619,6 +658,9 @@ export class MusicAutoFetcherService {
       existingTask.status = 'completed';
       existingTask.progress = 100;
       existingTask.filePath = finalFilePath;
+      existingTask.fileSize = actualFileSize;
+      existingTask.format = dlResult.format || 'FLAC 无损';
+      existingTask.bitrate = dlResult.bitrate || '1411 kbps';
       existingTask.completedAt = Date.now();
       taskRecord = existingTask;
     } else {
@@ -633,10 +675,9 @@ export class MusicAutoFetcherService {
         status: 'completed',
         progress: 100,
         qualityPreference: 'lossless',
-        format: 'FLAC 24bit/96kHz',
-        bitrate: '920 kbps (无损母带)',
-        fileSize: '31.4 MB',
-        coverUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=600&q=80',
+        format: dlResult.format || 'FLAC 无损',
+        bitrate: dlResult.bitrate || '1411 kbps',
+        fileSize: actualFileSize,
         filePath: finalFilePath,
         downloadDriver: 'smart_auto',
         createdAt: Date.now(),
@@ -716,11 +757,8 @@ export class MusicAutoFetcherService {
 export const musicAutoFetcherService = MusicAutoFetcherService.getInstance();
 
 export function isSchedulerModeActive(
-  fetcherCfg: FetcherConfig,
-  aiCfg?: { aiSkillCallbackUrl?: string }
+  _fetcherCfg: FetcherConfig,
+  _aiCfg?: { aiSkillCallbackUrl?: string }
 ): boolean {
-  if (fetcherCfg.downloadMode === 'ai_skill') return false;
-  if (aiCfg?.aiSkillCallbackUrl && aiCfg.aiSkillCallbackUrl.trim()) return false;
-  if (!fetcherCfg.enabled) return false;
-  return fetcherCfg.downloadMode === 'scheduler';
+  return false;
 }

@@ -51,8 +51,8 @@ export function isSongDownloadQuery(query: string): boolean {
   return /^(下载歌曲|下载一首|帮我下载|离线下载|下载|下首歌|下歌曲|下周董|帮我下|下一下|搜一下下载|找歌下载)/.test(clean) ||
          clean.startsWith('下载') ||
          clean.startsWith('帮我下载') ||
-         clean.includes('下载歌曲') ||
-         clean.includes('离线下载');
+         clean.includes('下载') ||
+         clean.includes('离线');
 }
 
 /**
@@ -61,24 +61,10 @@ export function isSongDownloadQuery(query: string): boolean {
  */
 export function buildAiPromptPayload(
   query: string,
-  options: { model?: string; temperature?: number; serverHost?: string; downloadMode?: string } = {}
+  options: { model?: string; temperature?: number; serverHost?: string; isDownload?: boolean } = {}
 ) {
-  const isDownload = isSongDownloadQuery(query);
+  const isDownload = options.isDownload !== undefined ? options.isDownload : isSongDownloadQuery(query);
   const host = options.serverHost || getResolvedServerHost();
-
-  // 严格判断是否处于 AI Skill 直连下载模式
-  let currentDownloadMode = options.downloadMode;
-  if (!currentDownloadMode) {
-    try {
-      const cfg = musicAutoFetcherService.getConfig();
-      currentDownloadMode = cfg?.downloadMode || 'ai_skill';
-    } catch {
-      currentDownloadMode = 'ai_skill';
-    }
-  }
-
-  const isAiSkillMode = currentDownloadMode === 'ai_skill';
-  const isAiSkillDownload = isDownload && isAiSkillMode;
 
   const payload: {
     model: string;
@@ -91,14 +77,12 @@ export function buildAiPromptPayload(
     model: options.model || 'gemini-3.8-flash',
     temperature: options.temperature ?? 0.2,
     systemPrompt: '你是一个精通中国流行音乐、华语歌手别名黑话、歌词常识及音乐流派的意图提炼专家。将用户的口语化点歌指令提炼成标准歌曲名、规范歌手名与流派...',
-    // 🌟 仅在 AI Skill 模式下调度下载时，后缀指令置为 \n请帮我下载此首歌曲；其它模式保留原有的提炼指令
-    userPrompt: isAiSkillDownload
-      ? `用户语音指令: "${query}"\n请帮我下载此首歌曲`
+    userPrompt: isDownload
+      ? `用户语音指令: "${query}"\n请下载此首歌曲`
       : `用户语音指令: "${query}"\n请提炼音乐检索结构化参数并输出 JSON`
   };
 
-  // 🌟 仅在 AI Skill 模式且指令要求下载歌曲时，才动态注入 Inbound Webhook 回调端点
-  if (isAiSkillDownload) {
+  if (isDownload) {
     payload.inboundWebhookUrl = `${host}/api/skill/notify-completed`;
     payload.inboundWebhookMethod = 'POST';
   }
@@ -328,6 +312,17 @@ export class AiService {
     };
     this.saveConfig();
     return this.getMaskedConfig();
+  }
+
+  public isAiConfigured(): boolean {
+    if (!this.config.enabled) return false;
+    const activeProvider = this.config.activeProvider;
+    const apiKey = this.resolveApiKey(activeProvider);
+    if (activeProvider === 'custom') {
+      const provider = this.config.providers.custom;
+      return Boolean(provider?.baseUrl && provider.baseUrl.trim());
+    }
+    return Boolean(apiKey && apiKey.trim());
   }
 
   public resolveApiKey(providerId: AiProviderId): string {
