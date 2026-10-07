@@ -452,8 +452,11 @@ export class MusicAutoFetcherService {
 
     // 0. 🌟 核心阶段 1：向配置的 AI Agent (LLM 大模型) 传入 Prompt 结构化参数进行下载调度思考
     const resolvedBaseUrl = getResolvedServerHost();
+    const queryForSkill = safeArtist && safeArtist !== '华语音乐'
+      ? `${safeTitle} ${safeArtist}`
+      : safeTitle;
     const promptPayload = buildAiPromptPayload(
-      `下载歌曲 ${safeTitle} ${safeArtist !== '华语音乐' ? safeArtist : ''}`,
+      queryForSkill,
       { serverHost: resolvedBaseUrl, isDownload: true }
     );
 

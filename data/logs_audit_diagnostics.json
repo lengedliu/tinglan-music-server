@@ -207,63 +207,153 @@
     "deviceName": "xiaomi.wifispeaker.sound"
   },
   {
-    "id": "log_1791336502225_xj97y",
-    "timestamp": 1791336502225,
-    "timeFormatted": "01:28:22.225",
+    "id": "log_1791368940352_0rnzu",
+    "timestamp": 1791368940352,
+    "timeFormatted": "10:29:00.352",
     "category": "automation",
     "level": "info",
-    "traceId": "tr_lqlr8m",
+    "traceId": "tr_ea2gwb",
     "title": "AI Skill 语义搜歌零匹配补库",
     "message": "曲库未命中目标曲目，AI Skill 已介入启动直接离线补库 | 目标: 《我可以》- 华语歌手"
   },
   {
-    "id": "log_1791336502231_nj2cq",
-    "timestamp": 1791336502231,
-    "timeFormatted": "01:28:22.231",
+    "id": "log_1791368940358_6rmj6",
+    "timestamp": 1791368940358,
+    "timeFormatted": "10:29:00.358",
     "category": "automation",
     "level": "info",
-    "traceId": "ai_skill_muxfi386",
+    "traceId": "ai_skill_muxytcna",
     "title": "AI Skill 启动离线下载",
     "message": "【AI 原生直连】开始为《我可以》- 华语歌手 执行直接离线下载与 NAS 同步 | 来源: voice_ai | 格式: FLAC 24bit 无损"
   },
   {
-    "id": "log_1791336502232_716ia",
-    "timestamp": 1791336502232,
-    "timeFormatted": "01:28:22.232",
+    "id": "log_1791368940360_1a6lz",
+    "timestamp": 1791368940360,
+    "timeFormatted": "10:29:00.360",
     "category": "automation",
     "level": "info",
-    "traceId": "ai_skill_muxfi386",
+    "traceId": "ai_skill_muxytcna",
     "title": "AI Agent 核心服务调起",
-    "message": "已向配置的大模型 AI Agent (gemini-3.8-flash) 传入 Prompt 结构化参数进行下载调度思考 | 目标: 《我可以》- 华语歌手"
+    "message": "已向配置的大模型 AI Agent (gemini-2.5-flash) 传入 Prompt 结构化参数进行下载调度思考 | 目标: 《我可以》- 华语歌手"
   },
   {
-    "id": "log_1791343435705_28jou",
-    "timestamp": 1791343435705,
-    "timeFormatted": "03:23:55.705",
+    "id": "log_1791368943974_q1kak",
+    "timestamp": 1791368943974,
+    "timeFormatted": "10:29:03.974",
+    "category": "automation",
+    "level": "info",
+    "traceId": "ai_skill_muxytcna",
+    "title": "AI Agent 决策响应成功",
+    "message": "配置的大模型 AI Agent (gemini-2.5-flash) 响应成功 | 耗时: 3612ms | 决策文本: 好的，根据您的语音指令 \"我可以 华语歌手\"，这通常指的是一首非常"
+  },
+  {
+    "id": "log_1791368943977_n3s49",
+    "timestamp": 1791368943977,
+    "timeFormatted": "10:29:03.977",
+    "category": "automation",
+    "level": "info",
+    "traceId": "real_dl_muxytffs",
+    "title": "真实在线音源检索启动",
+    "message": "开始在全网在线高保真音源库中检索《我可以》- 华语歌手 的真实无损音轨与同步歌词"
+  },
+  {
+    "id": "log_1791368944690_tt733",
+    "timestamp": 1791368944690,
+    "timeFormatted": "10:29:04.690",
+    "category": "automation",
+    "level": "warn",
+    "traceId": "real_dl_muxytffs",
+    "title": "真实在线音源未命中",
+    "message": "全网音源库未检索到《我可以》- 华语歌手 的有效音频流"
+  },
+  {
+    "id": "log_1791368981087_2h7aj",
+    "timestamp": 1791368981087,
+    "timeFormatted": "10:29:41.087",
+    "category": "automation",
+    "level": "info",
+    "traceId": "tr_pqup09",
+    "title": "AI Skill 语音确认下载触发",
+    "message": "用户语音确认下载【我可以】 | 歌手: 华语音乐 | 模式: AI Skill 原生秒级落盘"
+  },
+  {
+    "id": "log_1791368981088_fqtio",
+    "timestamp": 1791368981088,
+    "timeFormatted": "10:29:41.088",
+    "category": "automation",
+    "level": "info",
+    "traceId": "ai_skill_muxyu82o",
+    "title": "AI Skill 启动离线下载",
+    "message": "【AI 原生直连】开始为《我可以》- 华语音乐 执行直接离线下载与 NAS 同步 | 来源: voice_ai | 格式: FLAC 24bit 无损"
+  },
+  {
+    "id": "log_1791368981090_u5c32",
+    "timestamp": 1791368981090,
+    "timeFormatted": "10:29:41.090",
+    "category": "automation",
+    "level": "info",
+    "traceId": "ai_skill_muxyu82o",
+    "title": "AI Agent 核心服务调起",
+    "message": "已向配置的大模型 AI Agent (gemini-2.5-flash) 传入 Prompt 结构化参数进行下载调度思考 | 目标: 《我可以》- 华语音乐"
+  },
+  {
+    "id": "log_1791368984467_djcxw",
+    "timestamp": 1791368984467,
+    "timeFormatted": "10:29:44.467",
+    "category": "automation",
+    "level": "info",
+    "traceId": "ai_skill_muxyu82o",
+    "title": "AI Agent 决策响应成功",
+    "message": "配置的大模型 AI Agent (gemini-2.5-flash) 响应成功 | 耗时: 3377ms | 决策文本: 好的，根据您的语音指令 \"我可以\"，结合中国流行音乐的常识，最符合"
+  },
+  {
+    "id": "log_1791368984468_j8ywp",
+    "timestamp": 1791368984468,
+    "timeFormatted": "10:29:44.468",
+    "category": "automation",
+    "level": "info",
+    "traceId": "real_dl_muxyuaok",
+    "title": "真实在线音源检索启动",
+    "message": "开始在全网在线高保真音源库中检索《我可以》- 华语音乐 的真实无损音轨与同步歌词"
+  },
+  {
+    "id": "log_1791368984489_12c28",
+    "timestamp": 1791368984489,
+    "timeFormatted": "10:29:44.489",
+    "category": "automation",
+    "level": "warn",
+    "traceId": "real_dl_muxyuaok",
+    "title": "真实在线音源未命中",
+    "message": "全网音源库未检索到《我可以》- 华语音乐 的有效音频流"
+  },
+  {
+    "id": "log_1791371182059_lpz8n",
+    "timestamp": 1791371182058,
+    "timeFormatted": "11:06:22.058",
     "category": "automation",
     "level": "info",
     "title": "AI Skill 语义搜歌零匹配补库",
-    "message": "曲库未命中目标曲目，AI Skill 已介入启动直接离线补库 | 目标: 《青花瓷》- 华语歌手",
-    "traceId": "tr_57gecc"
+    "message": "曲库未命中目标曲目，AI Skill 已介入启动直接离线补库 | 目标: 《我可以》- 华语歌手",
+    "traceId": "tr_n2dz17"
   },
   {
-    "id": "log_1791343435710_hdyj8",
-    "timestamp": 1791343435710,
-    "timeFormatted": "03:23:55.710",
+    "id": "log_1791371182063_dy3is",
+    "timestamp": 1791371182063,
+    "timeFormatted": "11:06:22.063",
     "category": "automation",
     "level": "info",
     "title": "AI Skill 启动离线下载",
-    "message": "【AI 原生直连】开始为《青花瓷》- 华语歌手 执行直接离线下载与 NAS 同步 | 来源: voice_ai | 格式: FLAC 24bit 无损",
-    "traceId": "ai_skill_muxjmp4u"
+    "message": "【AI 原生直连】开始为《我可以》- 华语歌手 执行直接离线下载与 NAS 同步 | 来源: voice_ai | 格式: FLAC 24bit 无损",
+    "traceId": "ai_skill_muy05ecv"
   },
   {
-    "id": "log_1791343435712_7piab",
-    "timestamp": 1791343435712,
-    "timeFormatted": "03:23:55.712",
+    "id": "log_1791371182065_tr88n",
+    "timestamp": 1791371182065,
+    "timeFormatted": "11:06:22.065",
     "category": "automation",
     "level": "info",
     "title": "AI Agent 核心服务调起",
-    "message": "已向配置的大模型 AI Agent (gemini-3.8-flash) 传入 Prompt 结构化参数进行下载调度思考 | 目标: 《青花瓷》- 华语歌手",
-    "traceId": "ai_skill_muxjmp4u"
+    "message": "已向配置的大模型 AI Agent (gemini-2.5-flash) 传入 Prompt 结构化参数进行下载调度思考 | 目标: 《我可以》- 华语歌手",
+    "traceId": "ai_skill_muy05ecv"
   }
 ]

@@ -1,0 +1,10 @@
+[
+  {
+    "id": "log-1791371175892",
+    "timestamp": "11:06:15 AM",
+    "logType": "sync",
+    "songTitle": "批量移除曲目记录 (0 首)",
+    "status": "success",
+    "detail": "仅从曲库列表移除记录，保留物理磁盘源文件"
+  }
+]

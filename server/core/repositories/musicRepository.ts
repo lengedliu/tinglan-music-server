@@ -396,6 +396,31 @@ export class MusicRepository {
     return false;
   }
 
+  public deleteSongs(ids: string[]): number {
+    if (!ids || ids.length === 0) return 0;
+    const idSet = new Set(ids.map(String));
+    const initialLen = this.songs.length;
+    this.songs = this.songs.filter(s => !idSet.has(s.id) && !idSet.has(path.basename(s.id)));
+    for (const id of ids) {
+      this.songsMap.delete(id);
+      this.songsMap.delete(path.basename(id));
+      musicSearchIndex.removeSong(id);
+    }
+    if (this.sqliteDb) {
+      try {
+        const placeholders = ids.map(() => '?').join(',');
+        this.sqliteDb.run(`DELETE FROM songs WHERE id IN (${placeholders})`, ids);
+      } catch (e) {
+        console.warn('[MusicRepository] Failed to batch delete songs from SQLite:', e);
+      }
+    }
+    const removedCount = initialLen - this.songs.length;
+    if (removedCount > 0) {
+      this.schedulePersistSongs(200);
+    }
+    return removedCount;
+  }
+
   public searchSongs(query: string, options?: SearchOptions): { total: number; results: Song[] } {
     return musicSearchIndex.search(query, options);
   }

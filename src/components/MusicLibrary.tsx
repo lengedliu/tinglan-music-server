@@ -30,6 +30,7 @@ import { SongRow } from './library/SongRow';
 import { PlaylistTabs } from './library/PlaylistTabs';
 import { LibraryToolbar } from './library/LibraryToolbar';
 import { BatchActionBar } from './library/BatchActionBar';
+import { BatchDeleteModal } from './library/BatchDeleteModal';
 import { PlaylistHeaderBanner } from './library/PlaylistHeaderBanner';
 import { ResumePointsShelf } from './library/ResumePointsShelf';
 import { SongTableHeader } from './library/SongTableHeader';
@@ -83,7 +84,7 @@ export interface MusicLibraryProps {
   onBatchAddToQueue?: (songs: Song[]) => void;
   onBatchAddToPlaylist?: (songIds: string[], playlistId: string) => void;
   onBatchRemoveFromPlaylist?: (songIds: string[], playlistId: string) => void;
-  onBatchDeleteSongs?: (songIds: string[]) => void;
+  onBatchDeleteSongs?: (songIds: string[], deletePhysicalFiles?: boolean) => void;
   onInspectSong?: (song: Song) => void;
   onClearRecentHistory?: () => void;
 }
@@ -268,7 +269,18 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(15);
+  const [pageSize, setPageSize] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('tinglan_page_size');
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        if ([5, 10, 15, 30, 50, 100, 200].includes(parsed)) {
+          return parsed;
+        }
+      }
+    } catch {}
+    return 15;
+  });
 
   // Selected song in list (Single click to select without playing, double click to select and play)
   const [selectedSongId, setSelectedSongId] = useState<string | null>(() => currentSong?.id || null);
@@ -387,10 +399,20 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
     exitBatchMode
   } = useSongSelection(filteredSongs);
 
+  const [showBatchDeleteModal, setShowBatchDeleteModal] = useState(false);
+  const [pendingDeleteSongIds, setPendingDeleteSongIds] = useState<string[]>([]);
+
   const handleBatchDelete = useCallback((songIds: string[]) => {
+    if (!songIds || songIds.length === 0) return;
+    setPendingDeleteSongIds(songIds);
+    setShowBatchDeleteModal(true);
+  }, []);
+
+  const handleConfirmBatchDelete = useCallback(async (songIds: string[], deletePhysicalFiles: boolean) => {
     if (onBatchDeleteSongs) {
-      onBatchDeleteSongs(songIds);
+      await onBatchDeleteSongs(songIds, deletePhysicalFiles);
     }
+    setShowBatchDeleteModal(false);
     exitBatchMode();
   }, [onBatchDeleteSongs, exitBatchMode]);
 
@@ -907,6 +929,16 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
         onBatchRemoveFromPlaylist={onBatchRemoveFromPlaylist}
         onBatchDelete={handleBatchDelete}
         onExitBatchMode={exitBatchMode}
+      />
+
+      {/* Batch Delete Confirmation Modal */}
+      <BatchDeleteModal
+        isOpen={showBatchDeleteModal}
+        onClose={() => setShowBatchDeleteModal(false)}
+        selectedSongIds={pendingDeleteSongIds}
+        songs={songs}
+        isLight={isLight}
+        onConfirm={handleConfirmBatchDelete}
       />
 
       {/* Grouped Library Modals */}

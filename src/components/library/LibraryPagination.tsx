@@ -175,15 +175,21 @@ export const LibraryPagination: React.FC<LibraryPaginationProps> = ({
             id="select-page-size"
             value={pageSize}
             onChange={(e) => {
-              onPageSizeChange(Number(e.target.value));
+              const newSize = Number(e.target.value);
+              onPageSizeChange(newSize);
+              try {
+                localStorage.setItem('tinglan_page_size', String(newSize));
+              } catch {}
               onPageChange(1);
             }}
-            className={`border rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-[#FF6700] transition ${
+            className={`border rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-[#FF6700] transition cursor-pointer ${
               isLight
-                ? 'bg-white border-zinc-300 text-zinc-800'
-                : 'bg-zinc-900 border-white/10 text-zinc-200'
+                ? 'bg-white border-zinc-300 text-zinc-800 hover:border-zinc-400'
+                : 'bg-zinc-900 border-white/10 text-zinc-200 hover:border-white/20'
             }`}
           >
+            <option value={5}>5 条/页</option>
+            <option value={10}>10 条/页</option>
             <option value={15}>15 条/页</option>
             <option value={30}>30 条/页</option>
             <option value={50}>50 条/页</option>

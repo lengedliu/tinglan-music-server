@@ -138,15 +138,17 @@ export function createAiRoutes(): Router {
   // Test voice intent parsing and dynamic mood queue matching
   router.post('/voice-parse', async (req: Request, res: Response) => {
     try {
-      const { query } = req.body || {};
+      const { query, isDownload, mode } = req.body || {};
       if (!query) {
         return res.status(400).json({ success: false, error: 'Query parameter required' });
       }
+      const isDl = isDownload !== undefined ? Boolean(isDownload) : (mode === 'download');
       const songs = musicRepository.getAllSongs();
-      const result = await aiService.parseVoiceIntent(query, songs as any);
+      const result = await aiService.parseVoiceIntent(query, songs as any, { isDownload: isDl, mode });
       res.json({
         success: true,
         query,
+        isDownload: isDl,
         result
       });
     } catch (err: any) {

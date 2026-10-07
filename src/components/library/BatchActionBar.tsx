@@ -169,7 +169,7 @@ export const BatchActionBar: React.FC<BatchActionBarProps> = memo(({
               onBatchDelete(Array.from(selectedBatchSongIds));
             }}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-md shadow-rose-600/20 transition cursor-pointer"
-            title="物理删除已选中的歌曲文件"
+            title="删除选定歌曲 (支持仅从列表移除或彻底物理删除)"
           >
             <Trash2 className="w-3.5 h-3.5" />
             <span>删除选定</span>

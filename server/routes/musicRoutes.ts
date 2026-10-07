@@ -10,6 +10,7 @@ import { smartPlaylistRepository, SmartPlaylistRule } from '../core/repositories
 import { fingerprintCacheRepository } from '../core/repositories/fingerprintCacheRepository.js';
 import { resumePointRepository } from '../core/repositories/resumePointRepository.js';
 import { appEventBus } from '../core/eventBus.js';
+import { isAuthRequiredForRequest } from '../core/security.js';
 
 export interface SongsRouterOptions {
   getSongs: () => any[];
@@ -19,6 +20,7 @@ export interface SongsRouterOptions {
   musicDir: string;
   dynamicPlaylistEngine?: DynamicPlaylistEngine;
   hasAdminAccount?: () => boolean;
+  getSecuritySettings?: () => any;
   audioTranscoder?: {
     ensureStandardMp3?: (filePath: string, songId: string) => any;
     ensureStandardMp3Async?: (filePath: string, songId: string, opts?: any) => Promise<any>;
@@ -377,10 +379,13 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
   router.delete('/:id', (req: Request, res: Response) => {
     const clientUser = (req as any).user;
     if (clientUser && clientUser.role !== 'admin') {
-      return res.status(403).json({ success: false, error: '权限不足：普通用户无权删除物理曲目，仅管理员允许操作' });
+      return res.status(403).json({ success: false, error: '权限不足：普通用户无权删除曲目，仅管理员允许操作' });
     }
-    if (!clientUser && options.hasAdminAccount && options.hasAdminAccount()) {
-      return res.status(403).json({ success: false, error: '安全拦截：删除物理曲目属于高危管理操作，请登录管理员账号方可执行' });
+    const authRequired = options.getSecuritySettings
+      ? isAuthRequiredForRequest(req, options.getSecuritySettings)
+      : false;
+    if (authRequired && !clientUser && options.hasAdminAccount && options.hasAdminAccount()) {
+      return res.status(403).json({ success: false, error: '安全拦截：当前网络访问需管理员鉴权，请登录管理员账号方可执行删除操作' });
     }
 
     const { id } = req.params;
@@ -391,6 +396,8 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
 
     if (storedSongs.length < initialLen) {
       setSongs(storedSongs);
+      musicRepository.deleteSong(id);
+      musicRepository.deleteSong(safeId);
       appEventBus.broadcast('library:change', {
         action: 'delete',
         songId: id,
@@ -414,11 +421,14 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
     if (clientUser && clientUser.role !== 'admin') {
       return res.status(403).json({ success: false, error: '权限不足：普通用户无权批量删除曲目，仅管理员允许操作' });
     }
-    if (!clientUser && options.hasAdminAccount && options.hasAdminAccount()) {
-      return res.status(403).json({ success: false, error: '安全拦截：批量删除物理曲目属于高危管理操作，请登录管理员账号方可执行' });
+    const authRequired = options.getSecuritySettings
+      ? isAuthRequiredForRequest(req, options.getSecuritySettings)
+      : false;
+    if (authRequired && !clientUser && options.hasAdminAccount && options.hasAdminAccount()) {
+      return res.status(403).json({ success: false, error: '安全拦截：当前网络访问需管理员鉴权，请登录管理员账号方可执行批量删除操作' });
     }
 
-    const { ids } = req.body || {};
+    const { ids, deletePhysicalFiles } = req.body || {};
     if (!Array.isArray(ids) || ids.length === 0) {
       return res.status(400).json({ success: false, error: '请提供要删除的歌曲 ID 列表' });
     }
@@ -429,6 +439,7 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
     storedSongs = storedSongs.filter(s => !idSet.has(s.id) && !idSet.has(path.basename(s.id)));
 
     setSongs(storedSongs);
+    musicRepository.deleteSongs(ids);
 
     // Also clean song references from playlists
     const storedPlaylists = getPlaylists();
@@ -442,16 +453,98 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
     }
     if (plModified) setPlaylists(storedPlaylists);
 
+    let physicalDeletedCount = 0;
+    if (deletePhysicalFiles) {
+      const exts = ['.wav', '.mp3', '.flac', '.m4a', '.aac', '.ogg', '.opus', '.ape', '.dsf', '.dff'];
+      for (const song of removedSongs) {
+        let deletedForSong = false;
+        // 1. Check localFilename (relative or absolute)
+        if ((song as any).localFilename) {
+          const sanitizedFilename = path.normalize((song as any).localFilename).replace(/^(\.\.[\/\\])+/, '');
+          const fullPath = path.isAbsolute((song as any).localFilename)
+            ? (song as any).localFilename
+            : path.join(musicDir, sanitizedFilename);
+          if (fs.existsSync(fullPath)) {
+            try {
+              fs.unlinkSync(fullPath);
+              deletedForSong = true;
+            } catch (err: any) {
+              console.warn(`[BatchDelete] Error unlinking ${fullPath}:`, err.message);
+            }
+          }
+          const lrcPath = fullPath.replace(/\.[^.]+$/, '.lrc');
+          if (fs.existsSync(lrcPath)) {
+            try { fs.unlinkSync(lrcPath); } catch {}
+          }
+        }
+
+        // 2. Check by song id and safeId in musicDir
+        const safeId = path.basename(song.id);
+        for (const ext of exts) {
+          const p = path.join(musicDir, `${safeId}${ext}`);
+          if (fs.existsSync(p)) {
+            try {
+              fs.unlinkSync(p);
+              deletedForSong = true;
+            } catch {}
+          }
+          const lrc = path.join(musicDir, `${safeId}.lrc`);
+          if (fs.existsSync(lrc)) {
+            try { fs.unlinkSync(lrc); } catch {}
+          }
+        }
+
+        // 3. Check song.url if /api/stream/...
+        if (song.url && typeof song.url === 'string' && song.url.startsWith('/api/stream/')) {
+          const streamName = song.url.replace('/api/stream/', '').split('?')[0];
+          const streamPath = path.join(musicDir, streamName);
+          if (fs.existsSync(streamPath)) {
+            try {
+              fs.unlinkSync(streamPath);
+              deletedForSong = true;
+            } catch {}
+          }
+          const lrc = streamPath.replace(/\.[^.]+$/, '.lrc');
+          if (fs.existsSync(lrc)) {
+            try { fs.unlinkSync(lrc); } catch {}
+          }
+        }
+
+        if (deletedForSong) physicalDeletedCount++;
+      }
+    }
+
+    if (logCastAction) {
+      logCastAction({
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString(),
+        type: 'sync',
+        message: deletePhysicalFiles
+          ? `批量物理删除曲目 (${removedSongs.length} 首)`
+          : `批量移除曲目记录 (${removedSongs.length} 首)`,
+        detail: deletePhysicalFiles
+          ? `已从曲库中移除并物理销毁 ${physicalDeletedCount} 个磁盘文件及歌词`
+          : `仅从曲库列表移除记录，保留物理磁盘源文件`,
+        success: true
+      });
+    }
+
     appEventBus.broadcast('library:change', {
       action: 'batch_delete',
       count: removedSongs.length,
+      physicalDeletedCount,
+      deletePhysicalFiles: Boolean(deletePhysicalFiles),
       total: storedSongs.length
     });
 
     return res.json({
       success: true,
-      message: `已成功从曲库中移除 ${removedSongs.length} 首歌曲`,
+      message: deletePhysicalFiles
+        ? `已成功从曲库中移除 ${removedSongs.length} 首歌曲，并物理删除 ${physicalDeletedCount} 个磁盘音频文件与歌词`
+        : `已成功从曲库中移除 ${removedSongs.length} 首歌曲（物理音频源文件已保留）`,
       count: removedSongs.length,
+      physicalDeletedCount,
+      deletePhysicalFiles: Boolean(deletePhysicalFiles),
       total: storedSongs.length
     });
   });

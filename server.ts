@@ -818,6 +818,7 @@ app.use('/api/songs', createSongsRouter({
   setPlaylists: (newPlaylists) => musicRepository.setPlaylists(newPlaylists),
   musicDir: MUSIC_DIR,
   dynamicPlaylistEngine,
+  getSecuritySettings: () => securitySettings,
   hasAdminAccount: () => storedUsers.some(u => u.role === 'admin'),
   audioTranscoder,
   logCastAction: (log) => {

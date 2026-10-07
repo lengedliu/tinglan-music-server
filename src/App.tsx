@@ -2187,26 +2187,60 @@ export default function App() {
     showToast('已移出歌单', `已从当前歌单中移出 ${songIds.length} 首歌曲`, 'info');
   };
 
-  const handleBatchDeleteSongs = async (songIds: string[]) => {
+  const handleBatchDeleteSongs = async (songIds: string[], deletePhysicalFiles = false) => {
     if (!songIds || songIds.length === 0) return;
-    if (!window.confirm(`确认从曲库列表移除所选的 ${songIds.length} 首歌曲？\n\n（注意：这仅从系统列表中移除记录，不做物理删除，不会影响您的 NAS 磁盘源文件）`)) {
-      return;
+    const toRemoveSet = new Set(songIds);
+
+    // 1. Synchronously purge from local states
+    setSongs(prev => prev.filter(s => !toRemoveSet.has(s.id)));
+    setPlaylists(prev => prev.map(pl => ({
+      ...pl,
+      songIds: pl.songIds ? pl.songIds.filter(id => !toRemoveSet.has(id)) : []
+    })));
+    setPlayQueue(prev => prev.filter(s => !toRemoveSet.has(s.id)));
+
+    // 2. If current playing track is deleted, stop or skip
+    if (currentSong && toRemoveSet.has(currentSong.id)) {
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
+      setIsPlaying(false);
+      setCurrentSong(null);
     }
-    setSongs(prev => prev.filter(s => !songIds.includes(s.id)));
+
     try {
       const res = await apiFetch('/api/songs/batch-delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids: songIds })
+        body: JSON.stringify({ ids: songIds, deletePhysicalFiles })
       });
       const data = await res.json().catch(() => ({}));
       if (res.ok && data.success) {
-        showToast('删除记录成功', `已从曲库列表移除 ${songIds.length} 首歌曲（物理音频源文件已保留）`, 'success');
+        if (deletePhysicalFiles) {
+          showToast(
+            '物理删除成功',
+            `已永久抹除 ${data.physicalDeletedCount || songIds.length} 个物理音频源文件及歌词，曲库已同步更新`,
+            'success'
+          );
+        } else {
+          showToast(
+            '从列表移除成功',
+            `已从曲库列表移除 ${songIds.length} 首歌曲记录（物理磁盘源文件已完好保留）`,
+            'success'
+          );
+        }
+      } else if (!res.ok) {
+        showToast('删除未完成', data.error || '操作异常，请检查权限或刷新重试', 'error');
+        fetchSongsFromBackend();
       } else {
-        showToast('列表更新成功', '已更新曲库列表（物理音频源文件已保留）', 'success');
+        showToast(
+          '列表更新完成',
+          deletePhysicalFiles ? '曲库记录已清除' : '已从曲库列表移除（物理文件已保留）',
+          'info'
+        );
       }
     } catch (err: any) {
-      showToast('列表更新成功', '已从曲库中移除选中记录', 'success');
+      showToast('列表更新完成', '已从曲库中移除选中记录', 'info');
     }
   };
 

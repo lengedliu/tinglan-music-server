@@ -48,23 +48,49 @@ export interface AiTestResult {
 export function isSongDownloadQuery(query: string): boolean {
   if (!query) return false;
   const clean = query.trim();
-  return /^(下载歌曲|下载一首|帮我下载|离线下载|下载|下首歌|下歌曲|下周董|帮我下|下一下|搜一下下载|找歌下载)/.test(clean) ||
+  return /^(下载歌曲|下载一首|帮我下载|离线下载|下载|下首歌|下歌曲|下周董|帮我下|下一下|搜一下下载|找歌下载|下首|下个)/.test(clean) ||
          clean.startsWith('下载') ||
          clean.startsWith('帮我下载') ||
+         clean.startsWith('帮我下') ||
          clean.includes('下载') ||
          clean.includes('离线');
 }
 
 /**
  * 构造输入给大模型/AI Agent 的 Prompt 参数结构
- * 仅在指令要求下载歌曲时，才动态提供 inboundWebhookUrl 回调端点
+ * 仅在指令要求下载歌曲时，才动态提供 inboundWebhookUrl 回调端点，并将后缀置为「请帮我下载此首歌曲」
  */
 export function buildAiPromptPayload(
   query: string,
-  options: { model?: string; temperature?: number; serverHost?: string; isDownload?: boolean } = {}
+  options: { model?: string; temperature?: number; serverHost?: string; isDownload?: boolean; mode?: 'download' | 'playback' } = {}
 ) {
-  const isDownload = options.isDownload !== undefined ? options.isDownload : isSongDownloadQuery(query);
+  let isDownload = options.isDownload;
+  if (isDownload === undefined && options.mode) {
+    isDownload = options.mode === 'download';
+  }
+  if (isDownload === undefined) {
+    isDownload = isSongDownloadQuery(query);
+  }
+
   const host = options.serverHost || getResolvedServerHost();
+
+  let cleanQuery = (query || '').trim();
+  // 提取用户语音指令内部的原生词句（兼容带有 "用户语音指令: ..." 包装的字符串）
+  const voiceMatch = cleanQuery.match(/用户语音指令:\s*["“](.+?)["”]/);
+  if (voiceMatch && voiceMatch[1]) {
+    cleanQuery = voiceMatch[1].trim();
+  }
+  // 剥离原有可能残留的提炼或下载后缀指令，避免重复或未替换
+  cleanQuery = cleanQuery
+    .replace(/(\r?\n|\s)*(请提炼音乐检索结构化参数并输出\s*JSON|请帮我下载此首歌曲|请帮我下载此歌曲)/g, '')
+    .trim();
+
+  if (isDownload) {
+    cleanQuery = cleanQuery
+      .replace(/^(帮我下载|下载歌曲|下载一首|离线下载|下载|下首歌|下歌曲|帮我下)\s*/, '')
+      .replace(/^(这首歌|这首|歌曲|单曲)\s*/, '')
+      .trim() || cleanQuery;
+  }
 
   const payload: {
     model: string;
@@ -74,12 +100,12 @@ export function buildAiPromptPayload(
     inboundWebhookUrl?: string;
     inboundWebhookMethod?: string;
   } = {
-    model: options.model || 'gemini-3.8-flash',
+    model: options.model || 'gemini-2.5-flash',
     temperature: options.temperature ?? 0.2,
     systemPrompt: '你是一个精通中国流行音乐、华语歌手别名黑话、歌词常识及音乐流派的意图提炼专家。将用户的口语化点歌指令提炼成标准歌曲名、规范歌手名与流派...',
     userPrompt: isDownload
-      ? `用户语音指令: "${query}"\n请下载此首歌曲`
-      : `用户语音指令: "${query}"\n请提炼音乐检索结构化参数并输出 JSON`
+      ? `用户语音指令: "${cleanQuery}"\n请帮我下载此首歌曲`
+      : `用户语音指令: "${cleanQuery}"\n请提炼音乐检索结构化参数并输出 JSON`
   };
 
   if (isDownload) {
@@ -174,11 +200,11 @@ const DEFAULT_AI_CONFIG: AiServiceConfig = {
       id: 'gemini',
       name: 'Google Gemini',
       baseUrl: 'https://generativelanguage.googleapis.com',
-      model: 'gemini-3.8-flash',
+      model: 'gemini-2.5-flash',
       apiKey: '',
-      defaultModel: 'gemini-3.8-flash',
+      defaultModel: 'gemini-2.5-flash',
       defaultBaseUrl: 'https://generativelanguage.googleapis.com',
-      description: 'Google 原生大语言模型，极速推理 (~200ms)，支持 gemini-3.8-flash',
+      description: 'Google 原生大语言模型，极速推理 (~200ms)，支持 gemini-2.5-flash',
       badge: 'Gemini'
     },
     custom: {
@@ -475,7 +501,7 @@ export class AiService {
       }
 
       const ai = new GoogleGenAI({ apiKey });
-      const model = provider.model || 'gemini-3.8-flash';
+      const model = provider.model || 'gemini-2.5-flash';
       
       const contents = params.systemPrompt 
         ? `${params.systemPrompt}\n\nUser Request: ${params.prompt}`
@@ -623,7 +649,8 @@ export class AiService {
    */
   public async parseVoiceIntent(
     queryText: string,
-    songs: Array<{ id: string; title: string; artist: string; album?: string; genre?: string; lyrics?: string; isFavorite?: boolean }>
+    songs: Array<{ id: string; title: string; artist: string; album?: string; genre?: string; lyrics?: string; isFavorite?: boolean }>,
+    options?: { isDownload?: boolean; mode?: 'download' | 'playback'; serverHost?: string }
   ): Promise<AiVoiceMatchResult> {
     if (!this.config.enabled || !this.config.enableSemanticVoiceSearch) {
       return { matched: false };
@@ -648,8 +675,12 @@ export class AiService {
     }
 
     // Stage 1: Intent Extraction via LLM
-    const resolvedServerHost = getResolvedServerHost();
-    const promptPayload = buildAiPromptPayload(queryText, { serverHost: resolvedServerHost });
+    const resolvedServerHost = options?.serverHost || getResolvedServerHost();
+    const promptPayload = buildAiPromptPayload(queryText, {
+      serverHost: resolvedServerHost,
+      isDownload: options?.isDownload,
+      mode: options?.mode
+    });
     const prompt = promptPayload.userPrompt;
     const systemPrompt = promptPayload.systemPrompt;
 
