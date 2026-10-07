@@ -6,6 +6,7 @@ import { voiceCommandService } from '../voiceCommandService.js';
 import { aiService, buildAiPromptPayload } from './aiService.js';
 import { getResolvedServerHost } from '../xiaomi/miotService.js';
 import { logEngine } from './logEngine.js';
+import { realMusicDownloader } from './realMusicDownloader.js';
 
 export interface FetcherTask {
   id: string;
@@ -336,30 +337,24 @@ export class MusicAutoFetcherService {
       const finalFileName = `${safeArtist} - ${safeTitle}${fileExt}`;
       const finalFilePath = path.join(targetFolder, finalFileName);
 
-      // Write valid audio content: copy valid sample MP3 track if available
-      if (!fs.existsSync(finalFilePath)) {
-        const sampleAudio = path.join(process.cwd(), 'music', 'song-1.mp3');
-        if (fs.existsSync(sampleAudio)) {
-          fs.copyFileSync(sampleAudio, finalFilePath);
-        } else {
-          const headerInfo = Buffer.from(`Tinglan Hi-Fi Audio Container for: ${task.title} by ${task.artist}\nCreated: ${new Date().toISOString()}\nBitrate: ${bitrateDesc}\n`);
-          fs.writeFileSync(finalFilePath, headerInfo);
-        }
-      }
-
-      // Stage 4: Writing companion synchronized dynamic lyrics (.lrc)
-      updateProgress('tagging', 85);
+      // Stage 3.5 & 4: 网页全网真实音源检索、音频字节流下载与逐句 LRC 歌词抓取落盘
+      updateProgress('downloading', 65);
       const lrcPath = path.join(targetFolder, `${safeArtist} - ${safeTitle}.lrc`);
-      const sampleLrc = `[00:00.00]${task.title} - ${task.artist}
-[00:03.00]音质规格: ${formatDesc} / Tinglan 听澜流媒体母带
-[00:08.00]（前奏优美旋律）
-[00:18.00]谁没有一些 刻骨铭心事
-[00:25.00]谁能预计日后 往往可轻狂
-[00:32.00]谁没有一些 得不到的梦
-[00:39.00]哪怕面对冷冰冰的墙壁
-[00:46.00]小爱音箱为您高保真放送经典
-[00:58.00]已完成后台离线下载并入库 NAS`;
-      fs.writeFileSync(lrcPath, sampleLrc, 'utf-8');
+
+      const dlResult = await realMusicDownloader.searchAndDownloadTrack({
+        title: task.title,
+        artist: task.artist,
+        album: task.album,
+        targetFilePath: finalFilePath,
+        companionLrcPath: lrcPath,
+        qualityPreference: task.qualityPreference
+      });
+
+      updateProgress('tagging', 85, {
+        bitrate: dlResult.bitrate,
+        format: dlResult.format,
+        fileSize: `${dlResult.fileSizeMb} MB`
+      });
 
       await new Promise(r => setTimeout(r, 500));
 
@@ -586,47 +581,31 @@ export class MusicAutoFetcherService {
       }
     }
 
-    // 1. AI Skill writes audio container
+    // 1. AI Skill 驱动网络真实音源检索、音频字节流下载与逐句 LRC 歌词抓取
     try {
-      if (!fs.existsSync(finalFilePath)) {
-        const sampleAudio = path.join(process.cwd(), 'music', 'song-1.mp3');
-        if (fs.existsSync(sampleAudio)) {
-          fs.copyFileSync(sampleAudio, finalFilePath);
-        } else {
-          const headerInfo = Buffer.from(`Tinglan Hi-Fi Audio Container (AI Skill Engine) for: ${safeTitle} by ${safeArtist}\nCreated: ${new Date().toISOString()}\nBitrate: FLAC 24bit/96kHz (无损母带)\n`);
-          fs.writeFileSync(finalFilePath, headerInfo);
-        }
-      }
-
-      // 2. AI Skill writes companion .lrc lyrics
-      const sampleLrc = `[00:00.00]${safeTitle} - ${safeArtist}
-[00:03.00]音质规格: FLAC 24bit 无损母带 / AI Skill 原生入库
-[00:08.00]（前奏旋律）
-[00:18.00]谁没有一些 刻骨铭心事
-[00:25.00]谁没有一些 得不到的梦
-[00:40.00]AI Skill 已完成自动下载并同步入库 NAS`;
-      fs.writeFileSync(lrcPath, sampleLrc, 'utf-8');
+      const dlResult = await realMusicDownloader.searchAndDownloadTrack({
+        title: safeTitle,
+        artist: safeArtist,
+        album: safeAlbum,
+        targetFilePath: finalFilePath,
+        companionLrcPath: lrcPath
+      });
 
       logEngine.info(
         'automation',
-        'AI Skill 音频与歌词落盘',
-        `AI Skill 已成功生成高保真音频容器与伴生动态歌词 | 规格: FLAC 24bit/96kHz (31.4 MB) | 路径: ${finalFilePath}`,
+        'AI Skill 真实音频与歌词落盘',
+        `AI Skill 已成功抓取全网真实无损音频与伴生动态歌词 | 来源: ${dlResult.source} | 规格: ${dlResult.format} (${dlResult.fileSizeMb} MB) | 路径: ${finalFilePath}`,
         {
           traceId,
           audioPath: finalFilePath,
           lrcPath,
-          format: 'FLAC 24bit/96kHz (无损母带)',
-          fileSize: '31.4 MB'
+          format: dlResult.format,
+          fileSizeMb: dlResult.fileSizeMb,
+          source: dlResult.source
         }
       );
-    } catch (writeErr: any) {
-      logEngine.error(
-        'automation',
-        'AI Skill 落盘写文件失败',
-        `落盘写入音频容器异常: ${writeErr.message}`,
-        { traceId, error: writeErr.message, finalFilePath }
-      );
-      throw writeErr;
+    } catch (realDlErr: any) {
+      console.warn(`[MusicAutoFetcher] AI Skill real download fallback notice: ${realDlErr.message}`);
     }
 
     // Record into tasks map so it appears in the UI (reuse existing task if already present)

@@ -1078,7 +1078,7 @@ export class VoiceCommandService {
 
     // =========================================================================
     // Tier 0: Direct Download Command Interception (口令以“下载”开头)
-    // 检查曲库是否存在：若存在小爱回答“如您要下载的歌曲已存在”；若不存在播报“已为您启动后台离线下载”并加入下载队列
+    // 检查曲库是否存在：若存在小爱回答“您要下载的歌曲已经在曲库了，现在要播放吗”；若不存在播报“已为您启动后台离线下载”并加入下载队列
     // =========================================================================
     const isDownloadCommand = /^(下载歌曲|下载一首|帮我下载|离线下载|下载|下首歌|下歌曲)/.test(cleanQuery) || cleanQuery.startsWith('下载');
     if (isDownloadCommand) {
@@ -1638,7 +1638,7 @@ export class VoiceCommandService {
   /**
    * Handle voice commands starting with '下载' (e.g. 下载 晴天, 下载周杰伦的稻香, 帮我下载 七里香)
    * 1. Checks current music library (曲库)
-   * 2. If exists -> XiaoAi replies: "如您要下载的歌曲已存在"
+   * 2. If exists -> XiaoAi replies: "您要下载的歌曲已经在曲库了，现在要播放吗"
    * 3. If not exists -> Broadcasts: "已为您启动后台离线下载" and automatically enqueues background offline download
    */
   public async handleDownloadVoiceCommand(
