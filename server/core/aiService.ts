@@ -91,9 +91,9 @@ export function buildAiPromptPayload(
     model: options.model || 'gemini-3.8-flash',
     temperature: options.temperature ?? 0.2,
     systemPrompt: '你是一个精通中国流行音乐、华语歌手别名黑话、歌词常识及音乐流派的意图提炼专家。将用户的口语化点歌指令提炼成标准歌曲名、规范歌手名与流派...',
-    // 🌟 仅在 AI Skill 模式下调度下载时，后缀指令置为 \n请帮我下载此歌曲；其它模式保留原有的提炼指令
+    // 🌟 仅在 AI Skill 模式下调度下载时，后缀指令置为 \n请帮我下载此首歌曲；其它模式保留原有的提炼指令
     userPrompt: isAiSkillDownload
-      ? `用户语音指令: "${query}"\n请帮我下载此歌曲`
+      ? `用户语音指令: "${query}"\n请帮我下载此首歌曲`
       : `用户语音指令: "${query}"\n请提炼音乐检索结构化参数并输出 JSON`
   };
 
@@ -654,33 +654,9 @@ export class AiService {
 
     // Stage 1: Intent Extraction via LLM
     const resolvedServerHost = getResolvedServerHost();
-    const inboundWebhookUrl = `${resolvedServerHost}/api/skill/notify-completed`;
-
-    const systemPrompt = `你是一个精通中国流行音乐、华语歌手别名黑话、歌词常识及音乐流派的意图提炼专家。
-你的任务是将用户的口语化、情绪化、模糊点歌指令，提炼成结构化的音乐检索参数，用于在家庭局域网本地曲库中秒级搜库。
-
-注意：
-1. 歌手别名必须规范化，例如：“周董”/“杰伦” -> “周杰伦”，“E神” -> “陈奕迅”，“阿信” -> “五月天”，“力宏” -> “王力宏”。
-2. 模糊歌词请直接推测出原歌曲名与歌手，例如：“天青色等烟雨” -> 歌名“青花瓷”，歌手“周杰伦”；“陪你去看流星雨” -> 歌名“流星雨”，歌手“F4”。
-3. 场景/情绪点歌时（如“下雨天看书”、“睡觉轻音乐”、“开车热血摇滚”），设定 isMoodOrScene 为 true，生成优美的大气电台标题，并提供 4~6 个流派或风格相关的中英文关键词（如 ["纯音乐", "钢琴", "轻音乐", "治愈", "Instrumental", "Piano"]）。
-4. suggestedTts 应自然亲切（如：“好的，为您开启雨天阅读心境电台”、“好的，为您播放周杰伦的青花瓷”）。
-5. 【关键意图防误触】：如果用户指令明显与音乐/点歌/歌词/听歌心境无关（例如控制家电“开灯/关空调/扫地”、询问天气、设闹钟、日常闲聊等），请必须将 isMusicRequest 设为 false，其余字段均为空字符串或空数组。若属于音乐需求，则 isMusicRequest 设为 true。
-
-输出必须严格为 JSON 格式，不要包含任何 markdown 代码块或额外文字：
-{
-  "isMusicRequest": true 或 false,
-  "isMoodOrScene": true 或 false,
-  "moodSceneTitle": "场景或电台名称",
-  "keywords": ["关键词1", "关键词2"],
-  "targetArtist": "规范化歌手名（若无则填空字符串）",
-  "targetSongTitle": "推测的准确歌名（若无则填空字符串）",
-  "targetGenre": "流派（如 Pop / Rock / Classical / Folk / Jazz 等，若无填空字符串）",
-  "targetLyricsSnippet": "核心歌词片段（若无填空字符串）",
-  "suggestedTts": "给小爱音箱的应答播报语",
-  "queueTitle": "连续播放心境电台歌单标题"
-}`;
-
-    const prompt = `用户语音指令: "${queryText}"\n请提炼音乐检索结构化参数并输出 JSON:`;
+    const promptPayload = buildAiPromptPayload(queryText, { serverHost: resolvedServerHost });
+    const prompt = promptPayload.userPrompt;
+    const systemPrompt = promptPayload.systemPrompt;
 
     let intent: any = null;
     try {

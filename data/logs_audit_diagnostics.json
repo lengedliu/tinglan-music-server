@@ -207,279 +207,33 @@
     "deviceName": "xiaomi.wifispeaker.sound"
   },
   {
-    "id": "log_1791309216223_mr456",
-    "timestamp": 1791309216223,
-    "timeFormatted": "17:53:36.223",
+    "id": "log_1791336502225_xj97y",
+    "timestamp": 1791336502225,
+    "timeFormatted": "01:28:22.225",
     "category": "automation",
     "level": "info",
-    "traceId": "tr_vfaezn",
-    "title": "AI Skill 语音口令触发",
-    "message": "小爱语音口令【下载 反方向的钟】已分流至 AI Skill 直连引擎 | 目标: 《钟》- 反方向 | 模式: AI 原生秒级落盘"
+    "title": "AI Skill 语义搜歌零匹配补库",
+    "message": "曲库未命中目标曲目，AI Skill 已介入启动直接离线补库 | 目标: 《我可以》- 华语歌手",
+    "traceId": "tr_lqlr8m"
   },
   {
-    "id": "log_1791309216228_7w33b",
-    "timestamp": 1791309216228,
-    "timeFormatted": "17:53:36.228",
-    "category": "automation",
-    "level": "info",
-    "traceId": "ai_skill_muwz997o",
-    "title": "AI Skill 启动离线下载",
-    "message": "【AI 原生直连】开始为《钟》- 反方向 执行直接离线下载与 NAS 同步 | 来源: voice_ai | 格式: FLAC 24bit 无损"
-  },
-  {
-    "id": "log_1791309216230_2jxgk",
-    "timestamp": 1791309216230,
-    "timeFormatted": "17:53:36.230",
-    "category": "automation",
-    "level": "info",
-    "traceId": "ai_skill_muwz997o",
-    "title": "AI Skill 音频与歌词落盘",
-    "message": "AI Skill 已成功生成高保真音频容器与伴生动态歌词 | 规格: FLAC 24bit/96kHz (31.4 MB) | 路径: /app/applet/music/反方向/经典精选集/反方向 - 钟.flac"
-  },
-  {
-    "id": "log_1791309216232_igo5w",
-    "timestamp": 1791309216232,
-    "timeFormatted": "17:53:36.232",
-    "category": "automation",
-    "level": "info",
-    "traceId": "ai_skill_muwz997o",
-    "title": "AI Skill 触发 NAS 曲库热同步",
-    "message": "主动唤起 NAS 曲库异步扫描引擎，实现免等待热同步入库 | 挂载点: /app/applet/music | 目标曲目: 《钟》"
-  },
-  {
-    "id": "log_1791309216337_bb629",
-    "timestamp": 1791309216337,
-    "timeFormatted": "17:53:36.337",
-    "category": "automation",
-    "level": "info",
-    "traceId": "ai_skill_muwz997o",
-    "title": "AI Skill 流程执行完毕",
-    "message": "《钟》- 反方向 全流程下载、转码与 NAS 入库成功 | 音箱语音播报: 未触发/非语音 | 状态: 100% 已入库"
-  },
-  {
-    "id": "log_1791310546101_qrucg",
-    "timestamp": 1791310546101,
-    "timeFormatted": "18:15:46.101",
-    "category": "automation",
-    "level": "info",
-    "traceId": "ext_skill_mux01rcl",
-    "title": "AI Skill 外部完成回调接收",
-    "message": "收到外部 AI 技能下载完成通知 | 歌曲: 《一路向北》- 周杰伦 | 即将执行 NAS 曲库热同步与播报"
-  },
-  {
-    "id": "log_1791310546107_vppog",
-    "timestamp": 1791310546107,
-    "timeFormatted": "18:15:46.107",
-    "category": "automation",
-    "level": "info",
-    "traceId": "ext_skill_mux01rcl",
-    "title": "AI Skill 外部入库同步完成",
-    "message": "《一路向北》已成功经由外部回调入库 NAS 并刷新曲库 | 音箱播报: 跳过/无可用音箱"
-  },
-  {
-    "id": "log_1791311484208_3opsw",
-    "timestamp": 1791311484208,
-    "timeFormatted": "18:31:24.208",
-    "category": "cast",
-    "level": "info",
-    "traceId": "tr_141twu",
-    "title": "启动歌单投播",
-    "message": "开始为【小爱音箱Pro】连续播放《青花瓷》 (1/8)",
-    "details": {
-      "songTitle": "青花瓷",
-      "artist": "周杰伦",
-      "duration": 180,
-      "loopMode": "all"
-    },
-    "targetDid": "did-1789129459008",
-    "deviceName": "小爱音箱Pro",
-    "songId": "song-周杰伦_-_青花瓷-47"
-  },
-  {
-    "id": "log_1791311484568_b3g8y",
-    "timestamp": 1791311484568,
-    "timeFormatted": "18:31:24.568",
-    "category": "cast",
-    "level": "warn",
-    "traceId": "tr_6j43yc",
-    "title": "【歌单队列切播失败】《青花瓷》",
-    "message": "未能成功向音箱【小爱音箱Pro】下发播放指令：所有投播通道均未响应或未实际拉取音频流。请检查音箱网络连通性、DLNA开关或小米账号登录状态。",
-    "details": {
-      "type": "error",
-      "model": "xiaomi.wifispeaker.sound"
-    },
-    "clientIp": "192.168.31.25",
-    "targetDid": "did-1789129459008",
-    "deviceName": "xiaomi.wifispeaker.sound"
-  },
-  {
-    "id": "log_1791312810227_7ytd8",
-    "timestamp": 1791312810227,
-    "timeFormatted": "18:53:30.227",
-    "category": "automation",
-    "level": "info",
-    "traceId": "tr_qwvziu",
-    "title": "AI Skill 语音确认下载触发",
-    "message": "用户语音确认下载【轨迹】 | 歌手: 华语音乐 | 模式: AI Skill 原生秒级落盘"
-  },
-  {
-    "id": "log_1791312810234_h4p68",
-    "timestamp": 1791312810234,
-    "timeFormatted": "18:53:30.234",
-    "category": "automation",
-    "level": "info",
-    "traceId": "ai_skill_mux1ead5",
-    "title": "AI Skill 启动离线下载",
-    "message": "【AI 原生直连】开始为《轨迹》- 华语音乐 执行直接离线下载与 NAS 同步 | 来源: voice_ai | 格式: FLAC 24bit 无损"
-  },
-  {
-    "id": "log_1791312810237_xf8e1",
-    "timestamp": 1791312810237,
-    "timeFormatted": "18:53:30.237",
-    "category": "automation",
-    "level": "info",
-    "traceId": "ai_skill_mux1ead5",
-    "title": "AI Skill 音频与歌词落盘",
-    "message": "AI Skill 已成功生成高保真音频容器与伴生动态歌词 | 规格: FLAC 24bit/96kHz (31.4 MB) | 路径: /app/applet/music/华语音乐/经典精选集/华语音乐 - 轨迹.flac"
-  },
-  {
-    "id": "log_1791312810241_et6ez",
-    "timestamp": 1791312810241,
-    "timeFormatted": "18:53:30.241",
-    "category": "automation",
-    "level": "info",
-    "traceId": "ai_skill_mux1ead5",
-    "title": "AI Skill 触发 NAS 曲库热同步",
-    "message": "主动唤起 NAS 曲库异步扫描引擎，实现免等待热同步入库 | 挂载点: /app/applet/music | 目标曲目: 《轨迹》"
-  },
-  {
-    "id": "log_1791312810360_ppepv",
-    "timestamp": 1791312810360,
-    "timeFormatted": "18:53:30.360",
-    "category": "automation",
-    "level": "info",
-    "traceId": "ai_skill_mux1ead5",
-    "title": "AI Skill 流程执行完毕",
-    "message": "《轨迹》- 华语音乐 全流程下载、转码与 NAS 入库成功 | 音箱语音播报: 未触发/非语音 | 状态: 100% 已入库"
-  },
-  {
-    "id": "log_1791313425326_pb9p4",
-    "timestamp": 1791313425326,
-    "timeFormatted": "19:03:45.326",
-    "category": "cast",
-    "level": "warn",
-    "traceId": "tr_7e614n",
-    "title": "投放失败【小爱音箱Pro】",
-    "message": "未能成功向音箱【小爱音箱Pro】下发播放指令：所有投播通道均未响应或未实际拉取音频流。请检查音箱网络连通性、DLNA开关或小米账号登录状态。 | 串流源: https://ais-dev-ivv3ssd2ph6cfkzwzq2xce-868365314237.asia-southeast1.run.app/api/stream/song-1",
-    "details": {
-      "type": "cast",
-      "model": "xiaomi.wifispeaker.sound",
-      "protocol": "All Protocols Fallback Exhausted",
-      "requestMethod": "POST /api/miot/cast",
-      "httpStatus": 502,
-      "errorCode": "ERR_CAST_FAILED",
-      "responseTimeMs": 355,
-      "streamUrl": "https://ais-dev-ivv3ssd2ph6cfkzwzq2xce-868365314237.asia-southeast1.run.app/api/stream/song-1"
-    },
-    "clientIp": "192.168.31.25",
-    "targetDid": "did-1789129459008",
-    "deviceName": "xiaomi.wifispeaker.sound"
-  },
-  {
-    "id": "log_1791314820296_uf1tt",
-    "timestamp": 1791314820296,
-    "timeFormatted": "19:27:00.296",
-    "category": "cast",
-    "level": "warn",
-    "traceId": "tr_ifjqhv",
-    "title": "【歌单队列切播失败】《青花瓷》",
-    "message": "未能成功向音箱【小爱音箱Pro】下发播放指令：所有投播通道均未响应或未实际拉取音频流。请检查音箱网络连通性、DLNA开关或小米账号登录状态。",
-    "details": {
-      "type": "error",
-      "model": "xiaomi.wifispeaker.sound"
-    },
-    "clientIp": "192.168.31.25",
-    "targetDid": "did-1789129459008",
-    "deviceName": "xiaomi.wifispeaker.sound"
-  },
-  {
-    "id": "log_1791316613015_las5k",
-    "timestamp": 1791316613015,
-    "timeFormatted": "19:56:53.015",
-    "category": "automation",
-    "level": "info",
-    "traceId": "tr_ltf1os",
-    "title": "AI Skill 语音确认下载触发",
-    "message": "用户语音确认下载【枫】 | 歌手: 华语音乐 | 模式: AI Skill 原生秒级落盘"
-  },
-  {
-    "id": "log_1791316613021_76wsi",
-    "timestamp": 1791316613021,
-    "timeFormatted": "19:56:53.021",
-    "category": "automation",
-    "level": "info",
-    "traceId": "ai_skill_mux3nsm5",
-    "title": "AI Skill 启动离线下载",
-    "message": "【AI 原生直连】开始为《枫》- 华语音乐 执行直接离线下载与 NAS 同步 | 来源: voice_ai | 格式: FLAC 24bit 无损"
-  },
-  {
-    "id": "log_1791316613024_02u3h",
-    "timestamp": 1791316613024,
-    "timeFormatted": "19:56:53.024",
-    "category": "automation",
-    "level": "info",
-    "traceId": "ai_skill_mux3nsm5",
-    "title": "AI Skill 音频与歌词落盘",
-    "message": "AI Skill 已成功生成高保真音频容器与伴生动态歌词 | 规格: FLAC 24bit/96kHz (31.4 MB) | 路径: /app/applet/music/华语音乐/经典精选集/华语音乐 - 枫.flac"
-  },
-  {
-    "id": "log_1791316613025_7pyng",
-    "timestamp": 1791316613025,
-    "timeFormatted": "19:56:53.025",
-    "category": "automation",
-    "level": "info",
-    "traceId": "ai_skill_mux3nsm5",
-    "title": "AI Skill 触发 NAS 曲库热同步",
-    "message": "主动唤起 NAS 曲库异步扫描引擎，实现免等待热同步入库 | 挂载点: /app/applet/music | 目标曲目: 《枫》"
-  },
-  {
-    "id": "log_1791316613153_1yyta",
-    "timestamp": 1791316613153,
-    "timeFormatted": "19:56:53.153",
-    "category": "automation",
-    "level": "info",
-    "traceId": "ai_skill_mux3nsm5",
-    "title": "AI Skill 流程执行完毕",
-    "message": "《枫》- 华语音乐 全流程下载、转码与 NAS 入库成功 | 音箱语音播报: 未触发/非语音 | 状态: 100% 已入库"
-  },
-  {
-    "id": "log_1791317346451_0fkfw",
-    "timestamp": 1791317346451,
-    "timeFormatted": "20:09:06.451",
-    "category": "automation",
-    "level": "info",
-    "title": "AI Skill 语音确认下载触发",
-    "message": "用户语音确认下载【歌游京】 | 歌手: 华语音乐 | 模式: AI Skill 原生秒级落盘",
-    "traceId": "tr_9f4w18"
-  },
-  {
-    "id": "log_1791317346456_rxylc",
-    "timestamp": 1791317346456,
-    "timeFormatted": "20:09:06.456",
+    "id": "log_1791336502231_nj2cq",
+    "timestamp": 1791336502231,
+    "timeFormatted": "01:28:22.231",
     "category": "automation",
     "level": "info",
     "title": "AI Skill 启动离线下载",
-    "message": "【AI 原生直连】开始为《歌游京》- 华语音乐 执行直接离线下载与 NAS 同步 | 来源: voice_ai | 格式: FLAC 24bit 无损",
-    "traceId": "ai_skill_mux43ijc"
+    "message": "【AI 原生直连】开始为《我可以》- 华语歌手 执行直接离线下载与 NAS 同步 | 来源: voice_ai | 格式: FLAC 24bit 无损",
+    "traceId": "ai_skill_muxfi386"
   },
   {
-    "id": "log_1791317346459_t9jsv",
-    "timestamp": 1791317346459,
-    "timeFormatted": "20:09:06.459",
+    "id": "log_1791336502232_716ia",
+    "timestamp": 1791336502232,
+    "timeFormatted": "01:28:22.232",
     "category": "automation",
     "level": "info",
     "title": "AI Agent 核心服务调起",
-    "message": "已向配置的大模型 AI Agent (gemini-3.8-flash) 传入 Prompt 结构化参数进行下载调度思考 | 目标: 《歌游京》- 华语音乐",
-    "traceId": "ai_skill_mux43ijc"
+    "message": "已向配置的大模型 AI Agent (gemini-3.8-flash) 传入 Prompt 结构化参数进行下载调度思考 | 目标: 《我可以》- 华语歌手",
+    "traceId": "ai_skill_muxfi386"
   }
 ]

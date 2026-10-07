@@ -479,7 +479,7 @@ export const AiModelSettingsTab: React.FC<AiModelSettingsTabProps> = ({ onShowTo
       temperature: config.temperature ?? 0.2,
       systemPrompt: "你是一个精通中国流行音乐、华语歌手别名黑话、歌词常识及音乐流派的意图提炼专家。将用户的口语化点歌指令提炼成标准歌曲名、规范歌手名与流派...",
       userPrompt: mode === 'download' 
-        ? "用户语音指令: \"下周董天青色等烟雨那首歌\"\n请帮我下载此歌曲"
+        ? "用户语音指令: \"下周董天青色等烟雨那首歌\"\n请帮我下载此首歌曲"
         : "用户语音指令: \"放一首适合下雨天看书的轻音乐\"\n请提炼音乐检索结构化参数并输出 JSON"
     };
 
@@ -1332,7 +1332,7 @@ export const AiModelSettingsTab: React.FC<AiModelSettingsTabProps> = ({ onShowTo
   "model": "${activeProvider?.model || 'gemini-3.8-flash'}",
   "temperature": ${config.temperature ?? 0.2},
   "systemPrompt": "你是一个精通中国流行音乐、华语歌手别名黑话、歌词常识及音乐流派的意图提炼专家。将用户的口语化点歌指令提炼成标准歌曲名、规范歌手名与流派...",
-  "userPrompt": "用户语音指令: \\"下周董天青色等烟雨那首歌\\"\\n请帮我下载此歌曲",
+  "userPrompt": "用户语音指令: \\"下周董天青色等烟雨那首歌\\"\\n请帮我下载此首歌曲",
   "inboundWebhookUrl": "${resolvedServerHost}/api/skill/notify-completed",
   "inboundWebhookMethod": "POST"
 }` : `{
