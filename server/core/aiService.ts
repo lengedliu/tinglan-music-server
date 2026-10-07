@@ -82,7 +82,7 @@ export function buildAiPromptPayload(
   }
   // 剥离原有可能残留的提炼或下载后缀指令，避免重复或未替换
   cleanQuery = cleanQuery
-    .replace(/(\r?\n|\s)*(请提炼音乐检索结构化参数并输出\s*JSON|请帮我下载此首歌曲|请帮我下载此歌曲)/g, '')
+    .replace(/(\r?\n|\s)*(请提炼音乐检索结构化参数并输出\s*JSON|请帮我下载此首歌曲\s*--nas|请帮我下载此首歌曲|请帮我下载此歌曲)/g, '')
     .trim();
 
   if (isDownload) {
@@ -104,7 +104,7 @@ export function buildAiPromptPayload(
     temperature: options.temperature ?? 0.2,
     systemPrompt: '你是一个精通中国流行音乐、华语歌手别名黑话、歌词常识及音乐流派的意图提炼专家。将用户的口语化点歌指令提炼成标准歌曲名、规范歌手名与流派...',
     userPrompt: isDownload
-      ? `用户语音指令: "${cleanQuery}"\n请帮我下载此首歌曲`
+      ? `用户语音指令: "${cleanQuery}"\n请帮我下载此首歌曲 --nas`
       : `用户语音指令: "${cleanQuery}"\n请提炼音乐检索结构化参数并输出 JSON`
   };
 
