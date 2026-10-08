@@ -190,7 +190,7 @@ export class NasStorageService {
       domain: target.domain,
       username: target.username,
       password: target.password,
-      autoCloseTimeout: 12000
+      autoCloseTimeout: 60000
     });
     if (smb && (smb as any).socket) {
       (smb as any).socket.on('error', (err: any) => {
