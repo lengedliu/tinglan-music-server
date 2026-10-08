@@ -2,6 +2,7 @@ import './cryptoLegacyCompat.js';
 import fs from 'fs';
 import path from 'path';
 import net from 'net';
+import crypto from 'crypto';
 import { parseBuffer } from 'music-metadata';
 // @ts-ignore
 import SMB2 from '@marsaud/smb2';
@@ -539,6 +540,8 @@ export class NasStorageService {
       this.progress.totalFound = remoteTracks.length;
       appEventBus.broadcast('nas:progress', { ...this.progress });
 
+      musicRepository.startBatch();
+
       const CONCURRENCY = 4;
       const queue = [...remoteTracks];
 
@@ -553,7 +556,7 @@ export class NasStorageService {
           try {
             const parsedSong = await this.parseRemoteSongAsync(item);
             if (parsedSong) {
-              const existing = musicRepository.getSongById(parsedSong.id);
+              const existing = musicRepository.getSongById(parsedSong.id) || musicRepository.getAllSongs().find(s => s.localFilename === item.url);
               const isNew = !existing;
 
               musicRepository.addOrUpdateSong(parsedSong, false);
@@ -726,8 +729,18 @@ export class NasStorageService {
     const cleanPath = (this.config.basePath || '/').replace(/^\/+/, '');
     const startUrl = cleanPath ? `${cleanBaseUrl}/${cleanPath}` : cleanBaseUrl;
 
-    const visitedDirs = new Set<string>();
+    const normalizeKey = (u: string) => {
+      try {
+        return decodeURI(u.replace(/\/+$/, ''));
+      } catch {
+        return u.replace(/\/+$/, '');
+      }
+    };
+
+    const queuedKeys = new Set<string>();
+    const visitedKeys = new Set<string>();
     const queueDirs = [startUrl];
+    queuedKeys.add(normalizeKey(startUrl));
 
     const authHeader = this.config.username
       ? `Basic ${Buffer.from(`${this.config.username}:${this.config.password || ''}`).toString('base64')}`
@@ -737,9 +750,9 @@ export class NasStorageService {
 
     while (queueDirs.length > 0) {
       const currentDir = queueDirs.shift()!;
-      const normCurrent = currentDir.replace(/\/+$/, '');
-      if (visitedDirs.has(normCurrent)) continue;
-      visitedDirs.add(normCurrent);
+      const normCurrentKey = normalizeKey(currentDir);
+      if (visitedKeys.has(normCurrentKey)) continue;
+      visitedKeys.add(normCurrentKey);
 
       try {
         const propfindRes = await this.executeWebdavPropfind(currentDir, authHeader);
@@ -753,11 +766,11 @@ export class NasStorageService {
         let subDirCount = 0;
 
         for (const it of items) {
-          const normItemUrl = it.fullUrl.replace(/\/+$/, '');
+          const normItemKey = normalizeKey(it.fullUrl);
           if (it.isDir) {
-            // 排除当前目录自身以及隐藏文件夹
-            if (normItemUrl !== normCurrent && !visitedDirs.has(normItemUrl) && !it.name.startsWith('.')) {
-              visitedDirs.add(normItemUrl);
+            // 排除当前目录自身、已入队目录以及隐藏文件夹
+            if (normItemKey !== normCurrentKey && !queuedKeys.has(normItemKey) && !it.name.startsWith('.')) {
+              queuedKeys.add(normItemKey);
               queueDirs.push(it.fullUrl);
               subDirCount++;
             }
@@ -834,7 +847,13 @@ export class NasStorageService {
         if (this.config.username) {
           headers['Authorization'] = `Basic ${Buffer.from(`${this.config.username}:${this.config.password || ''}`).toString('base64')}`;
         }
-        const resp = await fetch(item.url, { headers });
+        let safeItemUrl = item.url;
+        try {
+          safeItemUrl = new URL(item.url).href;
+        } catch {
+          safeItemUrl = encodeURI(item.url);
+        }
+        const resp = await fetch(safeItemUrl, { headers, signal: AbortSignal.timeout(6000) });
         if (resp.ok || resp.status === 206) {
           const ab = await resp.arrayBuffer();
           headerBuffer = Buffer.from(ab);
@@ -859,7 +878,10 @@ export class NasStorageService {
       // Fallback to filename
     }
 
-    const songId = `nas-${Buffer.from(item.url).toString('base64url').slice(0, 32)}`;
+    const hash = crypto.createHash('sha256').update(item.url).digest('hex').slice(0, 24);
+    const defaultSongId = `nas-${hash}`;
+    const existing = musicRepository.getAllSongs().find(s => s.localFilename === item.url);
+    const songId = existing?.id || defaultSongId;
     const fileSizeMb = (item.size / (1024 * 1024)).toFixed(1);
 
     // Stream proxy url: standard TingLan streaming endpoint
@@ -872,13 +894,13 @@ export class NasStorageService {
       album,
       duration,
       url: streamUrl,
-      coverUrl,
-      lyrics: '',
+      coverUrl: existing?.coverUrl || coverUrl,
+      lyrics: existing?.lyrics || '',
       genre,
       year,
       bitrate: ext === '.flac' || ext === '.ape' || ext === '.wav' || ext === '.dsf' ? `NAS Hi-Res (${ext.slice(1).toUpperCase()})` : bitrate,
       fileSize: `${fileSizeMb} MB`,
-      isFavorite: false,
+      isFavorite: existing?.isFavorite || false,
       source: 'nas' as any,
       localFilename: item.url
     };
@@ -924,10 +946,18 @@ export class NasStorageService {
           headers['Content-Type'] = 'application/xml; charset=utf-8';
         }
 
-        const resp = await fetch(att.targetUrl, {
+        let safeUrl = att.targetUrl;
+        try {
+          safeUrl = new URL(att.targetUrl).href;
+        } catch {
+          safeUrl = encodeURI(att.targetUrl);
+        }
+
+        const resp = await fetch(safeUrl, {
           method: 'PROPFIND',
           headers,
-          body: att.body
+          body: att.body,
+          signal: AbortSignal.timeout(12000)
         });
 
         const text = await resp.text().catch(() => '');
@@ -1006,6 +1036,7 @@ export class NasStorageService {
   }> {
     const blocks = xml.match(/<[^/:]*:?response\b[\s\S]*?<\/[^:]*:?response>/gi) || [];
     const results: Array<any> = [];
+    const baseWithSlash = baseOriginOrUrl.endsWith('/') ? baseOriginOrUrl : `${baseOriginOrUrl}/`;
 
     for (const block of blocks) {
       const hrefMatch = block.match(/<[^:]*:?href[^>]*>(.*?)<\/[^:]*:?href>/i);
@@ -1016,16 +1047,30 @@ export class NasStorageService {
 
       let fullUrl = '';
       try {
-        fullUrl = new URL(rawHref, baseOriginOrUrl).href;
-      } catch {
         if (rawHref.startsWith('http://') || rawHref.startsWith('https://')) {
-          fullUrl = rawHref;
+          fullUrl = new URL(rawHref).href;
         } else {
-          fullUrl = `${baseOriginOrUrl.replace(/\/+$/, '')}/${rawHref.replace(/^\/+/, '')}`;
+          const baseObj = new URL(baseWithSlash);
+          const basePath = baseObj.pathname.replace(/\/+$/, '');
+          if (rawHref.startsWith('/')) {
+            if (!basePath || rawHref.startsWith(basePath)) {
+              fullUrl = new URL(rawHref, baseObj.origin).href;
+            } else {
+              fullUrl = new URL(`${basePath}${rawHref}`, baseObj.origin).href;
+            }
+          } else {
+            fullUrl = new URL(rawHref, baseWithSlash).href;
+          }
         }
+      } catch {
+        fullUrl = `${baseOriginOrUrl.replace(/\/+$/, '')}/${rawHref.replace(/^\/+/, '')}`;
       }
 
-      const decodedHref = decodeURIComponent(rawHref);
+      let decodedHref = rawHref;
+      try {
+        decodedHref = decodeURIComponent(rawHref);
+      } catch {}
+
       const isDir = /<[^:]*:?collection\b/i.test(block) || rawHref.endsWith('/') || decodedHref.endsWith('/');
       const name = decodedHref.replace(/\/+$/, '').split('/').pop() || '';
       if (!name || name === '.' || name === '..') continue;

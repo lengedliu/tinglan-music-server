@@ -1997,7 +1997,8 @@ export default function App() {
       if (data.song) {
         setSongs(prev => [data.song, ...prev.filter(s => s.id !== data.song.id)]);
         const savedFile = data.savedPath || data.song.localFilename || `${data.song.title}.mp3`;
-        showToast('歌曲入库并持久化成功', `《${data.song.title}》已写入服务端 /music/${savedFile}`, 'success');
+        const dirDisplay = data.absoluteMusicDir ? `${data.absoluteMusicDir}` : '/music';
+        showToast('歌曲入库并持久化成功', `《${data.song.title}》已写入物理存储: ${dirDisplay}/${savedFile}`, 'success');
         handlePlaySong(data.song);
         return;
       } else {

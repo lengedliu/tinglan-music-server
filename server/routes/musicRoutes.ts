@@ -299,6 +299,10 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
         finalLocalFileName = `${songId}${ext}`;
       }
 
+      if (!fs.existsSync(musicDir)) {
+        fs.mkdirSync(musicDir, { recursive: true });
+      }
+
       const targetPath = path.join(musicDir, finalLocalFileName);
 
       try {
@@ -306,7 +310,7 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
       } catch (writeErr: any) {
         return res.status(500).json({
           success: false,
-          error: `保存音频文件到本地存储目录失败: ${writeErr.message}`
+          error: `保存音频文件到本地存储目录失败 (${path.resolve(musicDir)}): ${writeErr.message}`
         });
       }
 
@@ -388,7 +392,12 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
         total: getSongs().length
       });
 
-      res.json({ success: true, song: newSong, savedPath: finalLocalFileName });
+      res.json({ 
+        success: true, 
+        song: newSong, 
+        savedPath: finalLocalFileName,
+        absoluteMusicDir: path.resolve(musicDir)
+      });
     } catch (err: any) {
       console.error('Upload handler error:', err);
       res.status(500).json({ success: false, error: err.message });

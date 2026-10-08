@@ -488,6 +488,13 @@ export function createStreamRouter(options: StreamRouterOptions) {
       }
     }
 
+    // Check if song is from WebDAV NAS Storage (localFilename holds remote HTTP/HTTPS URL)
+    if (!remoteStreamUrl && foundSong && (foundSong.source === 'nas' || foundSong.id.startsWith('nas-')) && foundSong.localFilename && /^https?:\/\//i.test(foundSong.localFilename)) {
+      if (options.isSafeRemoteStreamUrl(foundSong.localFilename)) {
+        remoteStreamUrl = foundSong.localFilename;
+      }
+    }
+
     if (remoteStreamUrl) {
       const userAgent = String(req.headers['user-agent'] || '');
       const clientIp = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1').replace('::ffff:', '');
@@ -505,6 +512,14 @@ export function createStreamRouter(options: StreamRouterOptions) {
       };
       if (req.headers.range) {
         proxyHeaders['Range'] = String(req.headers.range);
+      }
+
+      // Inject WebDAV credentials if proxying remote NAS WebDAV stream
+      if (foundSong && (foundSong.source === 'nas' || foundSong.id.startsWith('nas-'))) {
+        const nasCfg = nasStorageService.getConfig();
+        if (nasCfg.username && !proxyHeaders['Authorization']) {
+          proxyHeaders['Authorization'] = `Basic ${Buffer.from(`${nasCfg.username}:${nasCfg.password || ''}`).toString('base64')}`;
+        }
       }
 
       const abortController = new AbortController();
@@ -546,7 +561,7 @@ export function createStreamRouter(options: StreamRouterOptions) {
         if (!remoteRes.ok && remoteRes.status !== 206) {
           return res.status(remoteRes.status).json({
             error: 'Remote audio stream error',
-            message: `Navidrome 远端服务器响应状态错误 (HTTP ${remoteRes.status})`
+            message: `远端音频服务器响应状态错误 (HTTP ${remoteRes.status})`
           });
         }
 
