@@ -8,6 +8,7 @@ import { musicRepository } from './repositories/musicRepository.js';
 import { musicSearchIndex } from './searchIndex.js';
 import { libraryHealthService } from './libraryHealthService.js';
 import { appEventBus } from './eventBus.js';
+import { logEngine } from './logEngine.js';
 
 export interface NasConfig {
   enabled: boolean;
@@ -104,6 +105,14 @@ export class NasStorageService {
         fs.mkdirSync(dataDir, { recursive: true });
       }
       fs.writeFileSync(this.configPath, JSON.stringify(this.config, null, 2), 'utf-8');
+      logEngine.info('system', 'NAS 存储配置保存成功', `配置已更新: 协议=${this.config.type}, 服务器=${this.config.serverUrl || this.config.basePath}${this.config.port ? ':' + this.config.port : ''}`, {
+        type: this.config.type,
+        serverUrl: this.config.serverUrl,
+        port: this.config.port,
+        basePath: this.config.basePath,
+        shareName: this.config.shareName,
+        enabled: this.config.enabled
+      });
     } catch (err) {
       console.error('[NasStorageService] Failed to save nas_config.json:', err);
     }
@@ -236,6 +245,15 @@ export class NasStorageService {
             }
             smb.disconnect();
           } catch {}
+          logEngine.error('system', 'NAS SMB 连接测试失败', `SMB 共享 \\\\${smbHost}\\${shareName}:${smbPort} 测试失败: ${err.message}`, {
+            protocol: 'smb',
+            host: smbHost,
+            port: smbPort,
+            share: shareName,
+            subFolder,
+            user: cfg.username || '(匿名)',
+            error: err.message
+          });
           reject(err);
         };
         const safeResolve = (data: any) => {
@@ -248,6 +266,15 @@ export class NasStorageService {
             }
             smb.disconnect();
           } catch {}
+          logEngine.info('system', 'NAS SMB 连接测试成功', `SMB 共享 \\\\${smbHost}\\${shareName}:${smbPort} 测试通过，探测到 ${data.totalFilesCount || 0} 首音频`, {
+            protocol: 'smb',
+            host: smbHost,
+            port: smbPort,
+            share: shareName,
+            subFolder,
+            latencyMs: data.latencyMs,
+            totalFilesCount: data.totalFilesCount
+          });
           resolve(data);
         };
 

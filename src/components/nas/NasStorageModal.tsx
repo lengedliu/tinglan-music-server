@@ -17,7 +17,9 @@ import {
   Eye,
   EyeOff,
   Folder,
-  Save
+  Save,
+  Copy,
+  FileText
 } from 'lucide-react';
 import { useTheme } from '../../context/ThemeContext';
 import { apiFetch } from '../../utils/api';
@@ -85,6 +87,8 @@ export const NasStorageModal: React.FC<NasStorageModalProps> = ({
   const [syncProgress, setSyncProgress] = useState<any>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
+  const [saveErrorMsg, setSaveErrorMsg] = useState<string | null>(null);
+  const [copyLogsFeedback, setCopyLogsFeedback] = useState(false);
 
   const fetchConfig = async () => {
     try {
@@ -109,6 +113,7 @@ export const NasStorageModal: React.FC<NasStorageModalProps> = ({
       fetchConfig();
       setTestResult(null);
       setSaveSuccessMsg(null);
+      setSaveErrorMsg(null);
     }
   }, [isOpen]);
 
@@ -209,6 +214,7 @@ export const NasStorageModal: React.FC<NasStorageModalProps> = ({
   const handleSaveConfig = async () => {
     setLoading(true);
     setSaveSuccessMsg(null);
+    setSaveErrorMsg(null);
     try {
       const res = await apiFetch('/api/nas/save', {
         method: 'POST',
@@ -218,10 +224,13 @@ export const NasStorageModal: React.FC<NasStorageModalProps> = ({
       const data = await res.json();
       if (res.ok && data.success) {
         setSaveSuccessMsg('NAS 挂载配置已成功保存！');
-        setTimeout(() => setSaveSuccessMsg(null), 3000);
+        setSaveErrorMsg(null);
+        setTimeout(() => setSaveSuccessMsg(null), 3500);
+      } else {
+        setSaveErrorMsg(data?.error || '保存 NAS 配置失败');
       }
     } catch (err: any) {
-      alert('保存失败: ' + err.message);
+      setSaveErrorMsg(err?.message || '网络异常，保存 NAS 配置失败');
     } finally {
       setLoading(false);
     }
@@ -229,13 +238,18 @@ export const NasStorageModal: React.FC<NasStorageModalProps> = ({
 
   const handleTriggerSync = async () => {
     setSyncing(true);
+    setSaveErrorMsg(null);
     try {
       // 触发同步前自动保存最新配置
-      await apiFetch('/api/nas/save', {
+      const saveRes = await apiFetch('/api/nas/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config)
       });
+      const saveData = await saveRes.json();
+      if (!saveRes.ok || !saveData.success) {
+        throw new Error(saveData?.error || '保存配置失败');
+      }
 
       const res = await apiFetch('/api/nas/sync', {
         method: 'POST',
@@ -244,9 +258,11 @@ export const NasStorageModal: React.FC<NasStorageModalProps> = ({
       const data = await res.json();
       if (res.ok && data.success) {
         setSyncProgress({ isSyncing: true, totalFound: 0, processed: 0, added: 0, updated: 0 });
+      } else {
+        throw new Error(data?.error || '启动同步任务失败');
       }
     } catch (err: any) {
-      alert('启动同步失败: ' + err.message);
+      setSaveErrorMsg(err?.message || '启动同步失败');
       setSyncing(false);
     }
   };
@@ -640,14 +656,41 @@ export const NasStorageModal: React.FC<NasStorageModalProps> = ({
                 ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 dark:text-emerald-300' 
                 : 'bg-rose-500/10 border-rose-500/30 text-rose-500 dark:text-rose-300'
             }`}>
-              <div className="flex items-center gap-2 font-bold">
-                {testResult.success ? <CheckCircle2 className="w-4 h-4 text-emerald-500" /> : <AlertCircle className="w-4 h-4 text-rose-500" />}
-                <span>{testResult.success ? 'NAS 挂载连接测试通过！' : 'NAS 挂载连接测试失败'}</span>
-                {testResult.latencyMs !== undefined && (
-                  <span className="font-mono text-[11px] opacity-80">({testResult.latencyMs}ms 延迟)</span>
+              <div className="flex items-center justify-between font-bold">
+                <div className="flex items-center gap-2">
+                  {testResult.success ? <CheckCircle2 className="w-4 h-4 text-emerald-500" /> : <AlertCircle className="w-4 h-4 text-rose-500" />}
+                  <span>{testResult.success ? 'NAS 挂载连接测试通过！' : 'NAS 挂载连接测试失败'}</span>
+                  {testResult.latencyMs !== undefined && (
+                    <span className="font-mono text-[11px] opacity-80">({testResult.latencyMs}ms 延迟)</span>
+                  )}
+                </div>
+                {!testResult.success && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const logText = `[NAS 存储诊断报告]\n协议: ${config.type.toUpperCase()}\n主机: ${config.serverUrl || config.basePath}\n端口: ${config.port || 445}\n共享名: ${config.shareName || config.basePath}\n账号: ${config.username || '(匿名)'}\n错误详情:\n${testResult.error || testResult.message || ''}\n时间: ${new Date().toISOString()}`;
+                      navigator.clipboard?.writeText(logText);
+                      setCopyLogsFeedback(true);
+                      setTimeout(() => setCopyLogsFeedback(false), 2000);
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-[11px] font-medium transition cursor-pointer flex items-center gap-1.5 text-rose-300"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>{copyLogsFeedback ? '已复制日志报告' : '复制诊断日志'}</span>
+                  </button>
                 )}
               </div>
-              <p className="mt-1 text-[11px] opacity-90 whitespace-pre-line leading-relaxed">{testResult.message || testResult.error}</p>
+              <p className="mt-2 text-[11px] opacity-90 whitespace-pre-line leading-relaxed font-mono bg-black/10 dark:bg-black/30 p-3 rounded-xl select-text border border-white/5">
+                {testResult.message || testResult.error}
+              </p>
+              {!testResult.success && (
+                <div className="mt-2 pt-2 border-t border-rose-500/20 flex items-center justify-between text-[11px] opacity-80">
+                  <div className="flex items-center gap-1.5">
+                    <FileText className="w-3.5 h-3.5 text-rose-400" />
+                    <span>详细网络与握手轨迹已记录至系统【系统日志】模块（顶部导航栏「系统日志」即可随时回溯）</span>
+                  </div>
+                </div>
+              )}
               {testResult.foundSampleFiles && testResult.foundSampleFiles.length > 0 && (
                 <div className="mt-2 pt-2 border-t border-emerald-500/20">
                   <span className="text-[10px] opacity-70">探测到的音轨示例：</span>
@@ -704,8 +747,15 @@ export const NasStorageModal: React.FC<NasStorageModalProps> = ({
 
           {saveSuccessMsg && (
             <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-500 dark:text-emerald-300 text-xs flex items-center gap-2 animate-in fade-in">
-              <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+              <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
               <span className="font-medium">{saveSuccessMsg}</span>
+            </div>
+          )}
+
+          {saveErrorMsg && (
+            <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-500 dark:text-red-300 text-xs flex items-center gap-2 animate-in fade-in">
+              <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
+              <span className="font-medium">{saveErrorMsg}</span>
             </div>
           )}
         </div>
