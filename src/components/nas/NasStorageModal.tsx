@@ -443,7 +443,7 @@ export const NasStorageModal: React.FC<NasStorageModalProps> = ({
                       type="number"
                       value={config.port ?? 445}
                       onChange={(e) => setConfig({ ...config, port: parseInt(e.target.value, 10) || 445 })}
-                      placeholder="445 或 442"
+                      placeholder="445"
                       className={inputClass}
                     />
                   </div>

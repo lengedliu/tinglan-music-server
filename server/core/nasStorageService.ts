@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import net from 'net';
 import { parseBuffer } from 'music-metadata';
 // @ts-ignore
 import SMB2 from '@marsaud/smb2';
@@ -16,7 +17,7 @@ export interface NasConfig {
   serverUrl: string; // e.g. http://192.168.1.100:5005 or 192.168.1.100
   basePath: string; // e.g. /music or share name
   shareName?: string; // for SMB: e.g. music or public
-  port?: number; // for SMB: default 445 or custom forwarded port e.g. 442
+  port?: number; // for SMB: default 445
   domain?: string; // for SMB: default WORKGROUP
   username?: string;
   password?: string;
@@ -151,6 +152,103 @@ export class NasStorageService {
   /**
    * Test connection to WebDAV or local mount point
    */
+  public getSmbTarget(cfg: NasConfig): {
+    host: string; port: number; shareName: string; subFolder: string;
+    domain: string; username: string; password: string;
+  } {
+    let rawHost = (cfg.serverUrl || '').replace(/^(?:smb:\/\/|\\\\)/i, '').replace(/[\/\\]+.*$/, '').trim();
+    if (!rawHost) throw new Error('请输入 SMB 服务器 IP 或主机名，例如 192.168.50.153');
+
+    let host = rawHost;
+    let port = cfg.port && cfg.port > 0 ? cfg.port : 445;
+    const hp = rawHost.match(/^(.+):([0-9]+)$/);
+    if (hp) {
+      host = hp[1].trim();
+      const n = Number(hp[2]);
+      if (Number.isInteger(n) && n > 0 && n <= 65535) port = n;
+    }
+
+    let rawShare = (cfg.shareName || cfg.basePath || 'music').trim().replace(/^[\\/]+/, '');
+    rawShare = rawShare.replace(/^volume\d+[\\/]+/i, '');
+    const parts = rawShare.split(/[\\/]+/).filter(Boolean);
+    const shareName = parts.shift() || 'music';
+
+    return {
+      host, port, shareName,
+      subFolder: parts.join('\\'),
+      domain: cfg.domain || 'WORKGROUP',
+      username: cfg.username || 'guest',
+      password: cfg.password || ''
+    };
+  }
+
+  public createSmbClient(cfg: NasConfig): { smb: any; target: ReturnType<NasStorageService['getSmbTarget']> } {
+    const target = this.getSmbTarget(cfg);
+    const smb = new SMB2({
+      share: `\\\\${target.host}\\${target.shareName}`,
+      port: target.port,
+      domain: target.domain,
+      username: target.username,
+      password: target.password,
+      autoCloseTimeout: 12000
+    });
+    if (smb && (smb as any).socket) {
+      (smb as any).socket.on('error', (err: any) => {
+        console.warn('[NasStorageService] SMB socket handled error:', err?.message || err);
+      });
+    }
+    return { smb, target };
+  }
+
+  public smbReaddir(smb: any, dir: string): Promise<string[]> {
+    return new Promise((resolve, reject) => {
+      smb.readdir(dir || '', (err: any, files: string[]) => {
+        if (err) return reject(err);
+        resolve(Array.isArray(files) ? files : []);
+      });
+    });
+  }
+
+  public smbStat(smb: any, filePath: string): Promise<any> {
+    return new Promise((resolve, reject) => {
+      if (typeof smb.stat !== 'function') return reject(new Error('@marsaud/smb2 当前版本不提供 stat()，无法安全递归 SMB 目录'));
+      smb.stat(filePath, (err: any, stat: any) => err ? reject(err) : resolve(stat));
+    });
+  }
+
+  public smbReadFile(smb: any, filePath: string): Promise<Buffer> {
+    return new Promise((resolve, reject) => {
+      if (typeof smb.readFile !== 'function') return reject(new Error('@marsaud/smb2 当前版本不提供 readFile()'));
+      smb.readFile(filePath, (err: any, data: Buffer) => err ? reject(err) : resolve(Buffer.isBuffer(data) ? data : Buffer.from(data)));
+    });
+  }
+
+  public isSmbDirectory(stat: any): boolean {
+    if (!stat) return false;
+    if (typeof stat.isDirectory === 'function') return stat.isDirectory();
+    if (typeof stat.isDirectory === 'boolean') return stat.isDirectory;
+    if (typeof stat.mode === 'number') return (stat.mode & 0o170000) === 0o040000;
+    return false;
+  }
+
+  public closeSmb(smb: any): void {
+    try { if (smb && (smb as any).socket) (smb as any).socket.destroy(); } catch {}
+    try { if (typeof smb?.disconnect === 'function') smb.disconnect(); } catch {}
+  }
+
+  public async readSmbFile(smbUrl: string): Promise<Buffer> {
+    if (this.config.type !== 'smb') throw new Error('当前 NAS 存储类型不是 SMB');
+    const { smb, target } = this.createSmbClient(this.config);
+    try {
+      const prefix = `smb://${target.host}/${target.shareName}/`;
+      let remotePath = smbUrl.startsWith(prefix) ? smbUrl.slice(prefix.length) : smbUrl;
+      remotePath = decodeURIComponent(remotePath).replace(/\//g, '\\');
+      return await this.smbReadFile(smb, remotePath);
+    } finally {
+      this.closeSmb(smb);
+    }
+  }
+
   public async testConnection(testCfg?: Partial<NasConfig>): Promise<{
     success: boolean;
     latencyMs: number;
@@ -185,87 +283,75 @@ export class NasStorageService {
 
     // SMB / Samba Test
     if (cfg.type === 'smb') {
-      let rawHost = (cfg.serverUrl || '').replace(/^(?:smb:\/\/|\\\\)/i, '').replace(/[\/\\]+.*$/, '').trim();
-      if (!rawHost) {
-        throw new Error('请输入 SMB 共享主机 IP 或名称 (如 192.168.50.153 或 192.168.50.153:445)');
-      }
+      const target = this.getSmbTarget(cfg);
+      const { host: smbHost, port: smbPort, shareName, subFolder } = target;
 
-      // 智能提取主机名与端口 (支持显式端口配置、192.168.1.100:442 或默认 445)
-      let smbHost = rawHost;
-      let smbPort = cfg.port && cfg.port > 0 ? cfg.port : 445;
-      if (rawHost.includes(':')) {
-        const [h, p] = rawHost.split(':');
-        smbHost = h.trim();
-        const parsedP = parseInt(p, 10);
-        if (!isNaN(parsedP) && parsedP > 0) {
-          smbPort = parsedP;
-        }
-      }
-
-      // 智能解析共享名与子目录（如用户误输入 "/volume1/music" 或 "media/music"）
-      let rawShare = (cfg.shareName || cfg.basePath || 'music').trim().replace(/^[\\\/]+/, '');
-      // 容错：如果用户填了 volume1/music，自动剔除底层的 Linux 卷名前缀
-      if (/^volume\d+[\\\/]/i.test(rawShare)) {
-        rawShare = rawShare.replace(/^volume\d+[\\\/]+/i, '');
-      }
-      const pathParts = rawShare.split(/[\\\/]+/);
-      const shareName = pathParts[0] || 'music';
-      const subFolder = pathParts.slice(1).join('\\');
-
-      const isPrivateLanIp = /^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/.test(smbHost);
-
-      let smb: any;
+      // 阶段 1：原生 TCP 端口连通性快速探测 (3.5 秒超时)
+      // 快速精准定位：到底是网络层/端口不通，还是连通后 SMB 协议握手问题
       try {
-        smb = new SMB2({
-          share: `\\\\${smbHost}\\${shareName}`,
-          port: smbPort,
-          domain: cfg.domain || 'WORKGROUP',
-          username: cfg.username || 'guest',
-          password: cfg.password || '',
-          autoCloseTimeout: 12000
-        });
-        if (smb && (smb as any).socket) {
-          (smb as any).socket.on('error', (err: any) => {
-            console.warn('[NasStorageService] Suppressed SMB raw socket error:', err?.message || err);
+        await new Promise<void>((resolveTcp, rejectTcp) => {
+          const socket = net.createConnection({ host: smbHost, port: smbPort }, () => {
+            socket.destroy();
+            resolveTcp();
           });
-        }
-      } catch (smbInitErr: any) {
-        throw new Error(`SMB 初始化失败: ${smbInitErr.message}`);
+          socket.setTimeout(3500);
+          socket.on('timeout', () => {
+            socket.destroy();
+            rejectTcp(new Error(`TCP 端口连接超时 (3.5秒): 无法与 ${smbHost}:${smbPort} 建立网络连接。\n\n局域网排查清单：\n` +
+              `1. 局域网连通性：请在终端执行 ping ${smbHost} 确认本地电脑与 NAS 能够通信；\n` +
+              `2. WSL2 / 虚拟机环境：如果在 Windows WSL2 或虚拟机终端中运行，WSL2 虚拟网卡与宿主机防火墙默认会阻断局域网 445 出站端口；\n` +
+              `3. 路由器隔离：请检查 Wi-Fi 是否开启了「AP 隔离」或电脑连接了「访客 Wi-Fi」；\n` +
+              `4. NAS 防火墙：请检查 NAS 防火墙是否放行了 TCP ${smbPort} 端口。`));
+          });
+          socket.on('error', (netErr: any) => {
+            socket.destroy();
+            const errCode = netErr.code || netErr.message;
+            rejectTcp(new Error(`TCP 网络连接失败 (${errCode}): 无法连接至 ${smbHost}:${smbPort}。\n\n局域网排查清单：\n` +
+              `1. 请核对 NAS 主机 IP「${smbHost}」是否正确在线；\n` +
+              `2. 确认 NAS 已开启 SMB 文件服务且监听 ${smbPort} 端口；\n` +
+              `3. 检查本地电脑或 NAS 防火墙是否拦截了 ${smbPort} 端口。`));
+          });
+        });
+      } catch (tcpErr: any) {
+        logEngine.error('system', 'NAS SMB TCP 端口探测失败', `TCP 探测失败 (${smbHost}:${smbPort}): ${tcpErr.message}`, {
+          protocol: 'smb',
+          host: smbHost,
+          port: smbPort,
+          error: tcpErr.message
+        });
+        throw tcpErr;
       }
+
+      // 阶段 2：SMB2 协议握手探测
+      const { smb } = this.createSmbClient(cfg);
 
       return new Promise((resolve, reject) => {
         let isSettled = false;
+        let timeoutTimer: NodeJS.Timeout;
+        const safeClose = () => this.closeSmb(smb);
+
         const safeReject = (err: Error) => {
           if (isSettled) return;
           isSettled = true;
           clearTimeout(timeoutTimer);
-          try {
-            if (smb && (smb as any).socket) {
-              (smb as any).socket.destroy();
-            }
-            smb.disconnect();
-          } catch {}
+          safeClose();
           logEngine.error('system', 'NAS SMB 连接测试失败', `SMB 共享 \\\\${smbHost}\\${shareName}:${smbPort} 测试失败: ${err.message}`, {
             protocol: 'smb',
             host: smbHost,
             port: smbPort,
             share: shareName,
             subFolder,
-            user: cfg.username || '(匿名)',
+            user: target.username || '(匿名)',
             error: err.message
           });
           reject(err);
         };
+
         const safeResolve = (data: any) => {
           if (isSettled) return;
           isSettled = true;
           clearTimeout(timeoutTimer);
-          try {
-            if (smb && (smb as any).socket) {
-              (smb as any).socket.destroy();
-            }
-            smb.disconnect();
-          } catch {}
+          safeClose();
           logEngine.info('system', 'NAS SMB 连接测试成功', `SMB 共享 \\\\${smbHost}\\${shareName}:${smbPort} 测试通过，探测到 ${data.totalFilesCount || 0} 首音频`, {
             protocol: 'smb',
             host: smbHost,
@@ -278,11 +364,11 @@ export class NasStorageService {
           resolve(data);
         };
 
-        const timeoutTimer = setTimeout(() => {
-          const lanHint = isPrivateLanIp
-            ? `\n\n💡 提示：检测到您配置的是家庭局域网私有 IP（${smbHost}）。如果当前在云端 Web 预览环境测试，云端服务器无法跨公网直连您家中的私网 NAS。请将听澜部署在本地家庭 NAS / Docker 局域网中运行；或在云端使用已验证成功的 WebDAV 协议。`
-            : `\n\n💡 提示：公网 TCP 445 端口通常被国内电信/联通/移动运营商全面封禁以防范病毒勒索。跨公网连接 NAS 强烈建议使用 WebDAV 协议。`;
-          safeReject(new Error(`连接 SMB 服务器 (${smbHost}:${smbPort}) 响应超时 (12秒)。${lanHint}`));
+        timeoutTimer = setTimeout(() => {
+          safeReject(new Error(`TCP 端口 ${smbPort} 已连通，但 SMB2 协议协商应答超时 (12秒)。\n\n核心排查：\n` +
+            `1. 认证挂起：群晖/现代 NAS 默认关闭了 NTLMv1。请在 NAS【控制面板 → 文件服务 → SMB → 高级设置】勾选「启用 NTLMv1 身份验证」；\n` +
+            `2. 加密传输冲突：检查 NAS 是否设置了「强制加密传输 (SMB Encryption)」，目前客户端暂不支持强制传输加密，请在 NAS 端将传输加密设为「自动/允许」；\n` +
+            `3. 共享权限：确认账号「${target.username}」对共享文件夹「${shareName}」拥有读取权限。`));
         }, 12000);
 
         try {
@@ -561,70 +647,40 @@ export class NasStorageService {
     }
 
     if (this.config.type === 'smb') {
-      let rawHost = (this.config.serverUrl || '').replace(/^(?:smb:\/\/|\\\\)/i, '').replace(/[\/\\]+.*$/, '').trim();
-      let smbHost = rawHost;
-      let smbPort = this.config.port && this.config.port > 0 ? this.config.port : 445;
-      if (rawHost.includes(':')) {
-        const [h, p] = rawHost.split(':');
-        smbHost = h.trim();
-        const parsedP = parseInt(p, 10);
-        if (!isNaN(parsedP) && parsedP > 0) {
-          smbPort = parsedP;
-        }
-      }
-
-      let rawShare = (this.config.shareName || this.config.basePath || 'music').trim().replace(/^[\\\/]+/, '');
-      if (/^volume\d+[\\\/]/i.test(rawShare)) {
-        rawShare = rawShare.replace(/^volume\d+[\\\/]+/i, '');
-      }
-      const pathParts = rawShare.split(/[\\\/]+/);
-      const shareName = pathParts[0] || 'music';
-      const initialSubFolder = pathParts.slice(1).join('\\');
-
-      const smb = new SMB2({
-        share: `\\\\${smbHost}\\${shareName}`,
-        port: smbPort,
-        domain: this.config.domain || 'WORKGROUP',
-        username: this.config.username || 'guest',
-        password: this.config.password || '',
-        autoCloseTimeout: 12000
-      });
-      if (smb && (smb as any).socket) {
-        (smb as any).socket.on('error', (err: any) => {
-          console.warn('[NasStorageService] Suppressed scan SMB raw socket error:', err?.message || err);
-        });
-      }
+      const { smb, target } = this.createSmbClient(this.config);
+      const { host: smbHost, shareName, subFolder: initialSubFolder } = target;
 
       const walkSmb = async (subDir: string): Promise<void> => {
-        return new Promise((resolve) => {
-          smb.readdir(subDir || '', async (err: any, files: string[]) => {
-            if (err || !files) return resolve();
-            for (const file of files) {
-              if (file.startsWith('.')) continue;
-              const relPath = subDir ? `${subDir}\\${file}` : file;
-              const ext = path.extname(file).toLowerCase();
-              if (SUPPORTED_EXTS.has(ext)) {
-                results.push({
-                  url: `smb://${smbHost}/${shareName}/${relPath.replace(/\\/g, '/')}`,
-                  name: file,
-                  size: 25 * 1024 * 1024 // Estimated size for stream
-                });
-              }
-            }
-            resolve();
+        const files = await this.smbReaddir(smb, subDir);
+        for (const file of files) {
+          if (!file || file === '.' || file === '..' || file.startsWith('.')) continue;
+          const relPath = subDir ? `${subDir}\\${file}` : file;
+          let stat: any;
+          try {
+            stat = await this.smbStat(smb, relPath);
+          } catch (err: any) {
+            console.warn(`[NasStorageService][SMB] stat failed: ${relPath}:`, err?.message || err);
+            continue;
+          }
+          if (this.isSmbDirectory(stat)) {
+            await walkSmb(relPath);
+            continue;
+          }
+          const ext = path.extname(file).toLowerCase();
+          if (!SUPPORTED_EXTS.has(ext)) continue;
+          results.push({
+            url: `smb://${smbHost}/${shareName}/${relPath.replace(/\\/g, '/')}`,
+            name: file,
+            size: Number(stat?.size) || 0,
+            mtime: stat?.mtime ? new Date(stat.mtime).toISOString() : undefined
           });
-        });
+        }
       };
 
       try {
         await walkSmb(initialSubFolder);
       } finally {
-        try {
-          if (smb && (smb as any).socket) {
-            (smb as any).socket.destroy();
-          }
-          smb.disconnect();
-        } catch {}
+        this.closeSmb(smb);
       }
       return results;
     }
@@ -712,8 +768,18 @@ export class NasStorageService {
         headerBuffer = Buffer.alloc(Math.min(262144, item.size));
         await fd.read(headerBuffer, 0, headerBuffer.length, 0);
         await fd.close();
+      } else if (this.config.type === 'smb') {
+        // Native fetch() does not support smb://. Use SMB2 for SMB metadata reads.
+        if (item.size <= 50 * 1024 * 1024) {
+          try {
+            const data = await this.readSmbFile(item.url);
+            headerBuffer = data.subarray(0, Math.min(262144, data.length));
+          } catch (smbErr: any) {
+            console.warn(`[NasStorageService] SMB read failed for tag parsing (${item.name}):`, smbErr?.message);
+          }
+        }
       } else {
-        // Fetch first 256KB via HTTP Range request
+        // WebDAV / HTTP: Fetch first 256KB via HTTP Range request
         const headers: Record<string, string> = {
           'Range': 'bytes=0-262143',
           'User-Agent': 'TingLan-Music-Server/1.0'
@@ -749,8 +815,8 @@ export class NasStorageService {
     const songId = `nas-${Buffer.from(item.url).toString('base64url').slice(0, 32)}`;
     const fileSizeMb = (item.size / (1024 * 1024)).toFixed(1);
 
-    // Stream proxy url
-    const streamUrl = `/api/stream/remote/${encodeURIComponent(songId)}?url=${encodeURIComponent(item.url)}`;
+    // Stream proxy url: standard TingLan streaming endpoint
+    const streamUrl = `/api/stream/${encodeURIComponent(songId)}`;
 
     return {
       id: songId,

@@ -9,6 +9,7 @@ import { transcodeSemaphorePool } from '../streaming/transcodeSemaphore.js';
 import { queueEngine } from '../core/queueEngine.js';
 import { ttsEngine, POPULAR_TTS_VOICES } from '../ttsEngine.js';
 import { radioService } from '../services/radioService.js';
+import { nasStorageService } from '../core/nasStorageService.js';
 
 export interface StreamEventInfo {
   timestamp: string;
@@ -351,6 +352,62 @@ export function createStreamRouter(options: StreamRouterOptions) {
     }
 
     let foundSong = storedSongs.find(s => s.id === cleanSongId || s.id === songId);
+
+    // 0.1 Check if requested stream is from SMB NAS Storage
+    if (foundSong && (foundSong.source === 'nas' || foundSong.id.startsWith('nas-')) && (foundSong.localFilename?.startsWith('smb://') || foundSong.url?.startsWith('smb://'))) {
+      const smbUrl = foundSong.localFilename?.startsWith('smb://') ? foundSong.localFilename : foundSong.url;
+      try {
+        const audioBuffer = await nasStorageService.readSmbFile(smbUrl);
+        const totalLength = audioBuffer.length;
+        const ext = path.extname(smbUrl).toLowerCase() || '.mp3';
+        const mimeMap: Record<string, string> = {
+          '.mp3': 'audio/mpeg',
+          '.flac': 'audio/flac',
+          '.wav': 'audio/wav',
+          '.m4a': 'audio/mp4',
+          '.aac': 'audio/aac',
+          '.ogg': 'audio/ogg',
+          '.opus': 'audio/opus',
+          '.ape': 'audio/ape',
+          '.dsf': 'audio/x-dsd',
+          '.dff': 'audio/x-dsd'
+        };
+        const contentType = mimeMap[ext] || 'audio/mpeg';
+
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Accept-Ranges', 'bytes');
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+
+        if (req.method === 'HEAD') {
+          res.setHeader('Content-Length', totalLength);
+          return res.status(200).end();
+        }
+
+        const rangeHeader = req.headers.range;
+        if (rangeHeader) {
+          const parts = rangeHeader.replace(/bytes=/, '').split('-');
+          const start = parseInt(parts[0], 10);
+          const end = parts[1] ? parseInt(parts[1], 10) : totalLength - 1;
+
+          if (start >= totalLength || end >= totalLength) {
+            res.status(416).setHeader('Content-Range', `bytes */${totalLength}`).end();
+            return;
+          }
+
+          const chunk = audioBuffer.subarray(start, end + 1);
+          res.status(206);
+          res.setHeader('Content-Range', `bytes ${start}-${end}/${totalLength}`);
+          res.setHeader('Content-Length', chunk.length);
+          return res.send(chunk);
+        } else {
+          res.setHeader('Content-Length', totalLength);
+          return res.send(audioBuffer);
+        }
+      } catch (smbErr: any) {
+        console.error('[StreamRoutes] SMB audio streaming error:', smbErr?.message);
+        return res.status(502).json({ error: 'SMB audio streaming error', message: `SMB 远程音频读取失败: ${smbErr?.message}` });
+      }
+    }
 
     // Resolve local file path
     let localFilePath = '';
