@@ -466,15 +466,38 @@ export class NasStorageService {
       throw new Error(`WebDAV 服务器响应异常 (HTTP ${propfindRes.status} ${propfindRes.statusText}) ${propfindRes.errorDetail || ''}`);
     }
 
-    const files = this.extractFilenamesFromPropfindXml(propfindRes.text);
-    const audioFiles = files.filter(f => SUPPORTED_EXTS.has(path.extname(f).toLowerCase()));
+    const items = this.parseDetailedPropfindXml(propfindRes.text, targetUrl);
+    const normTarget = targetUrl.replace(/\/+$/, '');
+    const subDirs = items.filter(it => it.isDir && it.fullUrl.replace(/\/+$/, '') !== normTarget);
+    const audioFiles = items.filter(it => !it.isDir && SUPPORTED_EXTS.has(path.extname(it.name).toLowerCase()));
+
+    let message = '';
+    if (audioFiles.length > 0) {
+      message = `WebDAV 连接成功！响应耗时 ${latencyMs}ms，在当前目录直属层检测到 ${audioFiles.length} 首音频` +
+        (subDirs.length > 0 ? `，另有 ${subDirs.length} 个子文件夹（同步时将自动递归扫描全部子目录）` : '');
+    } else if (subDirs.length > 0) {
+      const sampleDirs = subDirs.slice(0, 4).map(d => d.name).join('、');
+      message = `WebDAV 连接成功！响应耗时 ${latencyMs}ms。当前直属层无散装音频，但成功检测到 ${subDirs.length} 个子文件夹（如：${sampleDirs}），同步时将自动递归扫描所有子目录中的歌曲！`;
+    } else {
+      let smartTip = `当前路径「${cfg.basePath || '/'}」为空目录（未发现音频或子文件夹）。`;
+      if (cleanPath === 'music') {
+        try {
+          const mediaCheckUrl = `${cleanBaseUrl}/media/music`;
+          const altRes = await this.executeWebdavPropfind(mediaCheckUrl, authHeader);
+          if (altRes.ok) {
+            smartTip += `\n\n💡 发现有效路径：检测到「${cleanBaseUrl}/media/music」存在内容，您的 NAS 共享路径可能为 /media/music，建议将「远程音乐根目录路径」更改为 /media/music 重试！`;
+          }
+        } catch {}
+      }
+      message = `WebDAV 连接成功！响应耗时 ${latencyMs}ms。\n${smartTip}`;
+    }
 
     return {
       success: true,
       latencyMs,
       foundSampleFiles: audioFiles.slice(0, 5),
       totalFilesCount: audioFiles.length,
-      message: `WebDAV 连接成功！响应耗时 ${latencyMs}ms，当前目录包含 ${audioFiles.length} 首可播放音频`
+      message
     };
   }
 
@@ -579,6 +602,14 @@ export class NasStorageService {
       console.log(
         `[NasStorageService] ✅ NAS 增量同步完成: +${addedCount} 首新增, ⟳${updatedCount} 首更新 (耗时 ${(durationMs / 1000).toFixed(1)}s, 总曲库 ${musicRepository.getAllSongs().length} 首)`
       );
+
+      logEngine.info('system', 'NAS 远程曲库同步完成', `协议: ${this.config.type.toUpperCase()} | 探测到 ${remoteTracks.length} 首 | 新增: +${addedCount} | 更新: ⟳${updatedCount} | 耗时: ${(durationMs / 1000).toFixed(1)}s`, {
+        protocol: this.config.type,
+        addedCount,
+        updatedCount,
+        totalFound: remoteTracks.length,
+        totalLibrary: musicRepository.getAllSongs().length
+      });
 
       appEventBus.broadcast('library:updated', {
         action: 'nas_sync',
@@ -702,21 +733,33 @@ export class NasStorageService {
       ? `Basic ${Buffer.from(`${this.config.username}:${this.config.password || ''}`).toString('base64')}`
       : undefined;
 
+    console.log(`[NasStorageService] 🔍 WebDAV 启动全量/增量扫描，根目录: ${startUrl}`);
+
     while (queueDirs.length > 0) {
       const currentDir = queueDirs.shift()!;
-      if (visitedDirs.has(currentDir)) continue;
-      visitedDirs.add(currentDir);
+      const normCurrent = currentDir.replace(/\/+$/, '');
+      if (visitedDirs.has(normCurrent)) continue;
+      visitedDirs.add(normCurrent);
 
       try {
         const propfindRes = await this.executeWebdavPropfind(currentDir, authHeader);
-        if (!propfindRes.ok) continue;
+        if (!propfindRes.ok) {
+          console.warn(`[NasStorageService] WebDAV 目录探测响应异常 (HTTP ${propfindRes.status}): ${currentDir}`);
+          continue;
+        }
 
-        const items = this.parseDetailedPropfindXml(propfindRes.text, cleanBaseUrl);
+        const items = this.parseDetailedPropfindXml(propfindRes.text, currentDir);
+        let foundFilesInDir = 0;
+        let subDirCount = 0;
 
         for (const it of items) {
+          const normItemUrl = it.fullUrl.replace(/\/+$/, '');
           if (it.isDir) {
-            if (!visitedDirs.has(it.fullUrl) && !it.name.startsWith('.')) {
+            // 排除当前目录自身以及隐藏文件夹
+            if (normItemUrl !== normCurrent && !visitedDirs.has(normItemUrl) && !it.name.startsWith('.')) {
+              visitedDirs.add(normItemUrl);
               queueDirs.push(it.fullUrl);
+              subDirCount++;
             }
           } else {
             const ext = path.extname(it.name).toLowerCase();
@@ -727,14 +770,17 @@ export class NasStorageService {
                 size: it.size,
                 mtime: it.mtime
               });
+              foundFilesInDir++;
             }
           }
         }
+        console.log(`[NasStorageService] 扫描 WebDAV 目录: ${currentDir} -> 找到 ${foundFilesInDir} 首音频, ${subDirCount} 个子文件夹 (累计 ${results.length} 首)`);
       } catch (err: any) {
         console.warn(`[NasStorageService] Failed to list remote dir ${currentDir}:`, err.message);
       }
     }
 
+    console.log(`[NasStorageService] 🏁 WebDAV 扫描全部完毕，共发掘 ${results.length} 首音频曲目`);
     return results;
   }
 
@@ -951,33 +997,36 @@ export class NasStorageService {
     return files;
   }
 
-  private parseDetailedPropfindXml(xml: string, baseUrl: string): Array<{
+  private parseDetailedPropfindXml(xml: string, baseOriginOrUrl: string): Array<{
     fullUrl: string;
     name: string;
     isDir: boolean;
     size: number;
     mtime?: string;
   }> {
-    const responses = xml.split(/<[^:]*:?response/i).slice(1);
+    const blocks = xml.match(/<[^/:]*:?response\b[\s\S]*?<\/[^:]*:?response>/gi) || [];
     const results: Array<any> = [];
 
-    for (const block of responses) {
+    for (const block of blocks) {
       const hrefMatch = block.match(/<[^:]*:?href[^>]*>(.*?)<\/[^:]*:?href>/i);
       if (!hrefMatch) continue;
 
       const rawHref = hrefMatch[1].trim();
-      const isDir = block.includes('<collection') || block.includes(':collection') || rawHref.endsWith('/');
+      if (!rawHref) continue;
 
-      let fullUrl = rawHref;
-      if (rawHref.startsWith('http://') || rawHref.startsWith('https://')) {
-        fullUrl = rawHref;
-      } else {
-        const cleanBase = baseUrl.replace(/\/+$/, '');
-        const cleanHref = rawHref.startsWith('/') ? rawHref : `/${rawHref}`;
-        fullUrl = `${cleanBase}${cleanHref}`;
+      let fullUrl = '';
+      try {
+        fullUrl = new URL(rawHref, baseOriginOrUrl).href;
+      } catch {
+        if (rawHref.startsWith('http://') || rawHref.startsWith('https://')) {
+          fullUrl = rawHref;
+        } else {
+          fullUrl = `${baseOriginOrUrl.replace(/\/+$/, '')}/${rawHref.replace(/^\/+/, '')}`;
+        }
       }
 
       const decodedHref = decodeURIComponent(rawHref);
+      const isDir = /<[^:]*:?collection\b/i.test(block) || rawHref.endsWith('/') || decodedHref.endsWith('/');
       const name = decodedHref.replace(/\/+$/, '').split('/').pop() || '';
       if (!name || name === '.' || name === '..') continue;
 
