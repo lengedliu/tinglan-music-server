@@ -15,6 +15,7 @@ export interface NasConfig {
   serverUrl: string; // e.g. http://192.168.1.100:5005 or 192.168.1.100
   basePath: string; // e.g. /music or share name
   shareName?: string; // for SMB: e.g. music or public
+  port?: number; // for SMB: default 445 or custom forwarded port e.g. 442
   domain?: string; // for SMB: default WORKGROUP
   username?: string;
   password?: string;
@@ -175,23 +176,40 @@ export class NasStorageService {
 
     // SMB / Samba Test
     if (cfg.type === 'smb') {
-      const host = (cfg.serverUrl || '').replace(/^(?:smb:\/\/|\\\\)/i, '').replace(/[\/\\]+.*$/, '').trim();
-      if (!host) {
-        throw new Error('请输入 SMB 共享主机 IP 或名称 (如 192.168.50.153)');
+      let rawHost = (cfg.serverUrl || '').replace(/^(?:smb:\/\/|\\\\)/i, '').replace(/[\/\\]+.*$/, '').trim();
+      if (!rawHost) {
+        throw new Error('请输入 SMB 共享主机 IP 或名称 (如 192.168.50.153 或 192.168.50.153:445)');
       }
 
-      // 智能解析共享名与子目录（如用户输入 "media/music" 或 "/media/music"）
-      let rawShare = (cfg.shareName || cfg.basePath || 'media').trim().replace(/^[\\\/]+/, '');
+      // 智能提取主机名与端口 (支持显式端口配置、192.168.1.100:442 或默认 445)
+      let smbHost = rawHost;
+      let smbPort = cfg.port && cfg.port > 0 ? cfg.port : 445;
+      if (rawHost.includes(':')) {
+        const [h, p] = rawHost.split(':');
+        smbHost = h.trim();
+        const parsedP = parseInt(p, 10);
+        if (!isNaN(parsedP) && parsedP > 0) {
+          smbPort = parsedP;
+        }
+      }
+
+      // 智能解析共享名与子目录（如用户误输入 "/volume1/music" 或 "media/music"）
+      let rawShare = (cfg.shareName || cfg.basePath || 'music').trim().replace(/^[\\\/]+/, '');
+      // 容错：如果用户填了 volume1/music，自动剔除底层的 Linux 卷名前缀
+      if (/^volume\d+[\\\/]/i.test(rawShare)) {
+        rawShare = rawShare.replace(/^volume\d+[\\\/]+/i, '');
+      }
       const pathParts = rawShare.split(/[\\\/]+/);
-      const shareName = pathParts[0] || 'media';
+      const shareName = pathParts[0] || 'music';
       const subFolder = pathParts.slice(1).join('\\');
 
-      const isPrivateLanIp = /^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/.test(host);
+      const isPrivateLanIp = /^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/.test(smbHost);
 
       let smb: any;
       try {
         smb = new SMB2({
-          share: `\\\\${host}\\${shareName}`,
+          share: `\\\\${smbHost}\\${shareName}`,
+          port: smbPort,
           domain: cfg.domain || 'WORKGROUP',
           username: cfg.username || 'guest',
           password: cfg.password || '',
@@ -219,26 +237,28 @@ export class NasStorageService {
 
         const timeoutTimer = setTimeout(() => {
           const lanHint = isPrivateLanIp
-            ? `\n\n💡 提示：检测到您配置的是家庭局域网私有 IP（${host}）。如果当前在云端 Web 预览环境测试，云端服务器无法跨公网直连您家中的私网 NAS。请将听澜部署在本地家庭 NAS / Docker 局域网中运行，或在云端使用已做内网穿透的 WebDAV 地址。`
-            : '';
-          safeReject(new Error(`连接 SMB 服务器 (${host}:445) 响应超时 (12秒)。${lanHint}`));
+            ? `\n\n💡 提示：检测到您配置的是家庭局域网私有 IP（${smbHost}）。如果当前在云端 Web 预览环境测试，云端服务器无法跨公网直连您家中的私网 NAS。请将听澜部署在本地家庭 NAS / Docker 局域网中运行；或在云端使用已验证成功的 WebDAV 协议。`
+            : `\n\n💡 提示：公网 TCP 445 端口通常被国内电信/联通/移动运营商全面封禁以防范病毒勒索。跨公网连接 NAS 强烈建议使用 WebDAV 协议。`;
+          safeReject(new Error(`连接 SMB 服务器 (${smbHost}:${smbPort}) 响应超时 (12秒)。${lanHint}`));
         }, 12000);
 
         try {
-          smb.readdir(subFolder, (err: any, files: string[]) => {
+          smb.readdir(subFolder || '', (err: any, files: string[]) => {
             if (isSettled) return;
             const latencyMs = Date.now() - startTime;
             if (err) {
               const errMsg = err.message || '';
               let friendlyDetail = errMsg;
-              if (errMsg.includes('STATUS_LOGON_FAILURE') || errMsg.includes('STATUS_ACCESS_DENIED') || errMsg.includes('STATUS_WRONG_PASSWORD')) {
-                friendlyDetail = `认证失败（${errMsg}）：请检查 SMB 用户名、密码及在 NAS 上对「${shareName}」共享文件夹的权限设置`;
+              if (errMsg.includes('STATUS_LOGON_FAILURE') || errMsg.includes('STATUS_ACCESS_DENIED') || errMsg.includes('STATUS_WRONG_PASSWORD') || errMsg.includes('STATUS_NTLM_BLOCKED')) {
+                friendlyDetail = `认证失败（${errMsg}）：\n1. 请检查 SMB 账号密码及用户对「${shareName}」共享文件夹的访问权限；\n2. 核心原因：现代 NAS（群晖 DSM 7+ / TrueNAS / Win11）默认禁用了老旧的 NTLMv1 认证。请前往群晖【控制面板 → 文件服务 → SMB → 高级设置 → 其它】勾选「启用 NTLMv1 身份验证」；\n3. 强烈建议：您的 WebDAV 已测试成功，WebDAV 协议天然支持流式播放且无此认证兼容限制，推荐优先使用 WebDAV。`;
               } else if (errMsg.includes('STATUS_BAD_NETWORK_NAME')) {
-                friendlyDetail = `共享名不存在（${errMsg}）：请核对 NAS 上的共享文件夹名称是否为「${shareName}」`;
+                friendlyDetail = `共享名不存在（${errMsg}）：请核对 NAS 上的共享文件夹名称是否确为「${shareName}」（注意不要填写磁盘卷路径如 /volume1/music，只填共享文件夹名 music）。`;
               } else if (errMsg.includes('STATUS_OBJECT_NAME_NOT_FOUND')) {
-                friendlyDetail = `子目录不存在（${errMsg}）：在共享文件夹「${shareName}」下未找到子路径「${subFolder}」`;
-              } else if (errMsg.includes('ECONNREFUSED') || errMsg.includes('EHOSTUNREACH') || errMsg.includes('ETIMEDOUT')) {
-                friendlyDetail = `网络无法连通（${errMsg}）：无法连接至 ${host}:445，请确认 NAS 已开启 SMB 服务且防火墙放行 445 端口`;
+                friendlyDetail = `子目录不存在（${errMsg}）：在共享文件夹「${shareName}」下未找到子路径「${subFolder}」。`;
+              } else if (errMsg.includes('STATUS_INVALID_PARAMETER') || errMsg.includes('STATUS_NOT_SUPPORTED')) {
+                friendlyDetail = `协议版本不兼容（${errMsg}）：NAS 可能设置了「仅允许 SMB3」或强制加密传输。请在 NAS 的 SMB 高级设置中将「最低 SMB 协议」设为 SMB2。`;
+              } else if (errMsg.includes('ECONNREFUSED') || errMsg.includes('EHOSTUNREACH') || errMsg.includes('ETIMEDOUT') || errMsg.includes('ENOTFOUND')) {
+                friendlyDetail = `网络无法连通（${errMsg}）：无法连接至 ${smbHost}:${smbPort}。\n1. 请确认 NAS 已开启 SMB 服务且防火墙放行 ${smbPort} 端口；\n2. 若当前在云端 Web 预览环境，由于运营商封锁 445 端口无法跨网直连，推荐使用已成功的 WebDAV 协议。`;
               }
               return safeReject(new Error(`SMB 共享连接失败: ${friendlyDetail}`));
             }
@@ -248,7 +268,7 @@ export class NasStorageService {
               latencyMs,
               foundSampleFiles: audioFiles.slice(0, 5),
               totalFilesCount: audioFiles.length,
-              message: `SMB 共享连接成功！响应耗时 ${latencyMs}ms，在 \\\\${host}\\${shareName}${subFolder ? '\\' + subFolder : ''} 探测到 ${audioFiles.length} 首音频`
+              message: `SMB 共享连接成功！响应耗时 ${latencyMs}ms，在 \\\\${smbHost}\\${shareName}${subFolder ? '\\' + subFolder : ''} 探测到 ${audioFiles.length} 首音频`
             });
           });
         } catch (callErr: any) {
@@ -498,14 +518,29 @@ export class NasStorageService {
     }
 
     if (this.config.type === 'smb') {
-      const host = (this.config.serverUrl || '').replace(/^(?:smb:\/\/|\\\\)/i, '').replace(/[\/\\]+.*$/, '');
+      let rawHost = (this.config.serverUrl || '').replace(/^(?:smb:\/\/|\\\\)/i, '').replace(/[\/\\]+.*$/, '').trim();
+      let smbHost = rawHost;
+      let smbPort = this.config.port && this.config.port > 0 ? this.config.port : 445;
+      if (rawHost.includes(':')) {
+        const [h, p] = rawHost.split(':');
+        smbHost = h.trim();
+        const parsedP = parseInt(p, 10);
+        if (!isNaN(parsedP) && parsedP > 0) {
+          smbPort = parsedP;
+        }
+      }
+
       let rawShare = (this.config.shareName || this.config.basePath || 'music').trim().replace(/^[\\\/]+/, '');
+      if (/^volume\d+[\\\/]/i.test(rawShare)) {
+        rawShare = rawShare.replace(/^volume\d+[\\\/]+/i, '');
+      }
       const pathParts = rawShare.split(/[\\\/]+/);
       const shareName = pathParts[0] || 'music';
       const initialSubFolder = pathParts.slice(1).join('\\');
 
       const smb = new SMB2({
-        share: `\\\\${host}\\${shareName}`,
+        share: `\\\\${smbHost}\\${shareName}`,
+        port: smbPort,
         domain: this.config.domain || 'WORKGROUP',
         username: this.config.username || 'guest',
         password: this.config.password || '',
@@ -514,7 +549,7 @@ export class NasStorageService {
 
       const walkSmb = async (subDir: string): Promise<void> => {
         return new Promise((resolve) => {
-          smb.readdir(subDir, async (err: any, files: string[]) => {
+          smb.readdir(subDir || '', async (err: any, files: string[]) => {
             if (err || !files) return resolve();
             for (const file of files) {
               if (file.startsWith('.')) continue;
@@ -522,7 +557,7 @@ export class NasStorageService {
               const ext = path.extname(file).toLowerCase();
               if (SUPPORTED_EXTS.has(ext)) {
                 results.push({
-                  url: `smb://${host}/${shareName}/${relPath.replace(/\\/g, '/')}`,
+                  url: `smb://${smbHost}/${shareName}/${relPath.replace(/\\/g, '/')}`,
                   name: file,
                   size: 25 * 1024 * 1024 // Estimated size for stream
                 });
