@@ -215,6 +215,11 @@ export class NasStorageService {
           password: cfg.password || '',
           autoCloseTimeout: 12000
         });
+        if (smb && (smb as any).socket) {
+          (smb as any).socket.on('error', (err: any) => {
+            console.warn('[NasStorageService] Suppressed SMB raw socket error:', err?.message || err);
+          });
+        }
       } catch (smbInitErr: any) {
         throw new Error(`SMB 初始化失败: ${smbInitErr.message}`);
       }
@@ -225,13 +230,24 @@ export class NasStorageService {
           if (isSettled) return;
           isSettled = true;
           clearTimeout(timeoutTimer);
-          try { smb.disconnect(); } catch {}
+          try {
+            if (smb && (smb as any).socket) {
+              (smb as any).socket.destroy();
+            }
+            smb.disconnect();
+          } catch {}
           reject(err);
         };
         const safeResolve = (data: any) => {
           if (isSettled) return;
           isSettled = true;
           clearTimeout(timeoutTimer);
+          try {
+            if (smb && (smb as any).socket) {
+              (smb as any).socket.destroy();
+            }
+            smb.disconnect();
+          } catch {}
           resolve(data);
         };
 
@@ -546,6 +562,11 @@ export class NasStorageService {
         password: this.config.password || '',
         autoCloseTimeout: 12000
       });
+      if (smb && (smb as any).socket) {
+        (smb as any).socket.on('error', (err: any) => {
+          console.warn('[NasStorageService] Suppressed scan SMB raw socket error:', err?.message || err);
+        });
+      }
 
       const walkSmb = async (subDir: string): Promise<void> => {
         return new Promise((resolve) => {
@@ -568,7 +589,16 @@ export class NasStorageService {
         });
       };
 
-      await walkSmb(initialSubFolder);
+      try {
+        await walkSmb(initialSubFolder);
+      } finally {
+        try {
+          if (smb && (smb as any).socket) {
+            (smb as any).socket.destroy();
+          }
+          smb.disconnect();
+        } catch {}
+      }
       return results;
     }
 

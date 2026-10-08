@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "type": "smb",
+  "serverUrl": "192.168.50.153",
+  "basePath": "/music",
+  "username": "liuyc",
+  "password": "123",
+  "autoSyncIntervalMinutes": 30,
+  "autoScrapeMetadata": true,
+  "port": 442,
+  "shareName": "media",
+  "domain": "WORKGROUP"
+}

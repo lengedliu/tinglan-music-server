@@ -95,6 +95,14 @@ import familyUserRouter from './server/routes/familyUserRoutes.js';
 import { libraryWatcherService } from './server/core/libraryWatcherService.js';
 import { automationService } from './server/services/automationService.js';
 
+// Process safety guards: Prevent third-party socket/network errors from crashing the server
+process.on('uncaughtException', (err: Error) => {
+  console.error('💥 [Server Protection] Caught unhandled exception:', err.message, err.stack);
+});
+process.on('unhandledRejection', (reason: any) => {
+  console.error('💥 [Server Protection] Caught unhandled rejection:', reason);
+});
+
 const app = express();
 const PORT = 3000;
 const SERVER_START_TIME = Date.now();

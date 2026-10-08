@@ -437,8 +437,11 @@ export const NasStorageModal: React.FC<NasStorageModalProps> = ({
                     <input
                       type="text"
                       value={config.shareName || config.basePath || 'music'}
-                      onChange={(e) => setConfig({ ...config, shareName: e.target.value, basePath: e.target.value })}
-                      placeholder="music 或 public"
+                      onChange={(e) => {
+                        const cleanVal = e.target.value.replace(/^[\\\/]+/, '');
+                        setConfig({ ...config, shareName: cleanVal, basePath: cleanVal });
+                      }}
+                      placeholder="media 或 music"
                       className={inputClass}
                     />
                   </div>
