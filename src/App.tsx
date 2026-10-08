@@ -229,7 +229,7 @@ export default function App() {
     apiFetch('/api/songs')
       .then(res => res.ok ? res.json() : null)
       .then(data => {
-        if (Array.isArray(data) && data.length > 0) {
+        if (Array.isArray(data)) {
           setSongs(data);
         }
       })
@@ -240,7 +240,7 @@ export default function App() {
     apiFetch('/api/playlists')
       .then(res => res.ok ? res.json() : null)
       .then(data => {
-        if (Array.isArray(data) && data.length > 0) {
+        if (Array.isArray(data)) {
           setPlaylists(data);
         }
       })

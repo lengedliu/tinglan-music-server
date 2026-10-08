@@ -47,44 +47,48 @@ export class MusicRepository {
     if (!this.sqliteDb) return;
     try {
       this.sqliteDb.all('SELECT * FROM songs', (err: any, rows: any[]) => {
-        if (!err && Array.isArray(rows) && rows.length > 0) {
-          const loadedSongs: Song[] = rows.map((r) => ({
-            id: r.id,
-            title: r.title,
-            artist: r.artist || '',
-            album: r.album || '',
-            duration: r.duration || 0,
-            url: r.url || '',
-            coverUrl: r.cover_url || '',
-            lyrics: r.lyrics || '',
-            genre: r.genre || '',
-            year: r.year || undefined,
-            bitrate: r.bitrate || '',
-            fileSize: r.file_size || '',
-            isFavorite: Boolean(r.is_favorite || 0),
-            source: (r.source as any) || 'local'
-          }));
-          this.setSongs(loadedSongs, false);
-          console.log(`[MusicRepository] Synchronized ${loadedSongs.length} tracks from SQLite SSOT.`);
-        } else if (this.songs.length > 0) {
-          this.syncSongsToSqlite();
+        if (!err && Array.isArray(rows)) {
+          if (rows.length > 0 && this.songs.length === 0 && !fs.existsSync(this.songsFile)) {
+            const loadedSongs: Song[] = rows.map((r) => ({
+              id: r.id,
+              title: r.title,
+              artist: r.artist || '',
+              album: r.album || '',
+              duration: r.duration || 0,
+              url: r.url || '',
+              coverUrl: r.cover_url || '',
+              lyrics: r.lyrics || '',
+              genre: r.genre || '',
+              year: r.year || undefined,
+              bitrate: r.bitrate || '',
+              fileSize: r.file_size || '',
+              isFavorite: Boolean(r.is_favorite || 0),
+              source: (r.source as any) || 'local'
+            }));
+            this.setSongs(loadedSongs, false);
+            console.log(`[MusicRepository] Synchronized ${loadedSongs.length} tracks from SQLite.`);
+          } else {
+            this.syncSongsToSqlite();
+          }
         }
       });
 
       this.sqliteDb.all('SELECT * FROM playlists', (err: any, rows: any[]) => {
-        if (!err && Array.isArray(rows) && rows.length > 0) {
-          const loadedPlaylists: Playlist[] = rows.map((r) => ({
-            id: r.id,
-            name: r.name,
-            description: r.description || '',
-            coverUrl: r.cover_url || '',
-            songIds: r.song_ids ? (typeof r.song_ids === 'string' ? JSON.parse(r.song_ids) : r.song_ids) : [],
-            createdAt: r.created_at || new Date().toISOString()
-          }));
-          this.playlists = loadedPlaylists;
-          console.log(`[MusicRepository] Synchronized ${loadedPlaylists.length} playlists from SQLite SSOT.`);
-        } else if (this.playlists.length > 0) {
-          this.syncPlaylistsToSqlite();
+        if (!err && Array.isArray(rows)) {
+          if (rows.length > 0 && this.playlists.length === 0 && !fs.existsSync(this.playlistsFile)) {
+            const loadedPlaylists: Playlist[] = rows.map((r) => ({
+              id: r.id,
+              name: r.name,
+              description: r.description || '',
+              coverUrl: r.cover_url || '',
+              songIds: r.song_ids ? (typeof r.song_ids === 'string' ? JSON.parse(r.song_ids) : r.song_ids) : [],
+              createdAt: r.created_at || new Date().toISOString()
+            }));
+            this.playlists = loadedPlaylists;
+            console.log(`[MusicRepository] Synchronized ${loadedPlaylists.length} playlists from SQLite.`);
+          } else {
+            this.syncPlaylistsToSqlite();
+          }
         }
       });
     } catch (e) {
@@ -96,6 +100,17 @@ export class MusicRepository {
     if (!this.sqliteDb) return;
     try {
       this.sqliteDb.serialize(() => {
+        if (this.songs.length === 0) {
+          this.sqliteDb.run('DELETE FROM songs');
+          return;
+        }
+
+        const validIds = this.songs.map((s) => s.id).filter(Boolean);
+        if (validIds.length > 0) {
+          const placeholders = validIds.map(() => '?').join(',');
+          this.sqliteDb.run(`DELETE FROM songs WHERE id NOT IN (${placeholders})`, validIds);
+        }
+
         const stmt = this.sqliteDb.prepare(`
           INSERT OR REPLACE INTO songs (id, title, artist, album, duration, url, cover_url, lyrics, genre, year, bitrate, file_size, source, created_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -126,21 +141,25 @@ export class MusicRepository {
 
     // Dual-write to active remote database (PostgreSQL / MySQL) if configured
     if (multiDbManager.isRemoteActive) {
-      for (const s of this.songs) {
-        multiDbManager.executeWrite(
-          `INSERT INTO songs (id, title, artist, album, duration, url, cover_url, lyrics, genre, year, bitrate, file_size, source, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-           ON CONFLICT (id) DO UPDATE SET
-             title = EXCLUDED.title, artist = EXCLUDED.artist, album = EXCLUDED.album, duration = EXCLUDED.duration,
-             url = EXCLUDED.url, cover_url = EXCLUDED.cover_url, lyrics = EXCLUDED.lyrics, genre = EXCLUDED.genre;`,
-          [s.id, s.title, s.artist || '', s.album || '', s.duration || 0, s.url || '', s.coverUrl || '', s.lyrics || '', s.genre || '', s.year || null, s.bitrate || '', s.fileSize || '', s.source || 'local', new Date().toISOString()],
-          `INSERT INTO songs (id, title, artist, album, duration, url, cover_url, lyrics, genre, year, bitrate, file_size, source, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON DUPLICATE KEY UPDATE
-             title = VALUES(title), artist = VALUES(artist), album = VALUES(album), duration = VALUES(duration),
-             url = VALUES(url), cover_url = VALUES(cover_url), lyrics = VALUES(lyrics), genre = VALUES(genre);`,
-          [s.id, s.title, s.artist || '', s.album || '', s.duration || 0, s.url || '', s.coverUrl || '', s.lyrics || '', s.genre || '', s.year || null, s.bitrate || '', s.fileSize || '', s.source || 'local', new Date().toISOString()]
-        ).catch(() => {});
+      if (this.songs.length === 0) {
+        multiDbManager.executeWrite('DELETE FROM songs', [], 'DELETE FROM songs', []).catch(() => {});
+      } else {
+        for (const s of this.songs) {
+          multiDbManager.executeWrite(
+            `INSERT INTO songs (id, title, artist, album, duration, url, cover_url, lyrics, genre, year, bitrate, file_size, source, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+             ON CONFLICT (id) DO UPDATE SET
+               title = EXCLUDED.title, artist = EXCLUDED.artist, album = EXCLUDED.album, duration = EXCLUDED.duration,
+               url = EXCLUDED.url, cover_url = EXCLUDED.cover_url, lyrics = EXCLUDED.lyrics, genre = EXCLUDED.genre;`,
+            [s.id, s.title, s.artist || '', s.album || '', s.duration || 0, s.url || '', s.coverUrl || '', s.lyrics || '', s.genre || '', s.year || null, s.bitrate || '', s.fileSize || '', s.source || 'local', new Date().toISOString()],
+            `INSERT INTO songs (id, title, artist, album, duration, url, cover_url, lyrics, genre, year, bitrate, file_size, source, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+               title = VALUES(title), artist = VALUES(artist), album = VALUES(album), duration = VALUES(duration),
+               url = VALUES(url), cover_url = VALUES(cover_url), lyrics = VALUES(lyrics), genre = VALUES(genre);`,
+            [s.id, s.title, s.artist || '', s.album || '', s.duration || 0, s.url || '', s.coverUrl || '', s.lyrics || '', s.genre || '', s.year || null, s.bitrate || '', s.fileSize || '', s.source || 'local', new Date().toISOString()]
+          ).catch(() => {});
+        }
       }
     }
   }
@@ -149,6 +168,17 @@ export class MusicRepository {
     if (!this.sqliteDb) return;
     try {
       this.sqliteDb.serialize(() => {
+        if (this.playlists.length === 0) {
+          this.sqliteDb.run('DELETE FROM playlists');
+          return;
+        }
+
+        const validIds = this.playlists.map((p) => p.id).filter(Boolean);
+        if (validIds.length > 0) {
+          const placeholders = validIds.map(() => '?').join(',');
+          this.sqliteDb.run(`DELETE FROM playlists WHERE id NOT IN (${placeholders})`, validIds);
+        }
+
         const stmt = this.sqliteDb.prepare(`
           INSERT OR REPLACE INTO playlists (id, user_id, name, description, cover_url, song_ids, created_at)
           VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -172,19 +202,23 @@ export class MusicRepository {
 
     // Dual-write to active remote database (PostgreSQL / MySQL) if configured
     if (multiDbManager.isRemoteActive) {
-      for (const p of this.playlists) {
-        multiDbManager.executeWrite(
-          `INSERT INTO playlists (id, user_id, name, description, cover_url, song_ids, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
-           ON CONFLICT (id) DO UPDATE SET
-             name = EXCLUDED.name, description = EXCLUDED.description, cover_url = EXCLUDED.cover_url, song_ids = EXCLUDED.song_ids;`,
-          [p.id, (p as any).userId || 'usr-admin-001', p.name, p.description || '', p.coverUrl || '', JSON.stringify(p.songIds || []), p.createdAt || new Date().toISOString()],
-          `INSERT INTO playlists (id, user_id, name, description, cover_url, song_ids, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
-           ON DUPLICATE KEY UPDATE
-             name = VALUES(name), description = VALUES(description), cover_url = VALUES(cover_url), song_ids = VALUES(song_ids);`,
-          [p.id, (p as any).userId || 'usr-admin-001', p.name, p.description || '', p.coverUrl || '', JSON.stringify(p.songIds || []), p.createdAt || new Date().toISOString()]
-        ).catch(() => {});
+      if (this.playlists.length === 0) {
+        multiDbManager.executeWrite('DELETE FROM playlists', [], 'DELETE FROM playlists', []).catch(() => {});
+      } else {
+        for (const p of this.playlists) {
+          multiDbManager.executeWrite(
+            `INSERT INTO playlists (id, user_id, name, description, cover_url, song_ids, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT (id) DO UPDATE SET
+               name = EXCLUDED.name, description = EXCLUDED.description, cover_url = EXCLUDED.cover_url, song_ids = EXCLUDED.song_ids;`,
+            [p.id, (p as any).userId || 'usr-admin-001', p.name, p.description || '', p.coverUrl || '', JSON.stringify(p.songIds || []), p.createdAt || new Date().toISOString()],
+            `INSERT INTO playlists (id, user_id, name, description, cover_url, song_ids, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+               name = VALUES(name), description = VALUES(description), cover_url = VALUES(cover_url), song_ids = VALUES(song_ids);`,
+            [p.id, (p as any).userId || 'usr-admin-001', p.name, p.description || '', p.coverUrl || '', JSON.stringify(p.songIds || []), p.createdAt || new Date().toISOString()]
+          ).catch(() => {});
+        }
       }
     }
   }
@@ -204,7 +238,7 @@ export class MusicRepository {
       if (fs.existsSync(this.songsFile)) {
         const raw = fs.readFileSync(this.songsFile, 'utf-8');
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) {
+        if (Array.isArray(parsed)) {
           this.setSongs(parsed, false);
           console.log(`[MusicRepository] Loaded ${this.songs.length} tracks from disk & indexed.`);
           return;
@@ -223,7 +257,7 @@ export class MusicRepository {
       if (fs.existsSync(this.playlistsFile)) {
         const raw = fs.readFileSync(this.playlistsFile, 'utf-8');
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) {
+        if (Array.isArray(parsed)) {
           this.playlists = parsed;
           return;
         }
@@ -419,6 +453,23 @@ export class MusicRepository {
       this.schedulePersistSongs(200);
     }
     return removedCount;
+  }
+
+  public clearAllSongs(): void {
+    this.songs = [];
+    this.songsMap.clear();
+    musicSearchIndex.buildIndex([]);
+    if (this.sqliteDb) {
+      try {
+        this.sqliteDb.run('DELETE FROM songs');
+      } catch (e) {
+        console.warn('[MusicRepository] Failed to clear songs in SQLite:', e);
+      }
+    }
+    if (multiDbManager.isRemoteActive) {
+      multiDbManager.executeWrite('DELETE FROM songs', [], 'DELETE FROM songs', []).catch(() => {});
+    }
+    this.schedulePersistSongs(50);
   }
 
   public searchSongs(query: string, options?: SearchOptions): { total: number; results: Song[] } {

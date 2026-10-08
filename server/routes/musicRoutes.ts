@@ -15,6 +15,7 @@ import { isAuthRequiredForRequest } from '../core/security.js';
 export interface SongsRouterOptions {
   getSongs: () => any[];
   setSongs: (songs: any[]) => void;
+  clearAllSongs?: () => void;
   getPlaylists: () => any[];
   setPlaylists: (playlists: any[]) => void;
   musicDir: string;
@@ -561,7 +562,11 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
 
     const storedSongs = getSongs();
     const count = storedSongs.length;
-    setSongs([]);
+    if (options.clearAllSongs) {
+      options.clearAllSongs();
+    } else {
+      setSongs([]);
+    }
 
     // Also clear song references from playlists so playlists don't reference ghost songIds
     let playlistsModified = false;

@@ -814,6 +814,7 @@ app.use('/api/system', createSystemBackupRouter());
 app.use('/api/songs', createSongsRouter({
   getSongs: () => musicRepository.getAllSongs(),
   setSongs: (newSongs) => musicRepository.setSongs(newSongs),
+  clearAllSongs: () => musicRepository.clearAllSongs(),
   getPlaylists: () => musicRepository.getAllPlaylists(),
   setPlaylists: (newPlaylists) => musicRepository.setPlaylists(newPlaylists),
   musicDir: MUSIC_DIR,
