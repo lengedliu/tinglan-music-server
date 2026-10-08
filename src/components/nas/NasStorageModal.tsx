@@ -511,11 +511,9 @@ export const NasStorageModal: React.FC<NasStorageModalProps> = ({
                   isLight ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-amber-500/10 border-amber-500/20 text-amber-200/90'
                 }`}>
                   <div className="font-bold flex items-center gap-1.5 text-amber-600 dark:text-amber-300">
-                    <span>💡</span> SMB 连接失败常见原因排查与成功方案参考
+                    <span>💡</span> SMB 连接提示与方案参考
                   </div>
                   <ul className={`list-disc pl-4 space-y-1 ${isLight ? 'text-zinc-700' : 'text-zinc-300'}`}>
-                    <li><b>NTLMv1 身份验证（现代 NAS 最常见绊脚石）</b>：群晖 DSM 7.0+、TrueNAS、Windows 11 等出于安全策略<b>默认强制停用了 NTLMv1</b>。开源 SMB 客户端通常基于 NTLM 握手，若遇认证失败，请前往群晖【控制面板 → 文件服务 → SMB → 高级设置 → 其它】勾选 <b>「启用 NTLMv1 身份验证」</b> 并将最低协议设为 SMB2。</li>
-                    <li><b>运营商封锁 445 端口（若为公网或云端测试）</b>：国内所有电信/联通/移动运营商均在家庭宽带入口<b>全面阻断 TCP 445 端口</b>以防止勒索病毒；云服务商公网也禁止 445 端口入站。若当前在 Web 预览环境跨公网连接 NAS，SMB 必然受阻，这正是为什么标准 HTTP 的 WebDAV 能连通而 SMB 无法打通的核心原因。</li>
                     <li><b>共享名格式</b>：请填写 NAS 上创建的共享文件夹名（如 <code>music</code>，支持填写 <code>music/jazz</code>），系统已自动剔除 <code>/volume1/</code> 底层卷名。</li>
                     <li><b>业界推荐方案</b>：如果您的 <b>WebDAV 已连接成功</b>，强烈建议直接采用 WebDAV！WebDAV 天然支持 HTTP Range 拖拽分片与小爱音箱直读；如果在本地 NAS Docker 环境运行，使用 <b>「本地卷映射」</b>（<code>-v /volume1/music:/music</code>）是零网络损耗的最优解。</li>
                   </ul>

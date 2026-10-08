@@ -6,6 +6,7 @@ export interface SongTableHeaderProps {
   isBatchMode: boolean;
   selectedBatchCount: number;
   totalFilteredCount: number;
+  isAllSelected?: boolean;
   onToggleSelectAll: () => void;
 }
 
@@ -14,9 +15,12 @@ export const SongTableHeader: React.FC<SongTableHeaderProps> = ({
   isBatchMode,
   selectedBatchCount,
   totalFilteredCount,
+  isAllSelected: isAllSelectedProp,
   onToggleSelectAll
 }) => {
-  const isAllSelected = totalFilteredCount > 0 && selectedBatchCount === totalFilteredCount;
+  const isAllSelected = isAllSelectedProp !== undefined
+    ? isAllSelectedProp
+    : (totalFilteredCount > 0 && selectedBatchCount === totalFilteredCount);
 
   return (
     <div
@@ -30,7 +34,7 @@ export const SongTableHeader: React.FC<SongTableHeaderProps> = ({
             type="button"
             onClick={onToggleSelectAll}
             className="cursor-pointer p-0.5"
-            title={isAllSelected ? '取消全选' : '全选所有'}
+            title={isAllSelected ? '取消全选当前页' : '全选当前页'}
           >
             {isAllSelected ? (
               <CheckSquare className="w-4 h-4 text-cyan-500" />

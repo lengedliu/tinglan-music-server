@@ -280,7 +280,26 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
       }
 
       const fileBuffer = Buffer.from(fileBase64, 'base64');
-      const targetPath = path.join(musicDir, `${songId}${ext}`);
+
+      // Preserve clean, readable original filename or fallback to songId
+      let finalLocalFileName = '';
+      if (fileName) {
+        const cleanBase = path.basename(fileName, path.extname(fileName))
+          .replace(/[\\/:*?"<>|\r\n\t]+/g, '_')
+          .trim();
+        const baseName = cleanBase || 'uploaded_song';
+        let candidateName = `${baseName}${ext}`;
+        let counter = 1;
+        while (fs.existsSync(path.join(musicDir, candidateName))) {
+          candidateName = `${baseName}_${counter}${ext}`;
+          counter++;
+        }
+        finalLocalFileName = candidateName;
+      } else {
+        finalLocalFileName = `${songId}${ext}`;
+      }
+
+      const targetPath = path.join(musicDir, finalLocalFileName);
 
       try {
         fs.writeFileSync(targetPath, fileBuffer);
@@ -331,7 +350,7 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
         fileSize: `${actualFileSizeMb} MB`,
         isFavorite: false,
         source: 'uploaded',
-        localFilename: `${songId}${ext}`,
+        localFilename: finalLocalFileName,
         lyrics: lyrics || `[00:00.00]${realTitle} - ${realArtist}\n[00:10.00]本地音频已入库，支持即刻投放至小爱音箱`
       };
 
@@ -358,7 +377,7 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
           timestamp: new Date().toLocaleTimeString(),
           type: 'sync',
           message: `新曲目已入库: 《${newSong.title}》`,
-          detail: `真实时长: ${Math.floor(newSong.duration / 60)}分${newSong.duration % 60}秒 | 串流路径: /api/stream/${songId}`,
+          detail: `保存文件: /music/${finalLocalFileName} | 真实时长: ${Math.floor(newSong.duration / 60)}分${newSong.duration % 60}秒 | 串流路径: /api/stream/${songId}`,
           success: true
         });
       }
@@ -369,7 +388,7 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
         total: getSongs().length
       });
 
-      res.json({ success: true, song: newSong });
+      res.json({ success: true, song: newSong, savedPath: finalLocalFileName });
     } catch (err: any) {
       console.error('Upload handler error:', err);
       res.status(500).json({ success: false, error: err.message });
@@ -392,6 +411,7 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
     const { id } = req.params;
     const safeId = path.basename(id);
     let storedSongs = getSongs();
+    const songToDelete = storedSongs.find(s => s.id === id || s.id === safeId);
     const initialLen = storedSongs.length;
     storedSongs = storedSongs.filter(s => s.id !== id && s.id !== safeId);
 
@@ -404,7 +424,14 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
         songId: id,
         total: storedSongs.length
       });
-      // Remove disk file if exists using path.basename to prevent directory traversal
+      // Remove disk file if exists using localFilename or safeId
+      if (songToDelete?.localFilename) {
+        const cleanLocal = path.basename(songToDelete.localFilename);
+        const p = path.join(musicDir, cleanLocal);
+        if (fs.existsSync(p)) {
+          try { fs.unlinkSync(p); } catch {}
+        }
+      }
       for (const ext of ['.wav', '.mp3', '.flac', '.m4a', '.aac', '.ogg', '.opus', '.ape', '.dsf', '.dff']) {
         const p = path.join(musicDir, `${safeId}${ext}`);
         if (fs.existsSync(p)) {

@@ -388,16 +388,32 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
     return result;
   }, [songs, playlists, selectedPlaylistId, debouncedSearchQuery, sourceFilter, sortOption, topPlayedSongs, recentlyPlayedSongs, losslessSongs]);
 
-  // Hook for batch selection
+  // Pagination calculations
+  const totalItems = filteredSongs.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const validCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
+
+  const paginatedSongs = useMemo(() => {
+    const startIdx = (validCurrentPage - 1) * pageSize;
+    return filteredSongs.slice(startIdx, startIdx + pageSize);
+  }, [filteredSongs, validCurrentPage, pageSize]);
+
+  // Current visible / selectable songs (current page for paginated mode, all filtered for virtual mode)
+  const currentDisplaySongs = useMemo(() => {
+    return viewMode === 'paginated' ? paginatedSongs : filteredSongs;
+  }, [viewMode, paginatedSongs, filteredSongs]);
+
+  // Hook for batch selection (operating on current page songs)
   const {
     isBatchMode,
     setIsBatchMode,
     selectedBatchSongIds,
+    isCurrentPageAllSelected,
     handleToggleSelectAll,
     handleToggleBatchSelectSong,
     clearBatchSelection,
     exitBatchMode
-  } = useSongSelection(filteredSongs);
+  } = useSongSelection(currentDisplaySongs);
 
   const [showBatchDeleteModal, setShowBatchDeleteModal] = useState(false);
   const [pendingDeleteSongIds, setPendingDeleteSongIds] = useState<string[]>([]);
@@ -413,8 +429,8 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
       await onBatchDeleteSongs(songIds, deletePhysicalFiles);
     }
     setShowBatchDeleteModal(false);
-    exitBatchMode();
-  }, [onBatchDeleteSongs, exitBatchMode]);
+    clearBatchSelection();
+  }, [onBatchDeleteSongs, clearBatchSelection]);
 
   // Reset page & selection when search, tab, or sort changes
   useEffect(() => {
@@ -475,16 +491,6 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
       URL.revokeObjectURL(url);
     }
   };
-
-  // Pagination calculations
-  const totalItems = filteredSongs.length;
-  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
-  const validCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
-
-  const paginatedSongs = useMemo(() => {
-    const startIdx = (validCurrentPage - 1) * pageSize;
-    return filteredSongs.slice(startIdx, startIdx + pageSize);
-  }, [filteredSongs, validCurrentPage, pageSize]);
 
   // Generate page numbers array with ellipses
   const pageNumbers = useMemo(() => {
@@ -752,6 +758,7 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
           isBatchMode={isBatchMode}
           selectedBatchCount={selectedBatchSongIds.size}
           totalFilteredCount={filteredSongs.length}
+          isAllSelected={isCurrentPageAllSelected}
           onToggleSelectAll={handleToggleSelectAll}
         />
 
@@ -920,6 +927,7 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
         selectedPlaylistId={selectedPlaylistId}
         activeDevice={activeDevice}
         onToggleSelectAll={handleToggleSelectAll}
+        onClearSelection={clearBatchSelection}
         onBatchPlay={onBatchPlay}
         onPlayAll={onPlayAll}
         onBatchCast={onBatchCast}

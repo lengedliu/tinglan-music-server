@@ -20,6 +20,7 @@ export interface BatchActionBarProps {
   selectedPlaylistId: string;
   activeDevice?: XiaomiDevice;
   onToggleSelectAll: () => void;
+  onClearSelection?: () => void;
   onBatchPlay?: (songs: Song[]) => void;
   onPlayAll?: (songs: Song[], startIndex?: number) => void;
   onBatchCast?: (songs: Song[]) => void;
@@ -40,6 +41,7 @@ export const BatchActionBar: React.FC<BatchActionBarProps> = memo(({
   selectedPlaylistId,
   activeDevice,
   onToggleSelectAll,
+  onClearSelection,
   onBatchPlay,
   onPlayAll,
   onBatchCast,
@@ -62,10 +64,11 @@ export const BatchActionBar: React.FC<BatchActionBarProps> = memo(({
           <span>已勾选 {selectedBatchSongIds.size} 首</span>
         </div>
         <button
-          onClick={onToggleSelectAll}
-          className="text-xs text-zinc-400 hover:text-white underline underline-offset-2 transition"
+          type="button"
+          onClick={onClearSelection || onToggleSelectAll}
+          className="text-xs text-zinc-400 hover:text-white underline underline-offset-2 transition cursor-pointer"
         >
-          {selectedBatchSongIds.size === totalFilteredSongs.length ? '取消全选' : '全选筛选结果'}
+          取消全选
         </button>
       </div>
 

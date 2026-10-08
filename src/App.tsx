@@ -1996,12 +1996,20 @@ export default function App() {
       const data = await res.json();
       if (data.song) {
         setSongs(prev => [data.song, ...prev.filter(s => s.id !== data.song.id)]);
-        showToast('歌曲入库并持久化成功', `《${data.song.title}》已写入服务端 /music 目录`, 'success');
+        const savedFile = data.savedPath || data.song.localFilename || `${data.song.title}.mp3`;
+        showToast('歌曲入库并持久化成功', `《${data.song.title}》已写入服务端 /music/${savedFile}`, 'success');
         handlePlaySong(data.song);
         return;
+      } else {
+        showToast('歌曲上传失败', data.error || '服务端未能保存该音频文件', 'error');
+        return;
       }
-    } catch (e) {
-      console.error(e);
+    } catch (e: any) {
+      console.error('Upload failed:', e);
+      if (newSongData.fileBase64) {
+        showToast('歌曲上传失败', e?.message || '网络连接或服务端错误，未能写入 /music 存储目录', 'error');
+        return;
+      }
     }
 
     const fallbackSong: Song = {
@@ -2021,7 +2029,7 @@ export default function App() {
     };
 
     setSongs(prev => [fallbackSong, ...prev]);
-    showToast('歌曲入库成功', `《${fallbackSong.title}》已添加至曲库，支持即刻投放`, 'success');
+    showToast('歌曲已添加至曲库', `《${fallbackSong.title}》已添加至当前播放列表`, 'success');
     handlePlaySong(fallbackSong);
   };
 
