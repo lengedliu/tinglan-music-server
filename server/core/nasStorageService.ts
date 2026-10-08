@@ -176,60 +176,84 @@ export class NasStorageService {
     // SMB / Samba Test
     if (cfg.type === 'smb') {
       const host = (cfg.serverUrl || '').replace(/^(?:smb:\/\/|\\\\)/i, '').replace(/[\/\\]+.*$/, '').trim();
-      const shareName = cfg.shareName || (cfg.basePath || '').replace(/^[\\\/]+/, '').split(/[\\\/]/)[0] || 'media';
       if (!host) {
         throw new Error('请输入 SMB 共享主机 IP 或名称 (如 192.168.50.153)');
       }
 
+      // 智能解析共享名与子目录（如用户输入 "media/music" 或 "/media/music"）
+      let rawShare = (cfg.shareName || cfg.basePath || 'media').trim().replace(/^[\\\/]+/, '');
+      const pathParts = rawShare.split(/[\\\/]+/);
+      const shareName = pathParts[0] || 'media';
+      const subFolder = pathParts.slice(1).join('\\');
+
       const isPrivateLanIp = /^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.)/.test(host);
 
-      const smb = new SMB2({
-        share: `\\\\${host}\\${shareName}`,
-        domain: cfg.domain || 'WORKGROUP',
-        username: cfg.username || 'guest',
-        password: cfg.password || '',
-        autoCloseTimeout: 8000
-      });
+      let smb: any;
+      try {
+        smb = new SMB2({
+          share: `\\\\${host}\\${shareName}`,
+          domain: cfg.domain || 'WORKGROUP',
+          username: cfg.username || 'guest',
+          password: cfg.password || '',
+          autoCloseTimeout: 12000
+        });
+      } catch (smbInitErr: any) {
+        throw new Error(`SMB 初始化失败: ${smbInitErr.message}`);
+      }
 
       return new Promise((resolve, reject) => {
         let isSettled = false;
-        const timeoutTimer = setTimeout(() => {
-          if (!isSettled) {
-            isSettled = true;
-            try { smb.disconnect(); } catch {}
-            const lanHint = isPrivateLanIp
-              ? `\n\n💡 提示：检测到您配置的是家庭局域网私有 IP（${host}）。如果您当前在云端 Web 预览环境测试，云端服务器无法跨公网直连您家中的私网 NAS。请将听澜部署在本地家庭 NAS / Docker 局域网中运行，或在云端使用已做内网穿透的 WebDAV 地址。`
-              : '';
-            reject(new Error(`连接 SMB 服务器 (${host}:445) 超时，无法建立 TCP 会话。${lanHint}`));
-          }
-        }, 5000);
-
-        smb.readdir('', (err: any, files: string[]) => {
+        const safeReject = (err: Error) => {
           if (isSettled) return;
           isSettled = true;
           clearTimeout(timeoutTimer);
-          const latencyMs = Date.now() - startTime;
-          if (err) {
-            const errMsg = err.message || '';
-            let friendlyDetail = errMsg;
-            if (errMsg.includes('STATUS_LOGON_FAILURE') || errMsg.includes('STATUS_ACCESS_DENIED')) {
-              friendlyDetail = `认证失败（${errMsg}）：请检查 SMB 用户名、密码及在 NAS 上对「${shareName}」共享文件夹的读写权限`;
-            } else if (errMsg.includes('STATUS_BAD_NETWORK_NAME')) {
-              friendlyDetail = `共享名不存在（${errMsg}）：请核对 NAS 上的共享文件夹名称是否为「${shareName}」`;
-            } else if (errMsg.includes('ECONNREFUSED') || errMsg.includes('EHOSTUNREACH') || errMsg.includes('ETIMEDOUT')) {
-              friendlyDetail = `网络无法连通（${errMsg}）：无法连接至 ${host}:445，请确认 NAS 已开启 SMB 服务且防火墙放行 445 端口`;
+          try { smb.disconnect(); } catch {}
+          reject(err);
+        };
+        const safeResolve = (data: any) => {
+          if (isSettled) return;
+          isSettled = true;
+          clearTimeout(timeoutTimer);
+          resolve(data);
+        };
+
+        const timeoutTimer = setTimeout(() => {
+          const lanHint = isPrivateLanIp
+            ? `\n\n💡 提示：检测到您配置的是家庭局域网私有 IP（${host}）。如果当前在云端 Web 预览环境测试，云端服务器无法跨公网直连您家中的私网 NAS。请将听澜部署在本地家庭 NAS / Docker 局域网中运行，或在云端使用已做内网穿透的 WebDAV 地址。`
+            : '';
+          safeReject(new Error(`连接 SMB 服务器 (${host}:445) 响应超时 (12秒)。${lanHint}`));
+        }, 12000);
+
+        try {
+          smb.readdir(subFolder, (err: any, files: string[]) => {
+            if (isSettled) return;
+            const latencyMs = Date.now() - startTime;
+            if (err) {
+              const errMsg = err.message || '';
+              let friendlyDetail = errMsg;
+              if (errMsg.includes('STATUS_LOGON_FAILURE') || errMsg.includes('STATUS_ACCESS_DENIED') || errMsg.includes('STATUS_WRONG_PASSWORD')) {
+                friendlyDetail = `认证失败（${errMsg}）：请检查 SMB 用户名、密码及在 NAS 上对「${shareName}」共享文件夹的权限设置`;
+              } else if (errMsg.includes('STATUS_BAD_NETWORK_NAME')) {
+                friendlyDetail = `共享名不存在（${errMsg}）：请核对 NAS 上的共享文件夹名称是否为「${shareName}」`;
+              } else if (errMsg.includes('STATUS_OBJECT_NAME_NOT_FOUND')) {
+                friendlyDetail = `子目录不存在（${errMsg}）：在共享文件夹「${shareName}」下未找到子路径「${subFolder}」`;
+              } else if (errMsg.includes('ECONNREFUSED') || errMsg.includes('EHOSTUNREACH') || errMsg.includes('ETIMEDOUT')) {
+                friendlyDetail = `网络无法连通（${errMsg}）：无法连接至 ${host}:445，请确认 NAS 已开启 SMB 服务且防火墙放行 445 端口`;
+              }
+              return safeReject(new Error(`SMB 共享连接失败: ${friendlyDetail}`));
             }
-            return reject(new Error(`SMB 共享连接失败: ${friendlyDetail}`));
-          }
-          const audioFiles = (files || []).filter(f => SUPPORTED_EXTS.has(path.extname(f).toLowerCase()));
-          resolve({
-            success: true,
-            latencyMs,
-            foundSampleFiles: audioFiles.slice(0, 5),
-            totalFilesCount: audioFiles.length,
-            message: `SMB 共享连接成功！响应耗时 ${latencyMs}ms，在 \\\\${host}\\${shareName} 探测到 ${audioFiles.length} 首音频`
+            const audioFiles = (files || []).filter(f => SUPPORTED_EXTS.has(path.extname(f).toLowerCase()));
+            safeResolve({
+              success: true,
+              latencyMs,
+              foundSampleFiles: audioFiles.slice(0, 5),
+              totalFilesCount: audioFiles.length,
+              message: `SMB 共享连接成功！响应耗时 ${latencyMs}ms，在 \\\\${host}\\${shareName}${subFolder ? '\\' + subFolder : ''} 探测到 ${audioFiles.length} 首音频`
+            });
           });
-        });
+        } catch (callErr: any) {
+          safeReject(new Error(`SMB 探测异常: ${callErr.message}`));
+        }
       });
     }
 
@@ -238,52 +262,70 @@ export class NasStorageService {
       throw new Error('请输入 NAS WebDAV 服务器完整地址 (如 http://192.168.1.100:5005)');
     }
 
-    const cleanBaseUrl = cfg.serverUrl.replace(/\/+$/, '');
-    const cleanPath = (cfg.basePath || '/').replace(/^\/+/, '');
-    const targetUrl = cleanPath ? `${cleanBaseUrl}/${cleanPath}` : cleanBaseUrl;
-
-    const headers: Record<string, string> = {
-      'Depth': '1',
-      'User-Agent': 'TingLan-Music-Server/1.0 WebDAV-Client'
-    };
-
-    if (cfg.username) {
-      const auth = Buffer.from(`${cfg.username}:${cfg.password || ''}`).toString('base64');
-      headers['Authorization'] = `Basic ${auth}`;
+    let cleanBaseUrl = cfg.serverUrl.replace(/\/+$/, '');
+    // 智能容错：如果是 Alist 或 5244 端口且未带 /dav，自动追加 /dav
+    if ((cfg.type === 'alist' || /:5244(?:\/|$)/.test(cleanBaseUrl)) && !cleanBaseUrl.endsWith('/dav') && !cleanBaseUrl.includes('/dav/')) {
+      cleanBaseUrl = `${cleanBaseUrl}/dav`;
     }
 
-    try {
-      const resp = await fetch(targetUrl, {
-        method: 'PROPFIND',
-        headers
-      });
+    const rawPath = (cfg.basePath || '/').trim();
+    const cleanPath = rawPath.replace(/^\/+/, '');
 
-      const latencyMs = Date.now() - startTime;
+    const authHeader = cfg.username
+      ? `Basic ${Buffer.from(`${cfg.username}:${cfg.password || ''}`).toString('base64')}`
+      : undefined;
 
-      if (!resp.ok && resp.status !== 207) {
-        if (resp.status === 401) {
-          throw new Error('认证失败 (401 Unauthorized)，请核对 WebDAV 账号和密码');
-        }
-        if (resp.status === 404) {
-          throw new Error(`目录不存在 (404 Not Found): ${cfg.basePath}`);
-        }
-        throw new Error(`WebDAV 服务器响应异常 (HTTP ${resp.status} ${resp.statusText})`);
+    let targetUrl = cleanPath ? `${cleanBaseUrl}/${cleanPath}` : cleanBaseUrl;
+
+    let propfindRes = await this.executeWebdavPropfind(targetUrl, authHeader);
+
+    // 智能容错：群晖误填 /volume1/music 格式，500/404 时自动剥离 volume1 重试
+    if (!propfindRes.ok && /^volume\d+\//i.test(cleanPath)) {
+      const strippedPath = cleanPath.replace(/^volume\d+\//i, '');
+      const retryUrl = strippedPath ? `${cleanBaseUrl}/${strippedPath}` : cleanBaseUrl;
+      const retryRes = await this.executeWebdavPropfind(retryUrl, authHeader);
+      if (retryRes.ok) {
+        propfindRes = retryRes;
+        targetUrl = retryUrl;
+        cfg.basePath = `/${strippedPath}`;
       }
-
-      const xmlText = await resp.text();
-      const files = this.extractFilenamesFromPropfindXml(xmlText);
-      const audioFiles = files.filter(f => SUPPORTED_EXTS.has(path.extname(f).toLowerCase()));
-
-      return {
-        success: true,
-        latencyMs,
-        foundSampleFiles: audioFiles.slice(0, 5),
-        totalFilesCount: audioFiles.length,
-        message: `WebDAV 连接成功！响应耗时 ${latencyMs}ms，当前目录包含 ${audioFiles.length} 首可播放音频`
-      };
-    } catch (err: any) {
-      throw new Error(`无法连接至 NAS WebDAV 服务器: ${err.message}`);
     }
+
+    const latencyMs = Date.now() - startTime;
+
+    if (!propfindRes.ok) {
+      if (propfindRes.status === 401) {
+        throw new Error('认证失败 (401 Unauthorized)，请核对 WebDAV 账号和密码');
+      }
+      if (propfindRes.status === 403) {
+        throw new Error('访问被拒绝 (403 Forbidden)，请在 NAS 控制面板确认该用户具有 WebDAV 访问权限');
+      }
+      if (propfindRes.status === 404) {
+        throw new Error(`目录不存在 (404 Not Found): ${cfg.basePath || '/'}，请核对 NAS 上的共享文件夹名称`);
+      }
+      if (propfindRes.status === 500) {
+        const detail = propfindRes.errorDetail ? `\n[服务端详情: ${propfindRes.errorDetail}]` : '';
+        throw new Error(
+          `WebDAV 服务器响应异常 (HTTP 500 Internal Server Error)${detail}\n\n排查建议：\n` +
+          `1. 远程根目录：群晖 WebDAV 请直接填写共享文件夹名（如 /music 或 /media），切勿加 /volume1 等底层卷前缀；\n` +
+          `2. 群晖用户权限：需在群晖「控制面板 -> 应用程序权限 -> WebDAV Server」中勾选允许该用户访问；\n` +
+          `3. Alist 聚合网盘：服务地址必须包含 /dav 路径（如 http://IP:5244/dav），且挂载点需正常在线；\n` +
+          `4. 确认 NAS 目标共享文件夹是否存在且该用户具有读取权限。`
+        );
+      }
+      throw new Error(`WebDAV 服务器响应异常 (HTTP ${propfindRes.status} ${propfindRes.statusText}) ${propfindRes.errorDetail || ''}`);
+    }
+
+    const files = this.extractFilenamesFromPropfindXml(propfindRes.text);
+    const audioFiles = files.filter(f => SUPPORTED_EXTS.has(path.extname(f).toLowerCase()));
+
+    return {
+      success: true,
+      latencyMs,
+      foundSampleFiles: audioFiles.slice(0, 5),
+      totalFilesCount: audioFiles.length,
+      message: `WebDAV 连接成功！响应耗时 ${latencyMs}ms，当前目录包含 ${audioFiles.length} 首可播放音频`
+    };
   }
 
   /**
@@ -457,13 +499,17 @@ export class NasStorageService {
 
     if (this.config.type === 'smb') {
       const host = (this.config.serverUrl || '').replace(/^(?:smb:\/\/|\\\\)/i, '').replace(/[\/\\]+.*$/, '');
-      const shareName = this.config.shareName || (this.config.basePath || '').replace(/^[\\\/]+/, '').split(/[\\\/]/)[0] || 'music';
+      let rawShare = (this.config.shareName || this.config.basePath || 'music').trim().replace(/^[\\\/]+/, '');
+      const pathParts = rawShare.split(/[\\\/]+/);
+      const shareName = pathParts[0] || 'music';
+      const initialSubFolder = pathParts.slice(1).join('\\');
+
       const smb = new SMB2({
         share: `\\\\${host}\\${shareName}`,
         domain: this.config.domain || 'WORKGROUP',
         username: this.config.username || 'guest',
         password: this.config.password || '',
-        autoCloseTimeout: 10000
+        autoCloseTimeout: 12000
       });
 
       const walkSmb = async (subDir: string): Promise<void> => {
@@ -487,27 +533,25 @@ export class NasStorageService {
         });
       };
 
-      await walkSmb('');
+      await walkSmb(initialSubFolder);
       return results;
     }
 
     // Recursive WebDAV discovery
-    const cleanBaseUrl = this.config.serverUrl.replace(/\/+$/, '');
+    let cleanBaseUrl = this.config.serverUrl.replace(/\/+$/, '');
+    if ((this.config.type === 'alist' || /:5244(?:\/|$)/.test(cleanBaseUrl)) && !cleanBaseUrl.endsWith('/dav') && !cleanBaseUrl.includes('/dav/')) {
+      cleanBaseUrl = `${cleanBaseUrl}/dav`;
+    }
+
     const cleanPath = (this.config.basePath || '/').replace(/^\/+/, '');
     const startUrl = cleanPath ? `${cleanBaseUrl}/${cleanPath}` : cleanBaseUrl;
 
     const visitedDirs = new Set<string>();
     const queueDirs = [startUrl];
 
-    const headers: Record<string, string> = {
-      'Depth': '1',
-      'User-Agent': 'TingLan-Music-Server/1.0 WebDAV-Client'
-    };
-
-    if (this.config.username) {
-      const auth = Buffer.from(`${this.config.username}:${this.config.password || ''}`).toString('base64');
-      headers['Authorization'] = `Basic ${auth}`;
-    }
+    const authHeader = this.config.username
+      ? `Basic ${Buffer.from(`${this.config.username}:${this.config.password || ''}`).toString('base64')}`
+      : undefined;
 
     while (queueDirs.length > 0) {
       const currentDir = queueDirs.shift()!;
@@ -515,15 +559,10 @@ export class NasStorageService {
       visitedDirs.add(currentDir);
 
       try {
-        const resp = await fetch(currentDir, {
-          method: 'PROPFIND',
-          headers
-        });
+        const propfindRes = await this.executeWebdavPropfind(currentDir, authHeader);
+        if (!propfindRes.ok) continue;
 
-        if (!resp.ok && resp.status !== 207) continue;
-
-        const xmlText = await resp.text();
-        const items = this.parseDetailedPropfindXml(xmlText, cleanBaseUrl);
+        const items = this.parseDetailedPropfindXml(propfindRes.text, cleanBaseUrl);
 
         for (const it of items) {
           if (it.isDir) {
@@ -638,6 +677,104 @@ export class NasStorageService {
       source: 'nas' as any,
       localFilename: item.url
     };
+  }
+
+  /**
+   * Helper: Send robust WebDAV PROPFIND with automatic trailing slash,
+   * standard XML request payload, and fallback negotiation.
+   */
+  private async executeWebdavPropfind(
+    url: string,
+    authHeader?: string,
+    depth: string = '1'
+  ): Promise<{ ok: boolean; status: number; statusText: string; text: string; errorDetail?: string }> {
+    const propfindXml = `<?xml version="1.0" encoding="utf-8" ?>\n<D:propfind xmlns:D="DAV:">\n  <D:allprop/>\n</D:propfind>`;
+    const urlWithSlash = url.endsWith('/') ? url : `${url}/`;
+    const urlWithoutSlash = url.replace(/\/+$/, '');
+
+    // WebDAV 服务端行为差异：
+    // 1. 部分服务器对 collection 要求 URI 结尾必须带 '/'；
+    // 2. 部分服务器(如 Alist / Go-WebDAV)解析空请求体时会报错抛 500，要求必须附带标准 XML 请求体；
+    // 3. 部分极简服务器则不期望带有复杂 XML 结构。
+    // 因此优先采用 RFC 标准格式 (带斜杠 + 标准 XML 载荷)，如遇异常自动降级探测。
+    const attempts = [
+      { targetUrl: urlWithSlash, body: propfindXml, hasXmlHeader: true },
+      { targetUrl: urlWithSlash, body: undefined, hasXmlHeader: false },
+      { targetUrl: urlWithoutSlash, body: propfindXml, hasXmlHeader: true },
+      { targetUrl: urlWithoutSlash, body: undefined, hasXmlHeader: false }
+    ];
+
+    let lastResult = { ok: false, status: 500, statusText: 'Internal Server Error', text: '', errorDetail: '' };
+
+    for (const att of attempts) {
+      try {
+        const headers: Record<string, string> = {
+          'Depth': depth,
+          'User-Agent': 'TingLan-Music-Server/1.0 WebDAV-Client'
+        };
+        if (authHeader) {
+          headers['Authorization'] = authHeader;
+        }
+        if (att.hasXmlHeader) {
+          headers['Content-Type'] = 'application/xml; charset=utf-8';
+        }
+
+        const resp = await fetch(att.targetUrl, {
+          method: 'PROPFIND',
+          headers,
+          body: att.body
+        });
+
+        const text = await resp.text().catch(() => '');
+        lastResult = {
+          ok: resp.ok || resp.status === 207,
+          status: resp.status,
+          statusText: resp.statusText,
+          text,
+          errorDetail: ''
+        };
+
+        if (lastResult.ok) {
+          return lastResult;
+        }
+
+        // 提取服务端详细报错原因（常见于 JSON、XML 或 HTML title）
+        if (text) {
+          try {
+            const parsed = JSON.parse(text);
+            if (parsed.message || parsed.error) {
+              lastResult.errorDetail = parsed.message || parsed.error;
+            }
+          } catch {}
+          if (!lastResult.errorDetail) {
+            const match = text.match(/<(?:[^:>]+:)?message[^>]*>(.*?)<\/(?:[^:>]+:)?message>/i) ||
+                          text.match(/<(?:[^:>]+:)?error[^>]*>(.*?)<\/(?:[^:>]+:)?error>/i) ||
+                          text.match(/<title[^>]*>(.*?)<\/title>/i);
+            if (match && match[1]) {
+              const cleaned = match[1].replace(/<[^>]+>/g, '').trim();
+              if (cleaned && cleaned.length < 150) {
+                lastResult.errorDetail = cleaned;
+              }
+            }
+          }
+        }
+
+        // 明确的身份验证错误（401/403）无需再尝试其他报文格式
+        if (resp.status === 401 || resp.status === 403) {
+          return lastResult;
+        }
+      } catch (err: any) {
+        lastResult = {
+          ok: false,
+          status: 0,
+          statusText: err.message || 'Fetch failed',
+          text: '',
+          errorDetail: err.message
+        };
+      }
+    }
+
+    return lastResult;
   }
 
   /**

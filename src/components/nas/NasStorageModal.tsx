@@ -139,14 +139,14 @@ export const NasStorageModal: React.FC<NasStorageModalProps> = ({
   if (!isOpen) return null;
 
   // Preset Template Selectors
-  const applyPreset = (preset: 'synology' | 'zspace' | 'smb' | 'alist' | 'local') => {
+  const applyPreset = (preset: 'webdav' | 'smb' | 'alist' | 'local') => {
     setTestResult(null);
-    if (preset === 'synology') {
+    if (preset === 'webdav') {
       setConfig(prev => ({
         ...prev,
         type: 'webdav',
         serverUrl: prev.serverUrl || 'http://192.168.1.100:5005',
-        basePath: '/music'
+        basePath: prev.basePath || '/music'
       }));
     } else if (preset === 'smb') {
       setConfig(prev => ({
@@ -156,13 +156,6 @@ export const NasStorageModal: React.FC<NasStorageModalProps> = ({
         shareName: 'music',
         basePath: '',
         domain: 'WORKGROUP'
-      }));
-    } else if (preset === 'zspace') {
-      setConfig(prev => ({
-        ...prev,
-        type: 'webdav',
-        serverUrl: prev.serverUrl || 'http://192.168.1.100:5005',
-        basePath: '/我的音乐'
       }));
     } else if (preset === 'alist') {
       setConfig(prev => ({
@@ -289,35 +282,20 @@ export const NasStorageModal: React.FC<NasStorageModalProps> = ({
           {/* Quick Preset Cards */}
           <div className="space-y-2">
             <label className="text-xs font-semibold text-zinc-400">快速填入 NAS 预设配置：</label>
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               <button
                 type="button"
-                onClick={() => applyPreset('synology')}
+                onClick={() => applyPreset('webdav')}
                 className={`p-3 rounded-2xl border text-left text-xs transition cursor-pointer flex flex-col gap-1 ${
-                  config.type === 'webdav' && config.basePath === '/music'
+                  config.type === 'webdav'
                     ? 'bg-blue-500/15 border-blue-500/40 text-blue-300'
                     : 'bg-white/[0.02] border-white/5 hover:bg-white/5 text-zinc-300'
                 }`}
               >
                 <div className="font-bold flex items-center gap-1.5">
-                  <Server className="w-3.5 h-3.5 text-blue-400" /> 群晖 Synology
+                  <Server className="w-3.5 h-3.5 text-blue-400" /> WebDAV 协议
                 </div>
-                <span className="text-[10px] text-zinc-500">WebDAV :5005</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => applyPreset('zspace')}
-                className={`p-3 rounded-2xl border text-left text-xs transition cursor-pointer flex flex-col gap-1 ${
-                  config.type === 'webdav' && config.basePath === '/我的音乐'
-                    ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300'
-                    : 'bg-white/[0.02] border-white/5 hover:bg-white/5 text-zinc-300'
-                }`}
-              >
-                <div className="font-bold flex items-center gap-1.5">
-                  <Server className="w-3.5 h-3.5 text-emerald-400" /> 极空间 / 绿联
-                </div>
-                <span className="text-[10px] text-zinc-500">WebDAV 服务</span>
+                <span className="text-[10px] text-zinc-500">群晖 / 极空间 / 绿联</span>
               </button>
 
               <button
@@ -332,7 +310,7 @@ export const NasStorageModal: React.FC<NasStorageModalProps> = ({
                 <div className="font-bold flex items-center gap-1.5">
                   <HardDrive className="w-3.5 h-3.5 text-cyan-400" /> SMB / 局域网
                 </div>
-                <span className="text-[10px] text-zinc-500">Samba :445</span>
+                <span className="text-[10px] text-zinc-500">Samba :445 共享</span>
               </button>
 
               <button
@@ -453,6 +431,18 @@ export const NasStorageModal: React.FC<NasStorageModalProps> = ({
                     </div>
                   </div>
                 </div>
+
+                <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-200/90 leading-relaxed space-y-1">
+                  <div className="font-bold flex items-center gap-1.5 text-amber-300">
+                    <span>💡</span> SMB 连接注意事项与最佳实践
+                  </div>
+                  <ul className="list-disc pl-4 space-y-0.5 text-zinc-300">
+                    <li><b>共享名格式</b>：建议填写 NAS 导出的根共享名（如 <code>media</code> 或 <code>music</code>）。若填子路径如 <code>media/music</code> 系统现已支持自动分段识别。</li>
+                    <li><b>用户权限</b>：请在 NAS（群晖/极空间/TrueNAS）中确认该用户账号具有该共享文件夹的「读取与写入」权限。</li>
+                    <li><b>传输加密与协议</b>：若 NAS 开启了「强制 SMB3 传输加密」可能导致纯客户端握手失败，可在 NAS 控制面板中将加密方式设为可选。</li>
+                    <li><b>推荐替代方案</b>：如在 Docker 或局域网运行，强烈推荐使用上方预设中的 <b>「本地卷映射」</b>（Docker <code>-v</code> 挂载）或 <b>「WebDAV」</b>（群晖 5005 端口/极空间），速度更快且免除 SMB 协议兼容性问题。</li>
+                  </ul>
+                </div>
               </>
             ) : config.type !== 'local_mount' ? (
               <>
@@ -474,7 +464,7 @@ export const NasStorageModal: React.FC<NasStorageModalProps> = ({
                       type="text"
                       value={config.basePath}
                       onChange={(e) => setConfig({ ...config, basePath: e.target.value })}
-                      placeholder="/music 或 /volume1/music"
+                      placeholder="/music 或 /我的音乐 (群晖直接填共享名如 /music，勿加 /volume1)"
                       className="w-full bg-zinc-900 border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-[#FF6700]"
                     />
                   </div>
@@ -511,6 +501,17 @@ export const NasStorageModal: React.FC<NasStorageModalProps> = ({
                       </button>
                     </div>
                   </div>
+                </div>
+
+                <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20 text-[11px] text-blue-200/90 leading-relaxed space-y-1">
+                  <div className="font-bold flex items-center gap-1.5 text-blue-300">
+                    <span>💡</span> WebDAV / Alist 连接注意事项与 HTTP 500 排查
+                  </div>
+                  <ul className="list-disc pl-4 space-y-0.5 text-zinc-300">
+                    <li><b>群晖 Synology</b>：远程根目录请直接填<b>共享文件夹名</b>（如 <code>/music</code> 或 <code>/media</code>），切勿加 <code>/volume1/</code> 等物理卷名；且需在 DSM【控制面板 → 应用程序权限 → WebDAV Server】中勾选允许该用户访问。</li>
+                    <li><b>Alist 聚合网盘</b>：地址末尾必须带 <code>/dav</code>（例如 <code>http://IP:5244/dav</code>），且所填目录必须在 Alist 后台挂载且处于可用状态。</li>
+                    <li><b>极空间 / 绿联</b>：直接填写设备 WebDAV 应用配置的共享目录（如 <code>/我的音乐</code>）和账号密码。</li>
+                  </ul>
                 </div>
               </>
             ) : (
@@ -575,7 +576,7 @@ export const NasStorageModal: React.FC<NasStorageModalProps> = ({
                   <span className="font-mono text-[11px] opacity-80">({testResult.latencyMs}ms 延迟)</span>
                 )}
               </div>
-              <p className="mt-1 text-[11px] opacity-90">{testResult.message || testResult.error}</p>
+              <p className="mt-1 text-[11px] opacity-90 whitespace-pre-line leading-relaxed">{testResult.message || testResult.error}</p>
               {testResult.foundSampleFiles && testResult.foundSampleFiles.length > 0 && (
                 <div className="mt-2 pt-2 border-t border-emerald-500/20">
                   <span className="text-[10px] opacity-70">探测到的音轨示例：</span>
