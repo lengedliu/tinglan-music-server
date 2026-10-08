@@ -4,10 +4,19 @@
   "serverUrl": "192.168.50.153",
   "basePath": "/music",
   "username": "liuyc",
-  "password": "123",
+  "password": "123456",
   "autoSyncIntervalMinutes": 30,
   "autoScrapeMetadata": true,
-  "port": 442,
+  "port": 445,
   "shareName": "media",
-  "domain": "WORKGROUP"
+  "domain": "WORKGROUP",
+  "lastSyncResult": {
+    "success": false,
+    "added": 0,
+    "updated": 0,
+    "removed": 0,
+    "total": 27,
+    "error": "connect ETIMEDOUT 192.168.50.153:442",
+    "durationMs": 127059
+  }
 }

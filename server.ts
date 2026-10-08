@@ -1,3 +1,4 @@
+import './server/core/cryptoLegacyCompat.js';
 import express, { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
