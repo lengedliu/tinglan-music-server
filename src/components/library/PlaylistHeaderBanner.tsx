@@ -10,7 +10,9 @@ import {
   Flame,
   Clock,
   Sparkles,
-  RotateCcw
+  RotateCcw,
+  X,
+  AlertTriangle
 } from 'lucide-react';
 import { Playlist, Song, XiaomiDevice } from '../../types';
 
@@ -48,6 +50,10 @@ export const PlaylistHeaderBanner: React.FC<PlaylistHeaderBannerProps> = memo(({
   dynamicType = null
 }) => {
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
+  const [isDeletingPlaylist, setIsDeletingPlaylist] = useState(false);
+  const [showClearHistoryModal, setShowClearHistoryModal] = useState(false);
+  const [isClearingHistory, setIsClearingHistory] = useState(false);
 
   if (!currentPlaylist && !dynamicType) return null;
 
@@ -210,13 +216,10 @@ export const PlaylistHeaderBanner: React.FC<PlaylistHeaderBannerProps> = memo(({
         {dynamicType === 'recently_played' && onClearRecentHistory && (
           <button
             id="btn-clear-recent-history"
-            onClick={() => {
-              if (confirm('确认清空最近播放历史记录？')) {
-                onClearRecentHistory();
-              }
-            }}
+            type="button"
+            onClick={() => setShowClearHistoryModal(true)}
             disabled={filteredSongs.length === 0}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-medium transition disabled:opacity-40 ${
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-medium transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
               isLight
                 ? 'bg-rose-50 hover:bg-rose-100 border-rose-200 text-rose-600'
                 : 'bg-rose-500/15 hover:bg-rose-500/25 border-rose-500/30 text-rose-300'
@@ -281,12 +284,9 @@ export const PlaylistHeaderBanner: React.FC<PlaylistHeaderBannerProps> = memo(({
         {!isDynamic && onDeletePlaylist && currentPlaylist && (
           <button
             id="btn-delete-playlist"
-            onClick={() => {
-              if (confirm(`确认删除歌单《${currentPlaylist.name}》？删除后不会清空曲库原有音频。`)) {
-                onDeletePlaylist(currentPlaylist.id);
-              }
-            }}
-            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-medium transition ${
+            type="button"
+            onClick={() => setShowDeleteConfirmModal(true)}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-medium transition cursor-pointer active:scale-95 ${
               isLight
                 ? 'bg-rose-50 hover:bg-rose-100 border-rose-200 text-rose-600'
                 : 'bg-rose-500/15 hover:bg-rose-500/25 border-rose-500/30 text-rose-300'
@@ -298,6 +298,190 @@ export const PlaylistHeaderBanner: React.FC<PlaylistHeaderBannerProps> = memo(({
           </button>
         )}
       </div>
+
+      {/* Delete Playlist Confirmation Modal Card */}
+      {showDeleteConfirmModal && currentPlaylist && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-150"
+          onClick={() => setShowDeleteConfirmModal(false)}
+        >
+          <div 
+            className={`w-full max-w-md rounded-2xl p-6 border shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150 ${
+              isLight 
+                ? 'bg-white border-zinc-200 text-zinc-900 shadow-zinc-300/50' 
+                : 'bg-zinc-900 border-white/10 text-white shadow-black/80'
+            }`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center flex-shrink-0 text-rose-500">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-rose-500">确认删除歌单？</h3>
+                  <p className={`text-xs mt-0.5 ${isLight ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                    即将删除歌单《<span className={`font-semibold ${isLight ? 'text-zinc-800' : 'text-zinc-200'}`}>{currentPlaylist.name}</span>》
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDeleteConfirmModal(false)}
+                className={`p-1.5 rounded-xl transition cursor-pointer ${
+                  isLight ? 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100' : 'text-zinc-400 hover:text-white hover:bg-white/10'
+                }`}
+                title="关闭"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Content Details */}
+            <div className="space-y-3">
+              <p className={`text-xs leading-relaxed ${isLight ? 'text-zinc-600' : 'text-zinc-300'}`}>
+                您确定要删除歌单 <strong className={isLight ? 'text-zinc-900' : 'text-white'}>《{currentPlaylist.name}》</strong> 吗？
+                {currentPlaylist.songIds?.length > 0 && (
+                  <span className="block mt-1">
+                    当前歌单内收录了 <span className="font-bold text-amber-500 font-mono">{currentPlaylist.songIds.length}</span> 首歌曲。
+                  </span>
+                )}
+              </p>
+
+              {/* Security Reassurance Note */}
+              <div className={`p-3.5 rounded-xl text-xs leading-relaxed border flex items-start gap-2.5 ${
+                isLight 
+                  ? 'bg-amber-50/80 border-amber-200 text-amber-900' 
+                  : 'bg-amber-500/10 border-amber-500/20 text-amber-300'
+              }`}>
+                <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                <div className="text-[11px] leading-relaxed">
+                  <strong className="block mb-0.5">安全说明</strong>
+                  删除后仅移除此歌单分类列表，<strong>绝不会</strong>清空或删除曲库中的任何原始音频文件。
+                </div>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex items-center justify-end gap-2.5 pt-1">
+              <button
+                type="button"
+                disabled={isDeletingPlaylist}
+                onClick={() => setShowDeleteConfirmModal(false)}
+                className={`px-4 py-2 rounded-xl text-xs font-semibold transition cursor-pointer border ${
+                  isLight 
+                    ? 'bg-zinc-100 hover:bg-zinc-200 text-zinc-700 border-zinc-200' 
+                    : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-white/5'
+                }`}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                id="btn-confirm-delete-playlist-action"
+                disabled={isDeletingPlaylist}
+                onClick={async () => {
+                  if (onDeletePlaylist && currentPlaylist) {
+                    setIsDeletingPlaylist(true);
+                    try {
+                      await onDeletePlaylist(currentPlaylist.id);
+                    } finally {
+                      setIsDeletingPlaylist(false);
+                      setShowDeleteConfirmModal(false);
+                    }
+                  }
+                }}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 active:scale-95 text-white transition cursor-pointer disabled:opacity-50 shadow-md shadow-rose-600/25"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isDeletingPlaylist ? '正在删除...' : '确定删除'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Clear Recent History Modal Card */}
+      {showClearHistoryModal && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-150"
+          onClick={() => setShowClearHistoryModal(false)}
+        >
+          <div 
+            className={`w-full max-w-md rounded-2xl p-6 border shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150 ${
+              isLight 
+                ? 'bg-white border-zinc-200 text-zinc-900 shadow-zinc-300/50' 
+                : 'bg-zinc-900 border-white/10 text-white shadow-black/80'
+            }`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center flex-shrink-0 text-rose-500">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-rose-500">清空最近播放记录？</h3>
+                  <p className={`text-xs mt-0.5 ${isLight ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                    即将清空所有历史播放轨迹
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowClearHistoryModal(false)}
+                className={`p-1.5 rounded-xl transition cursor-pointer ${
+                  isLight ? 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100' : 'text-zinc-400 hover:text-white hover:bg-white/10'
+                }`}
+                title="关闭"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <p className={`text-xs leading-relaxed ${isLight ? 'text-zinc-600' : 'text-zinc-300'}`}>
+                确认清空最近播放历史记录吗？清空后将重置您的听歌足迹，曲库中的原有歌曲不受影响。
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-1">
+              <button
+                type="button"
+                disabled={isClearingHistory}
+                onClick={() => setShowClearHistoryModal(false)}
+                className={`px-4 py-2 rounded-xl text-xs font-semibold transition cursor-pointer border ${
+                  isLight 
+                    ? 'bg-zinc-100 hover:bg-zinc-200 text-zinc-700 border-zinc-200' 
+                    : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-white/5'
+                }`}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                disabled={isClearingHistory}
+                onClick={async () => {
+                  if (onClearRecentHistory) {
+                    setIsClearingHistory(true);
+                    try {
+                      await onClearRecentHistory();
+                    } finally {
+                      setIsClearingHistory(false);
+                      setShowClearHistoryModal(false);
+                    }
+                  }
+                }}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 active:scale-95 text-white transition cursor-pointer disabled:opacity-50 shadow-md shadow-rose-600/25"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isClearingHistory ? '正在清空...' : '确认清空'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 });

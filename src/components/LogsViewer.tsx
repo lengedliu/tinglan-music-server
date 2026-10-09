@@ -89,6 +89,10 @@ export const LogsViewer: React.FC = () => {
   const [castLogs, setCastLogs] = useState<CastLog[]>([]);
   const [devices, setDevices] = useState<XiaomiDevice[]>([]);
   const [isSnapshotModalOpen, setIsSnapshotModalOpen] = useState(false);
+  const [showPruneModal, setShowPruneModal] = useState(false);
+  const [isPruning, setIsPruning] = useState(false);
+  const [showClearLogsModal, setShowClearLogsModal] = useState(false);
+  const [isClearingLogs, setIsClearingLogs] = useState(false);
 
   // Floating Toast Notification state
   const [toastMessage, setToastMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
@@ -193,20 +197,31 @@ export const LogsViewer: React.FC = () => {
     });
   }, [logs, activeCategory, activeLevel, searchQuery]);
 
-  const handleClearLogs = async () => {
-    if (!window.confirm('确定要清空所有运行诊断与审计日志吗？')) return;
+  const handleClearLogs = () => {
+    setShowClearLogsModal(true);
+  };
+
+  const executeClearLogs = async () => {
+    setIsClearingLogs(true);
     try {
       await apiFetch('/api/logs', { method: 'DELETE' });
       setLogs([]);
       setStats(prev => ({ ...prev, total: 0, cast: 0, audit: 0, automation: 0, system: 0, info: 0, warn: 0, error: 0, totalPersisted: 0 }));
       showToast('success', '已清空所有运行诊断与审计日志');
+      setShowClearLogsModal(false);
     } catch (err) {
       showToast('error', '清空日志失败');
+    } finally {
+      setIsClearingLogs(false);
     }
   };
 
-  const handlePruneLogs = async () => {
-    if (!window.confirm('确认执行日志数据库修剪归档吗？系统将保留最近 2,000 条关键诊断记录并清理历史老旧数据以释放空间。')) return;
+  const handlePruneLogs = () => {
+    setShowPruneModal(true);
+  };
+
+  const executePruneLogs = async () => {
+    setIsPruning(true);
     try {
       const res = await apiFetch('/api/logs/prune', {
         method: 'POST',
@@ -218,10 +233,13 @@ export const LogsViewer: React.FC = () => {
         if (data && data.success) {
           showToast('success', data.message || '日志修剪成功');
           fetchLogs();
+          setShowPruneModal(false);
         }
       }
     } catch {
       showToast('error', '日志修剪失败');
+    } finally {
+      setIsPruning(false);
     }
   };
 
@@ -931,6 +949,199 @@ export const LogsViewer: React.FC = () => {
                 className="px-5 py-2.5 rounded-xl text-xs font-bold bg-purple-600 hover:bg-purple-500 text-white transition cursor-pointer shadow-md"
               >
                 已了解
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Prune Logs Confirmation Modal Card */}
+      {showPruneModal && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-150"
+          onClick={() => setShowPruneModal(false)}
+        >
+          <div 
+            className={`w-full max-w-md rounded-2xl p-6 border shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150 ${
+              isLight 
+                ? 'bg-white border-zinc-200 text-zinc-900 shadow-zinc-300/50' 
+                : 'bg-zinc-900 border-white/10 text-white shadow-black/80'
+            }`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center flex-shrink-0 text-amber-500">
+                  <Scissors className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-amber-500 flex items-center gap-1.5">
+                    <span>日志数据库修剪归档</span>
+                  </h3>
+                  <p className={`text-xs mt-0.5 ${isLight ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                    精简数据库存储 · 释放磁盘空间
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPruneModal(false)}
+                className={`p-1.5 rounded-xl transition cursor-pointer ${
+                  isLight ? 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100' : 'text-zinc-400 hover:text-white hover:bg-white/10'
+                }`}
+                title="关闭"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Content Details */}
+            <div className="space-y-3">
+              <p className={`text-xs leading-relaxed ${isLight ? 'text-zinc-600' : 'text-zinc-300'}`}>
+                确认执行日志数据库修剪归档吗？系统将保留最近 <strong className="text-amber-500 font-mono font-bold">2,000 条</strong> 核心关键诊断与审计记录，并清理更早的历史老旧数据以释放空间。
+              </p>
+
+              {/* Status info */}
+              <div className={`p-3 rounded-xl text-xs border flex items-center justify-between ${
+                isLight ? 'bg-zinc-50 border-zinc-200 text-zinc-700' : 'bg-zinc-950/60 border-white/5 text-zinc-300'
+              }`}>
+                <span className="flex items-center gap-2">
+                  <Database className="w-4 h-4 text-[#FF6700]" />
+                  <span>当前数据库持久化</span>
+                </span>
+                <span className="font-mono font-bold text-[#FF6700]">
+                  {stats.totalPersisted || stats.total || logs.length} 条记录
+                </span>
+              </div>
+
+              {/* Safety Reassurance Note */}
+              <div className={`p-3.5 rounded-xl text-xs leading-relaxed border flex items-start gap-2.5 ${
+                isLight 
+                  ? 'bg-amber-50/80 border-amber-200 text-amber-900' 
+                  : 'bg-amber-500/10 border-amber-500/20 text-amber-300'
+              }`}>
+                <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                <div className="text-[11px] leading-relaxed">
+                  <strong className="block mb-0.5">安全说明</strong>
+                  保留的 2,000 条关键诊断记录已完整覆盖近期所有设备投播、网络请求与运行异常，历史清理不会影响任何音乐曲库与用户数据。
+                </div>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex items-center justify-end gap-2.5 pt-1">
+              <button
+                type="button"
+                disabled={isPruning}
+                onClick={() => setShowPruneModal(false)}
+                className={`px-4 py-2 rounded-xl text-xs font-semibold transition cursor-pointer border ${
+                  isLight 
+                    ? 'bg-zinc-100 hover:bg-zinc-200 text-zinc-700 border-zinc-200' 
+                    : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-white/5'
+                }`}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                id="btn-confirm-prune-logs"
+                disabled={isPruning}
+                onClick={executePruneLogs}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-700 active:scale-95 text-white transition cursor-pointer disabled:opacity-50 shadow-md shadow-amber-600/25"
+              >
+                <Scissors className="w-3.5 h-3.5" />
+                <span>{isPruning ? '正在修剪...' : '确认修剪归档'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Clear All Logs Confirmation Modal Card */}
+      {showClearLogsModal && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-150"
+          onClick={() => setShowClearLogsModal(false)}
+        >
+          <div 
+            className={`w-full max-w-md rounded-2xl p-6 border shadow-2xl space-y-4 animate-in fade-in zoom-in-95 duration-150 ${
+              isLight 
+                ? 'bg-white border-zinc-200 text-zinc-900 shadow-zinc-300/50' 
+                : 'bg-zinc-900 border-white/10 text-white shadow-black/80'
+            }`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center flex-shrink-0 text-rose-500">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-rose-500 flex items-center gap-1.5">
+                    <span>清空所有运行日志？</span>
+                  </h3>
+                  <p className={`text-xs mt-0.5 ${isLight ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                    彻底清除历史审计与诊断数据
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowClearLogsModal(false)}
+                className={`p-1.5 rounded-xl transition cursor-pointer ${
+                  isLight ? 'text-zinc-400 hover:text-zinc-700 hover:bg-zinc-100' : 'text-zinc-400 hover:text-white hover:bg-white/10'
+                }`}
+                title="关闭"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Content Details */}
+            <div className="space-y-3">
+              <p className={`text-xs leading-relaxed ${isLight ? 'text-zinc-600' : 'text-zinc-300'}`}>
+                确定要彻底清空当前所有运行诊断与安全审计日志吗？清空后当前列表中的所有日志将立即归零。
+              </p>
+
+              {/* Warning Callout */}
+              <div className={`p-3.5 rounded-xl text-xs leading-relaxed border flex items-start gap-2.5 ${
+                isLight 
+                  ? 'bg-rose-50 border-rose-200 text-rose-800' 
+                  : 'bg-rose-500/10 border-rose-500/20 text-rose-300'
+              }`}>
+                <AlertTriangle className="w-4 h-4 text-rose-500 flex-shrink-0 mt-0.5" />
+                <div className="text-[11px] leading-relaxed">
+                  <strong className="block mb-0.5">高危提醒</strong>
+                  清空后历史诊断轨迹将无法找回，后续系统将仅实时记录新产生的运行日志。
+                </div>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex items-center justify-end gap-2.5 pt-1">
+              <button
+                type="button"
+                disabled={isClearingLogs}
+                onClick={() => setShowClearLogsModal(false)}
+                className={`px-4 py-2 rounded-xl text-xs font-semibold transition cursor-pointer border ${
+                  isLight 
+                    ? 'bg-zinc-100 hover:bg-zinc-200 text-zinc-700 border-zinc-200' 
+                    : 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-white/5'
+                }`}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                id="btn-confirm-clear-logs"
+                disabled={isClearingLogs}
+                onClick={executeClearLogs}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 active:scale-95 text-white transition cursor-pointer disabled:opacity-50 shadow-md shadow-rose-600/25"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isClearingLogs ? '正在清空...' : '确认清空'}</span>
               </button>
             </div>
           </div>
