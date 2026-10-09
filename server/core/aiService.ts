@@ -164,7 +164,7 @@ export interface AiDiagnosisResult {
 
 const DEFAULT_AI_CONFIG: AiServiceConfig = {
   enabled: true,
-  activeProvider: process.env.GEMINI_API_KEY ? 'gemini' : 'deepseek',
+  activeProvider: (process.env.GEMINI_API_KEY || process.env.API_KEY) ? 'gemini' : 'deepseek',
   providers: {
     deepseek: {
       id: 'deepseek',
@@ -369,7 +369,7 @@ export class AiService {
       case 'zhipu':
         return process.env.ZHIPU_API_KEY || process.env.GLM_API_KEY || '';
       case 'gemini':
-        return process.env.GEMINI_API_KEY || '';
+        return process.env.GEMINI_API_KEY || process.env.API_KEY || '';
       case 'custom':
         return process.env.CUSTOM_AI_API_KEY || '';
       default:

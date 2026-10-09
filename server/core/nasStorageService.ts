@@ -57,7 +57,11 @@ const SUPPORTED_EXTS = new Set([
   '.opus',
   '.ape',
   '.dsf',
-  '.dff'
+  '.dff',
+  '.wma',
+  '.alac',
+  '.aif',
+  '.aiff'
 ]);
 
 export class NasStorageService {
@@ -129,6 +133,20 @@ export class NasStorageService {
 
   public getProgress(): NasSyncProgress {
     return { ...this.progress };
+  }
+
+  public normalizeUrlPathKey(u: string): string {
+    if (!u) return '';
+    try {
+      const parsed = new URL(u);
+      return decodeURIComponent(parsed.pathname.replace(/\/+$/, ''));
+    } catch {
+      try {
+        return decodeURIComponent(u.replace(/\/+$/, ''));
+      } catch {
+        return u.replace(/\/+$/, '');
+      }
+    }
   }
 
   private setupAutoSyncSchedule(): void {
@@ -468,8 +486,8 @@ export class NasStorageService {
     }
 
     const items = this.parseDetailedPropfindXml(propfindRes.text, targetUrl);
-    const normTarget = targetUrl.replace(/\/+$/, '');
-    const subDirs = items.filter(it => it.isDir && it.fullUrl.replace(/\/+$/, '') !== normTarget);
+    const normTarget = this.normalizeUrlPathKey(targetUrl);
+    const subDirs = items.filter(it => it.isDir && this.normalizeUrlPathKey(it.fullUrl) !== normTarget);
     const audioFiles = items.filter(it => !it.isDir && SUPPORTED_EXTS.has(path.extname(it.name).toLowerCase()));
 
     let message = '';
@@ -481,22 +499,30 @@ export class NasStorageService {
       message = `WebDAV 连接成功！响应耗时 ${latencyMs}ms。当前直属层无散装音频，但成功检测到 ${subDirs.length} 个子文件夹（如：${sampleDirs}），同步时将自动递归扫描所有子目录中的歌曲！`;
     } else {
       let smartTip = `当前路径「${cfg.basePath || '/'}」为空目录（未发现音频或子文件夹）。`;
-      if (cleanPath === 'music') {
+      if (!cleanPath || cleanPath === '/' || cleanPath === 'music') {
         try {
-          const mediaCheckUrl = `${cleanBaseUrl}/media/music`;
-          const altRes = await this.executeWebdavPropfind(mediaCheckUrl, authHeader);
-          if (altRes.ok) {
-            smartTip += `\n\n💡 发现有效路径：检测到「${cleanBaseUrl}/media/music」存在内容，您的 NAS 共享路径可能为 /media/music，建议将「远程音乐根目录路径」更改为 /media/music 重试！`;
+          for (const cand of ['music', 'Music', 'media/music']) {
+            if (cand === cleanPath) continue;
+            const checkUrl = `${cleanBaseUrl}/${cand}`;
+            const altRes = await this.executeWebdavPropfind(checkUrl, authHeader);
+            if (altRes.ok) {
+              smartTip += `\n\n💡 发现有效路径：检测到「/${cand}」存在内容，您的 NAS 实际共享路径可能为 /${cand}，建议将「远程音乐根目录路径」更改为 /${cand} 重试！`;
+              break;
+            }
           }
         } catch {}
       }
       message = `WebDAV 连接成功！响应耗时 ${latencyMs}ms。\n${smartTip}`;
     }
 
+    const sampleFiles = audioFiles.length > 0
+      ? audioFiles.slice(0, 5).map(f => f.name)
+      : subDirs.slice(0, 5).map(d => `📁 ${d.name}/`);
+
     return {
       success: true,
       latencyMs,
-      foundSampleFiles: audioFiles.slice(0, 5),
+      foundSampleFiles: sampleFiles,
       totalFilesCount: audioFiles.length,
       message
     };
@@ -729,28 +755,21 @@ export class NasStorageService {
     const cleanPath = (this.config.basePath || '/').replace(/^\/+/, '');
     const startUrl = cleanPath ? `${cleanBaseUrl}/${cleanPath}` : cleanBaseUrl;
 
-    const normalizeKey = (u: string) => {
-      try {
-        return decodeURI(u.replace(/\/+$/, ''));
-      } catch {
-        return u.replace(/\/+$/, '');
-      }
-    };
-
     const queuedKeys = new Set<string>();
     const visitedKeys = new Set<string>();
     const queueDirs = [startUrl];
-    queuedKeys.add(normalizeKey(startUrl));
+    queuedKeys.add(this.normalizeUrlPathKey(startUrl));
 
     const authHeader = this.config.username
       ? `Basic ${Buffer.from(`${this.config.username}:${this.config.password || ''}`).toString('base64')}`
       : undefined;
 
     console.log(`[NasStorageService] 🔍 WebDAV 启动全量/增量扫描，根目录: ${startUrl}`);
+    logEngine.info('system', 'NAS WebDAV 启动曲库扫描', `根目录: ${startUrl} | 用户: ${this.config.username || '匿名'}`);
 
     while (queueDirs.length > 0) {
       const currentDir = queueDirs.shift()!;
-      const normCurrentKey = normalizeKey(currentDir);
+      const normCurrentKey = this.normalizeUrlPathKey(currentDir);
       if (visitedKeys.has(normCurrentKey)) continue;
       visitedKeys.add(normCurrentKey);
 
@@ -758,6 +777,7 @@ export class NasStorageService {
         const propfindRes = await this.executeWebdavPropfind(currentDir, authHeader);
         if (!propfindRes.ok) {
           console.warn(`[NasStorageService] WebDAV 目录探测响应异常 (HTTP ${propfindRes.status}): ${currentDir}`);
+          logEngine.warn('system', 'NAS WebDAV 目录跳过', `HTTP ${propfindRes.status} 响应异常: ${currentDir}`);
           continue;
         }
 
@@ -766,7 +786,7 @@ export class NasStorageService {
         let subDirCount = 0;
 
         for (const it of items) {
-          const normItemKey = normalizeKey(it.fullUrl);
+          const normItemKey = this.normalizeUrlPathKey(it.fullUrl);
           if (it.isDir) {
             // 排除当前目录自身、已入队目录以及隐藏文件夹
             if (normItemKey !== normCurrentKey && !queuedKeys.has(normItemKey) && !it.name.startsWith('.')) {
@@ -775,7 +795,7 @@ export class NasStorageService {
               subDirCount++;
             }
           } else {
-            const ext = path.extname(it.name).toLowerCase();
+            const ext = path.extname(it.name).trim().toLowerCase();
             if (SUPPORTED_EXTS.has(ext)) {
               results.push({
                 url: it.fullUrl,
@@ -794,6 +814,7 @@ export class NasStorageService {
     }
 
     console.log(`[NasStorageService] 🏁 WebDAV 扫描全部完毕，共发掘 ${results.length} 首音频曲目`);
+    logEngine.info('system', 'NAS WebDAV 扫描完成', `发掘 ${results.length} 首有效音频曲目`);
     return results;
   }
 
@@ -1045,33 +1066,42 @@ export class NasStorageService {
       const rawHref = hrefMatch[1].trim();
       if (!rawHref) continue;
 
+      // Decode common XML entities first
+      const unescapedHref = rawHref
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&apos;/g, "'");
+
       let fullUrl = '';
       try {
-        if (rawHref.startsWith('http://') || rawHref.startsWith('https://')) {
-          fullUrl = new URL(rawHref).href;
+        const baseObj = new URL(baseWithSlash);
+        if (unescapedHref.startsWith('http://') || unescapedHref.startsWith('https://')) {
+          const parsedHref = new URL(unescapedHref);
+          // Preserve baseObj origin to handle reverse proxy / internal hostname issues
+          fullUrl = new URL(parsedHref.pathname + parsedHref.search, baseObj.origin).href;
+        } else if (unescapedHref.startsWith('/')) {
+          // RFC 4918 Section 8.3: path-absolute href starting with '/' is resolved relative to server origin
+          fullUrl = new URL(unescapedHref, baseObj.origin).href;
         } else {
-          const baseObj = new URL(baseWithSlash);
-          const basePath = baseObj.pathname.replace(/\/+$/, '');
-          if (rawHref.startsWith('/')) {
-            if (!basePath || rawHref.startsWith(basePath)) {
-              fullUrl = new URL(rawHref, baseObj.origin).href;
-            } else {
-              fullUrl = new URL(`${basePath}${rawHref}`, baseObj.origin).href;
-            }
-          } else {
-            fullUrl = new URL(rawHref, baseWithSlash).href;
-          }
+          // Relative path: resolved relative to current directory baseWithSlash
+          fullUrl = new URL(unescapedHref, baseWithSlash).href;
         }
       } catch {
-        fullUrl = `${baseOriginOrUrl.replace(/\/+$/, '')}/${rawHref.replace(/^\/+/, '')}`;
+        fullUrl = `${baseOriginOrUrl.replace(/\/+$/, '')}/${unescapedHref.replace(/^\/+/, '')}`;
       }
 
-      let decodedHref = rawHref;
+      let decodedHref = unescapedHref;
       try {
-        decodedHref = decodeURIComponent(rawHref);
+        decodedHref = decodeURIComponent(unescapedHref);
       } catch {}
 
-      const isDir = /<[^:]*:?collection\b/i.test(block) || rawHref.endsWith('/') || decodedHref.endsWith('/');
+      const isDir = /<[^:]*:?collection\b/i.test(block) ||
+                    /<[^:]*:?getcontenttype[^>]*>[^<]*directory/i.test(block) ||
+                    unescapedHref.endsWith('/') ||
+                    decodedHref.endsWith('/');
+
       const name = decodedHref.replace(/\/+$/, '').split('/').pop() || '';
       if (!name || name === '.' || name === '..') continue;
 
@@ -1101,10 +1131,16 @@ export class NasStorageService {
       case '.flac': return 'audio/flac';
       case '.wav': return 'audio/wav';
       case '.m4a':
+      case '.alac':
       case '.aac': return 'audio/aac';
       case '.ogg':
       case '.opus': return 'audio/ogg';
       case '.ape': return 'audio/ape';
+      case '.wma': return 'audio/x-ms-wma';
+      case '.aif':
+      case '.aiff': return 'audio/aiff';
+      case '.dsf':
+      case '.dff': return 'audio/x-dff';
       default: return 'audio/mpeg';
     }
   }

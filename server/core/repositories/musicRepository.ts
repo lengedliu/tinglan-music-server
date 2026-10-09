@@ -354,6 +354,10 @@ export class MusicRepository {
     }
   }
 
+  public startBatch(): void {
+    this.beginBatch();
+  }
+
   public async commitBatch(): Promise<void> {
     this.isBatchMode = false;
     musicSearchIndex.buildIndex(this.songs);
