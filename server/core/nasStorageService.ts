@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import net from 'net';
 import crypto from 'crypto';
+import { Readable } from 'stream';
 import { parseBuffer } from 'music-metadata';
 // @ts-ignore
 import SMB2 from '@marsaud/smb2';
@@ -249,13 +250,82 @@ export class NasStorageService {
     };
   }
 
-  public getOrCreateSmbClient(cfg: NasConfig): { smb: any; target: ReturnType<NasStorageService['getSmbTarget']> } {
-    const target = this.getSmbTarget(cfg);
-    const key = `${target.host}:${target.port}/${target.shareName}/${target.username}`;
+  /**
+   * Safely parse an SMB URL (e.g. smb://192.168.50.153/media/music/song.mp3)
+   */
+  public parseSmbUrl(smbUrl: string): {
+    host: string;
+    port: number;
+    shareName: string;
+    remotePath: string;
+  } {
+    const cleanUrl = smbUrl.trim().replace(/^smb:\/\//i, '').replace(/^[\\/]+/, '');
+    const slashIdx = cleanUrl.indexOf('/');
+    const backslashIdx = cleanUrl.indexOf('\\');
+    let sepIdx = slashIdx;
+    if (sepIdx === -1 || (backslashIdx !== -1 && backslashIdx < sepIdx)) {
+      sepIdx = backslashIdx;
+    }
 
+    const hostWithPort = sepIdx !== -1 ? cleanUrl.substring(0, sepIdx) : cleanUrl;
+    let rest = sepIdx !== -1 ? cleanUrl.substring(sepIdx + 1) : '';
+
+    let host = hostWithPort;
+    let port = this.config.port && this.config.port > 0 ? this.config.port : 445;
+    const hpMatch = hostWithPort.match(/^(.+):([0-9]+)$/);
+    if (hpMatch) {
+      host = hpMatch[1].trim();
+      const p = Number(hpMatch[2]);
+      if (Number.isInteger(p) && p > 0 && p <= 65535) port = p;
+    }
+
+    rest = rest.replace(/^[\\/]+/, '');
+    const nextSlash = rest.indexOf('/');
+    const nextBack = rest.indexOf('\\');
+    let nextSep = nextSlash;
+    if (nextSep === -1 || (nextBack !== -1 && nextBack < nextSep)) {
+      nextSep = nextBack;
+    }
+
+    let shareName = this.config.shareName || 'media';
+    let remotePath = '';
+
+    if (nextSep !== -1) {
+      shareName = rest.substring(0, nextSep) || shareName;
+      remotePath = rest.substring(nextSep + 1);
+    } else {
+      shareName = rest || shareName;
+    }
+
+    try {
+      remotePath = decodeURIComponent(remotePath);
+    } catch {}
+    remotePath = remotePath.replace(/\//g, '\\');
+
+    return { host, port, shareName, remotePath };
+  }
+
+  public getOrCreateSmbClientForTarget(target: {
+    host: string;
+    port: number;
+    shareName: string;
+    domain?: string;
+    username?: string;
+    password?: string;
+  }): any {
+    const key = `${target.host}:${target.port}/${target.shareName}/${target.username || this.config.username || 'guest'}`;
+
+    // Verify if existing client is still healthy and connected
     if (this.sharedSmbClient && this.sharedSmbClient.key === key && this.sharedSmbClient.smb) {
-      this.sharedSmbClient.lastUsed = Date.now();
-      return { smb: this.sharedSmbClient.smb, target };
+      const existingSmb = this.sharedSmbClient.smb;
+      const sock = (existingSmb as any).socket;
+      const isAlive = !sock || (!sock.destroyed && !sock.closed);
+      if (isAlive) {
+        this.sharedSmbClient.lastUsed = Date.now();
+        return existingSmb;
+      }
+      this.closeSmb(existingSmb);
+      this.sharedSmbClient = null;
     }
 
     // Close older client if key changed
@@ -267,15 +337,23 @@ export class NasStorageService {
     const smb = new SMB2({
       share: `\\\\${target.host}\\${target.shareName}`,
       port: target.port,
-      domain: target.domain,
-      username: target.username,
-      password: target.password,
-      autoCloseTimeout: 120000
+      domain: target.domain || this.config.domain || 'WORKGROUP',
+      username: target.username || this.config.username || 'guest',
+      password: target.password || this.config.password || '',
+      autoCloseTimeout: 180000
     });
 
     if (smb && (smb as any).socket) {
       (smb as any).socket.on('error', (err: any) => {
         console.warn('[NasStorageService] SMB socket handled error:', err?.message || err);
+        if (this.sharedSmbClient?.smb === smb) {
+          this.sharedSmbClient = null;
+        }
+      });
+      (smb as any).socket.on('close', () => {
+        if (this.sharedSmbClient?.smb === smb) {
+          this.sharedSmbClient = null;
+        }
       });
     }
 
@@ -290,6 +368,12 @@ export class NasStorageService {
       }
     }, 60000);
 
+    return smb;
+  }
+
+  public getOrCreateSmbClient(cfg: NasConfig): { smb: any; target: ReturnType<NasStorageService['getSmbTarget']> } {
+    const target = this.getSmbTarget(cfg);
+    const smb = this.getOrCreateSmbClientForTarget(target);
     return { smb, target };
   }
 
@@ -379,6 +463,16 @@ export class NasStorageService {
     });
   }
 
+  public smbGetSize(smb: any, filePath: string): Promise<number> {
+    return new Promise((resolve, reject) => {
+      if (typeof smb.getSize !== 'function') return reject(new Error('@marsaud/smb2 getSize 不可用'));
+      smb.getSize(filePath, (err: any, size: number) => {
+        if (err) return reject(err);
+        resolve(Number(size) || 0);
+      });
+    });
+  }
+
   public isSmbDirectory(stat: any): boolean {
     if (!stat) return false;
     if (typeof stat.isDirectory === 'function') return stat.isDirectory();
@@ -398,9 +492,92 @@ export class NasStorageService {
     try { if (typeof smb?.disconnect === 'function') smb.disconnect(); } catch {}
   }
 
-  public async readSmbFile(smbUrl: string): Promise<Buffer> {
-    if (this.config.type !== 'smb') throw new Error('当前 NAS 存储类型不是 SMB');
+  /**
+   * Get streaming info & readable stream factory for an SMB audio track
+   * Supports Range requests without loading entire track into memory.
+   */
+  public async getSmbStreamInfo(smbUrl: string): Promise<{
+    size: number;
+    remotePath: string;
+    createReadStream: (range?: { start?: number; end?: number }) => Promise<Readable>;
+  }> {
+    const parsed = this.parseSmbUrl(smbUrl);
+    const smb = this.getOrCreateSmbClientForTarget({
+      host: parsed.host,
+      port: parsed.port,
+      shareName: parsed.shareName,
+      domain: this.config.domain,
+      username: this.config.username,
+      password: this.config.password
+    });
 
+    let fileSize = 0;
+
+    // 1. Try smbGetSize first (fastest file length query)
+    try {
+      fileSize = await this.smbGetSize(smb, parsed.remotePath);
+    } catch {
+      // 2. Try smbStat fallback
+      try {
+        const stat = await this.smbStat(smb, parsed.remotePath);
+        fileSize = Number(stat?.size || stat?.fileLength || 0);
+      } catch (statErr: any) {
+        if (/closed|destroy|socket|ECONN|ETIMEDOUT/i.test(statErr?.message || '')) {
+          if (this.sharedSmbClient?.smb === smb) this.sharedSmbClient = null;
+        }
+      }
+    }
+
+    // 3. Fallback to check LRU cache or readBuffer if size still 0
+    if (!fileSize) {
+      const cached = this.smbBufferCache.get(smbUrl);
+      if (cached) {
+        fileSize = cached.buffer.length;
+      } else {
+        const buf = await this.readSmbFile(smbUrl);
+        fileSize = buf.length;
+      }
+    }
+
+    const self = this;
+    const createReadStream = async (range?: { start?: number; end?: number }): Promise<Readable> => {
+      // Priority 1: Native SMB createReadStream with byte range
+      if (typeof smb.createReadStream === 'function') {
+        return new Promise((resolve, reject) => {
+          smb.createReadStream(parsed.remotePath, range || {}, (err: any, stream: any) => {
+            if (err) {
+              // Fallback to readBuffer and slice
+              self.readSmbFile(smbUrl)
+                .then(buf => {
+                  const start = range?.start || 0;
+                  const end = range?.end !== undefined ? range.end : buf.length - 1;
+                  const slice = buf.subarray(start, end + 1);
+                  resolve(Readable.from(slice));
+                })
+                .catch(reject);
+              return;
+            }
+            resolve(stream as Readable);
+          });
+        });
+      }
+
+      // Priority 2: Fallback read buffer and slice into stream
+      const buf = await self.readSmbFile(smbUrl);
+      const start = range?.start || 0;
+      const end = range?.end !== undefined ? range.end : buf.length - 1;
+      const slice = buf.subarray(start, end + 1);
+      return Readable.from(slice);
+    };
+
+    return {
+      size: fileSize,
+      remotePath: parsed.remotePath,
+      createReadStream
+    };
+  }
+
+  public async readSmbFile(smbUrl: string): Promise<Buffer> {
     // Check LRU cache first (key by smbUrl)
     const cached = this.smbBufferCache.get(smbUrl);
     if (cached && (Date.now() - cached.accessTime < 5 * 60 * 1000)) {
@@ -408,12 +585,18 @@ export class NasStorageService {
       return cached.buffer;
     }
 
-    const { smb, target } = this.createSmbClient(this.config);
+    const parsed = this.parseSmbUrl(smbUrl);
+    const smb = this.getOrCreateSmbClientForTarget({
+      host: parsed.host,
+      port: parsed.port,
+      shareName: parsed.shareName,
+      domain: this.config.domain,
+      username: this.config.username,
+      password: this.config.password
+    });
+
     try {
-      const prefix = `smb://${target.host}/${target.shareName}/`;
-      let remotePath = smbUrl.startsWith(prefix) ? smbUrl.slice(prefix.length) : smbUrl;
-      remotePath = decodeURIComponent(remotePath).replace(/\//g, '\\');
-      const buffer = await this.smbReadFile(smb, remotePath);
+      const buffer = await this.smbReadFile(smb, parsed.remotePath);
 
       // Cache up to 100MB per file, evict oldest if total > 5 items
       if (buffer.length <= 100 * 1024 * 1024) {
@@ -426,8 +609,11 @@ export class NasStorageService {
       }
 
       return buffer;
-    } finally {
-      this.closeSmb(smb);
+    } catch (err: any) {
+      if (/closed|destroy|socket|ECONN|ETIMEDOUT/i.test(err?.message || '')) {
+        if (this.sharedSmbClient?.smb === smb) this.sharedSmbClient = null;
+      }
+      throw err;
     }
   }
 

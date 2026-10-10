@@ -357,8 +357,8 @@ export function createStreamRouter(options: StreamRouterOptions) {
     if (foundSong && (foundSong.source === 'nas' || foundSong.id.startsWith('nas-')) && (foundSong.localFilename?.startsWith('smb://') || foundSong.url?.startsWith('smb://'))) {
       const smbUrl = foundSong.localFilename?.startsWith('smb://') ? foundSong.localFilename : foundSong.url;
       try {
-        const audioBuffer = await nasStorageService.readSmbFile(smbUrl);
-        const totalLength = audioBuffer.length;
+        const streamInfo = await nasStorageService.getSmbStreamInfo(smbUrl);
+        const totalLength = streamInfo.size;
         const ext = path.extname(smbUrl).toLowerCase() || '.mp3';
         const mimeMap: Record<string, string> = {
           '.mp3': 'audio/mpeg',
@@ -417,11 +417,21 @@ export function createStreamRouter(options: StreamRouterOptions) {
             duration: foundSong?.duration
           });
 
-          const chunk = audioBuffer.subarray(start, end + 1);
           res.status(206);
           res.setHeader('Content-Range', `bytes ${start}-${end}/${totalLength}`);
-          res.setHeader('Content-Length', chunk.length);
-          return res.send(chunk);
+          res.setHeader('Content-Length', end - start + 1);
+
+          const smbStream = await streamInfo.createReadStream({ start, end });
+          req.on('close', () => {
+            try { (smbStream as any).destroy?.(); } catch {}
+          });
+          smbStream.on('error', (err: any) => {
+            console.error('[StreamRoutes] SMB readStream stream error:', err?.message || err);
+            if (!res.headersSent) {
+              res.status(502).end();
+            }
+          });
+          return smbStream.pipe(res);
         } else {
           notifyStreamConsumed({
             clientIp,
@@ -435,7 +445,17 @@ export function createStreamRouter(options: StreamRouterOptions) {
           });
 
           res.setHeader('Content-Length', totalLength);
-          return res.send(audioBuffer);
+          const smbStream = await streamInfo.createReadStream();
+          req.on('close', () => {
+            try { (smbStream as any).destroy?.(); } catch {}
+          });
+          smbStream.on('error', (err: any) => {
+            console.error('[StreamRoutes] SMB readStream full error:', err?.message || err);
+            if (!res.headersSent) {
+              res.status(502).end();
+            }
+          });
+          return smbStream.pipe(res);
         }
       } catch (smbErr: any) {
         console.error('[StreamRoutes] SMB audio streaming error:', smbErr?.message);
