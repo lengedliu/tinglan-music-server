@@ -374,13 +374,24 @@ export function createStreamRouter(options: StreamRouterOptions) {
         };
         const contentType = mimeMap[ext] || 'audio/mpeg';
 
+        const userAgent = String(req.headers['user-agent'] || '');
+        const clientIp = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1').replace('::ffff:', '');
+        const isKnownSpeaker = xiaomiDevices.some((d: any) => d.ip && (clientIp === d.ip || clientIp.includes(d.ip) || d.ip.includes(clientIp)));
+        const isSpeakerUa = /stagefright|Lavf|gstreamer|xm_player|mico|xiaomi|vlc|Dalvik|okhttp|DLNA|UPnP|Apache-HttpClient|Android/i.test(userAgent);
+        const isBrowserClient = !isKnownSpeaker && !isSpeakerUa && /Mozilla|Chrome|Safari|Firefox|Edg|AppleWebKit/i.test(userAgent);
+
         res.setHeader('Content-Type', contentType);
         res.setHeader('Accept-Ranges', 'bytes');
         res.setHeader('Cache-Control', 'public, max-age=86400');
+        res.setHeader('Access-Control-Allow-Origin', '*');
 
         if (req.method === 'HEAD') {
           res.setHeader('Content-Length', totalLength);
           return res.status(200).end();
+        }
+
+        if (!isBrowserClient && clientIp && clientIp !== '127.0.0.1' && clientIp !== 'localhost') {
+          activeStreamIps.add(clientIp);
         }
 
         const rangeHeader = req.headers.range;
@@ -389,10 +400,22 @@ export function createStreamRouter(options: StreamRouterOptions) {
           const start = parseInt(parts[0], 10);
           const end = parts[1] ? parseInt(parts[1], 10) : totalLength - 1;
 
-          if (start >= totalLength || end >= totalLength) {
+          if (start >= totalLength || end >= totalLength || start > end || start < 0) {
             res.status(416).setHeader('Content-Range', `bytes */${totalLength}`).end();
             return;
           }
+
+          notifyStreamConsumed({
+            clientIp,
+            songId: String(songId),
+            userAgent,
+            status: 206,
+            timeMs: Date.now(),
+            isBrowser: isBrowserClient,
+            startByte: start,
+            range: rangeHeader,
+            duration: foundSong?.duration
+          });
 
           const chunk = audioBuffer.subarray(start, end + 1);
           res.status(206);
@@ -400,6 +423,17 @@ export function createStreamRouter(options: StreamRouterOptions) {
           res.setHeader('Content-Length', chunk.length);
           return res.send(chunk);
         } else {
+          notifyStreamConsumed({
+            clientIp,
+            songId: String(songId),
+            userAgent,
+            status: 200,
+            timeMs: Date.now(),
+            isBrowser: isBrowserClient,
+            startByte: 0,
+            duration: foundSong?.duration
+          });
+
           res.setHeader('Content-Length', totalLength);
           return res.send(audioBuffer);
         }
@@ -621,9 +655,10 @@ export function createStreamRouter(options: StreamRouterOptions) {
         if (proxyErr.name === 'AbortError') {
           return res.end();
         }
+        const serviceName = isNavidromeTrack ? 'Navidrome' : (foundSong?.source === 'nas' ? 'WebDAV NAS' : '远端音频服务');
         return res.status(502).json({
           error: 'Remote stream connection failed',
-          message: `Navidrome 远端流代理异常: ${proxyErr.message}`
+          message: `${serviceName} 远端流代理异常: ${proxyErr.message}`
         });
       }
     }

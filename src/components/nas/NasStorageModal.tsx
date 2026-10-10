@@ -449,7 +449,7 @@ export const NasStorageModal: React.FC<NasStorageModalProps> = ({
                   </div>
 
                   <div className="space-y-1">
-                    <label className={labelClass}>共享名 (Share Name)</label>
+                    <label className={labelClass}>共享名 (Share Name) 或子路径</label>
                     <input
                       type="text"
                       value={config.shareName || config.basePath || 'music'}
@@ -457,7 +457,7 @@ export const NasStorageModal: React.FC<NasStorageModalProps> = ({
                         const cleanVal = e.target.value.replace(/^[\\\/]+/, '');
                         setConfig({ ...config, shareName: cleanVal, basePath: cleanVal });
                       }}
-                      placeholder="media 或 music"
+                      placeholder="media 或 media/music"
                       className={inputClass}
                     />
                   </div>
@@ -511,11 +511,12 @@ export const NasStorageModal: React.FC<NasStorageModalProps> = ({
                   isLight ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-amber-500/10 border-amber-500/20 text-amber-200/90'
                 }`}>
                   <div className="font-bold flex items-center gap-1.5 text-amber-600 dark:text-amber-300">
-                    <span>💡</span> SMB 连接提示与方案参考
+                    <span>💡</span> SMB 连接提示与路径格式说明
                   </div>
                   <ul className={`list-disc pl-4 space-y-1 ${isLight ? 'text-zinc-700' : 'text-zinc-300'}`}>
-                    <li><b>共享名格式</b>：请填写 NAS 上创建的共享文件夹名（如 <code>music</code>，支持填写 <code>music/jazz</code>），系统已自动剔除 <code>/volume1/</code> 底层卷名。</li>
-                    <li><b>业界推荐方案</b>：如果您的 <b>WebDAV 已连接成功</b>，强烈建议直接采用 WebDAV！WebDAV 天然支持 HTTP Range 拖拽分片与小爱音箱直读；如果在本地 NAS Docker 环境运行，使用 <b>「本地卷映射」</b>（<code>-v /volume1/music:/music</code>）是零网络损耗的最优解。</li>
+                    <li><b>路径格式</b>：支持在服务器输入 <code>192.168.50.153</code> 并在共享名输入 <code>media/music</code>；或者直接在服务器输入 UNC 路径 <code>\\192.168.50.153\media\music</code>，系统已自动解析切分并<b>全量深度递归扫描所有子目录</b>。</li>
+                    <li><b>流式缓存与拖拽</b>：已集成内存 LRU 块级缓存，网页端即点即播无需重复下载整首文件，支持进度条瞬时拖拽。</li>
+                    <li><b>多协议支持</b>：除 SMB 外，系统原生支持 <b>WebDAV</b> 和 <b>「本地卷映射」</b>（<code>-v /volume1/music:/music</code>）。</li>
                   </ul>
                 </div>
               </>
