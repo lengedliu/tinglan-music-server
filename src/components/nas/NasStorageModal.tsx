@@ -414,9 +414,9 @@ export const NasStorageModal: React.FC<NasStorageModalProps> = ({
 
             {config.type === 'smb' ? (
               <>
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                  <div className="space-y-1 sm:col-span-2">
-                    <label className={labelClass}>SMB 共享主机 IP / 局域网主机名</label>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <div className="flex-1 min-w-0 space-y-1">
+                    <label className={`${labelClass} whitespace-nowrap block`}>SMB 共享主机 IP / 局域网主机名</label>
                     <input
                       type="text"
                       value={config.serverUrl}
@@ -437,8 +437,10 @@ export const NasStorageModal: React.FC<NasStorageModalProps> = ({
                     />
                   </div>
 
-                  <div className="space-y-1">
-                    <label className={labelClass}>SMB 端口 (默认 445)</label>
+                  <div className="w-full sm:w-28 sm:flex-shrink-0 space-y-1">
+                    <label className={`${labelClass} whitespace-nowrap block`} title="默认端口 445">
+                      SMB 端口 <span className="opacity-70 text-[10px]">(445)</span>
+                    </label>
                     <input
                       type="number"
                       value={config.port ?? 445}
@@ -448,8 +450,8 @@ export const NasStorageModal: React.FC<NasStorageModalProps> = ({
                     />
                   </div>
 
-                  <div className="space-y-1">
-                    <label className={labelClass}>共享名 (Share Name) 或子路径</label>
+                  <div className="flex-1 sm:flex-[1.2] min-w-0 space-y-1">
+                    <label className={`${labelClass} whitespace-nowrap block`}>共享名 (Share Name) 或子路径</label>
                     <input
                       type="text"
                       value={config.shareName || config.basePath || 'music'}
@@ -465,7 +467,7 @@ export const NasStorageModal: React.FC<NasStorageModalProps> = ({
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div className="space-y-1">
-                    <label className={labelClass}>工作组 (Domain，默认 WORKGROUP)</label>
+                    <label className={`${labelClass} whitespace-nowrap block`}>工作组 (Domain，默认 WORKGROUP)</label>
                     <input
                       type="text"
                       value={config.domain || 'WORKGROUP'}
@@ -476,7 +478,7 @@ export const NasStorageModal: React.FC<NasStorageModalProps> = ({
                   </div>
 
                   <div className="space-y-1">
-                    <label className={labelClass}>SMB 登录用户名 (可选)</label>
+                    <label className={`${labelClass} whitespace-nowrap block`}>SMB 登录用户名 (可选)</label>
                     <input
                       type="text"
                       value={config.username || ''}
@@ -487,7 +489,7 @@ export const NasStorageModal: React.FC<NasStorageModalProps> = ({
                   </div>
 
                   <div className="space-y-1">
-                    <label className={labelClass}>SMB 登录密码 (可选)</label>
+                    <label className={`${labelClass} whitespace-nowrap block`}>SMB 登录密码 (可选)</label>
                     <div className="relative">
                       <input
                         type={showPassword ? 'text' : 'password'}
