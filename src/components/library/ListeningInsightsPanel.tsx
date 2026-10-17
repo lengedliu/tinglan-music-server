@@ -21,7 +21,7 @@ interface ListeningInsightsPanelProps {
   songs: Song[];
   isLight: boolean;
   onClose?: () => void;
-  onPlaySong?: (song: Song) => void;
+  onPlaySong?: (song: Song, targetQueue?: Song[]) => void;
 }
 
 export const ListeningInsightsPanel: React.FC<ListeningInsightsPanelProps> = ({
@@ -320,7 +320,7 @@ export const ListeningInsightsPanel: React.FC<ListeningInsightsPanelProps> = ({
             {analytics.topTracks.map((tr) => (
               <div
                 key={tr.id}
-                onClick={() => onPlaySong?.(tr)}
+                onClick={() => onPlaySong?.(tr, analytics.topTracks)}
                 className={`p-2.5 rounded-xl border transition cursor-pointer flex items-center gap-3 ${
                   isLight ? 'bg-zinc-50 hover:bg-amber-100/50 border-zinc-200' : 'bg-zinc-900 hover:bg-zinc-800 border-white/5'
                 }`}

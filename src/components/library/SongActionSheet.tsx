@@ -21,8 +21,8 @@ export interface SongActionSheetProps {
   activeDevice?: XiaomiDevice;
   isSongCasting: boolean;
   selectedPlaylistId: string;
-  onPlaySong: (song: Song) => void;
-  onCastSongToXiaomi: (song: Song) => void;
+  onPlaySong: (song: Song, targetQueue?: Song[]) => void;
+  onCastSongToXiaomi: (song: Song, targetQueue?: Song[]) => void;
   onToggleFavorite: (songId: string) => void;
   onAddToPlaylist: (song: Song) => void;
   onToggleSongInPlaylist?: (songId: string, playlistId: string) => void;

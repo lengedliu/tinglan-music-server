@@ -28,13 +28,13 @@ export interface SongRowProps {
   isLight: boolean;
   selectedPlaylistId: string;
   onSelect: (songId: string) => void;
-  onPlaySong: (song: Song) => void;
+  onPlaySong: (song: Song, targetQueue?: Song[]) => void;
   onToggleBatchSelectSong: (songId: string) => void;
   onToggleFavorite: (songId: string) => void;
   onAddToPlaylist: (song: Song) => void;
   onToggleSongInPlaylist?: (songId: string, playlistId: string) => void;
   onInspectSong?: (song: Song) => void;
-  onCastSongToXiaomi: (song: Song) => void;
+  onCastSongToXiaomi: (song: Song, targetQueue?: Song[]) => void;
 }
 
 export const SongRow: React.FC<SongRowProps> = memo(({

@@ -63,9 +63,9 @@ export interface MusicLibraryProps {
   playlists: Playlist[];
   currentSong: Song | null;
   isPlaying: boolean;
-  onPlaySong: (song: Song) => void;
+  onPlaySong: (song: Song, targetQueue?: Song[]) => void;
   onPlayAll?: (songs: Song[], startIndex?: number) => void;
-  onCastSongToXiaomi: (song: Song) => void;
+  onCastSongToXiaomi: (song: Song, targetQueue?: Song[]) => void;
   onCastAllToXiaomi?: (songs: Song[]) => void;
   onToggleFavorite: (songId: string) => void;
   activeDevice: XiaomiDevice | undefined;
@@ -388,6 +388,22 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
     return result;
   }, [songs, playlists, selectedPlaylistId, debouncedSearchQuery, sourceFilter, sortOption, topPlayedSongs, recentlyPlayedSongs, losslessSongs]);
 
+  // Context-aware song play handler: binds the current playlist / filtered list as the play queue
+  const handlePlaySongWithQueue = useCallback((song: Song, customQueue?: Song[]) => {
+    const queueToUse = (customQueue && customQueue.length > 0)
+      ? customQueue
+      : (filteredSongs.length > 0 ? filteredSongs : [song]);
+    onPlaySong(song, queueToUse);
+  }, [filteredSongs, onPlaySong]);
+
+  // Context-aware song casting handler: binds the current playlist / filtered list as the speaker queue
+  const handleCastSongWithQueue = useCallback((song: Song, customQueue?: Song[]) => {
+    const queueToUse = (customQueue && customQueue.length > 0)
+      ? customQueue
+      : (filteredSongs.length > 0 ? filteredSongs : [song]);
+    onCastSongToXiaomi(song, queueToUse);
+  }, [filteredSongs, onCastSongToXiaomi]);
+
   // Pagination calculations
   const totalItems = filteredSongs.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
@@ -683,7 +699,7 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
           filteredSongs={filteredSongs}
           isCasting={isCasting}
           activeDevice={activeDevice}
-          onPlaySong={onPlaySong}
+          onPlaySong={handlePlaySongWithQueue}
           onPlayAll={onPlayAll}
           onCastAllToXiaomi={onCastAllToXiaomi}
           onOpenBatchAdd={() => setShowBatchAddModal(true)}
@@ -717,7 +733,7 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
           songs={songs}
           isLight={isLight}
           onClose={() => setShowInsights(false)}
-          onPlaySong={onPlaySong}
+          onPlaySong={(s, q) => onPlaySong(s, q || songs)}
         />
       )}
 
@@ -803,13 +819,13 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
                       isLight={isLight}
                       selectedPlaylistId={selectedPlaylistId}
                       onSelect={handleSelectSong}
-                      onPlaySong={onPlaySong}
+                      onPlaySong={handlePlaySongWithQueue}
                       onToggleBatchSelectSong={handleToggleBatchSelectSong}
                       onToggleFavorite={onToggleFavorite}
                       onAddToPlaylist={handleOpenAddToPlaylistModal}
                       onToggleSongInPlaylist={onToggleSongInPlaylist}
                       onInspectSong={onInspectSong}
-                      onCastSongToXiaomi={onCastSongToXiaomi}
+                      onCastSongToXiaomi={handleCastSongWithQueue}
                     />
                   );
                 }}
@@ -887,13 +903,13 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
                       isLight={isLight}
                       selectedPlaylistId={selectedPlaylistId}
                       onSelect={handleSelectSong}
-                      onPlaySong={onPlaySong}
+                      onPlaySong={handlePlaySongWithQueue}
                       onToggleBatchSelectSong={handleToggleBatchSelectSong}
                       onToggleFavorite={onToggleFavorite}
                       onAddToPlaylist={handleOpenAddToPlaylistModal}
                       onToggleSongInPlaylist={onToggleSongInPlaylist}
                       onInspectSong={onInspectSong}
-                      onCastSongToXiaomi={onCastSongToXiaomi}
+                      onCastSongToXiaomi={handleCastSongWithQueue}
                     />
                   );
                 })

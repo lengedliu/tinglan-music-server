@@ -21,7 +21,7 @@ export interface PlaylistHeaderBannerProps {
   filteredSongs: Song[];
   isCasting: boolean;
   activeDevice?: XiaomiDevice;
-  onPlaySong: (song: Song) => void;
+  onPlaySong: (song: Song, targetQueue?: Song[]) => void;
   onPlayAll?: (songs: Song[], startIndex?: number) => void;
   onCastAllToXiaomi?: (songs: Song[]) => void;
   onOpenBatchAdd?: () => void;
@@ -150,7 +150,7 @@ export const PlaylistHeaderBanner: React.FC<PlaylistHeaderBannerProps> = memo(({
             } else if (onPlayAll) {
               onPlayAll(filteredSongs, 0);
             } else if (filteredSongs[0]) {
-              onPlaySong(filteredSongs[0]);
+              onPlaySong(filteredSongs[0], filteredSongs);
             }
           }}
           disabled={filteredSongs.length === 0}

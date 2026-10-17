@@ -1249,7 +1249,7 @@ export default function App() {
     handlePlayAll(targetSongs, 0, true);
   };
 
-  const handleDirectCastSong = (song: Song) => {
+  const handleDirectCastSong = (song: Song, targetQueue?: Song[]) => {
     if (!activeDevice) {
       showToast('未选择播放设备', '请先在顶部或音箱面板中选择一台小米音箱', 'error');
       return;
@@ -1260,7 +1260,15 @@ export default function App() {
     setIsPlaying(true);
     setIsCasting(true);
     if (audioRef.current) audioRef.current.pause();
-    const queueToUse = playQueue.length > 0 ? playQueue : songs;
+
+    const baseQueue = (targetQueue && targetQueue.length > 0)
+      ? targetQueue
+      : (playQueue.length > 0 ? playQueue : songs);
+
+    const songInQueue = baseQueue.some(s => s.id === song.id);
+    const queueToUse = songInQueue ? baseQueue : [song, ...baseQueue];
+
+    setPlayQueue(queueToUse);
     scrobbleSongPlay(song, activeDevice.name || '小米智能音箱');
     castSongToDevice(song, activeDevice, queueToUse);
   };
