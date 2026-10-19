@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
+import { isTokenRevokedByPasswordChange } from './credentialRevocation.js';
 
 export interface SecuritySettings {
   requireAuth: boolean;
@@ -261,7 +262,11 @@ export function createCsrfMiddleware() {
 
     try {
       const originUrl = new URL(origin);
-      const hostHeader = (req.headers['x-forwarded-host'] || req.headers['host'] || '') as string;
+      // [Fix B1] Compare Origin against the Host header ONLY. The previous code
+      // trusted `x-forwarded-host`, which a malicious page can freely set to
+      // forge a same-origin-looking request. Host is attached by the browser
+      // itself and matches the server address (no reverse proxy in this product).
+      const hostHeader = (req.headers['host'] || '') as string;
       const cleanHost = hostHeader.split(':')[0].toLowerCase();
       const originHost = originUrl.hostname.toLowerCase();
 
@@ -335,7 +340,13 @@ export function createAuthMiddleware(options: AuthMiddlewareOptions) {
     if (token) {
       try {
         const decoded: any = jwt.verify(token, jwtSecret);
-        (req as any).user = decoded;
+        // [Fix A2] A token issued before the user's last password change is
+        // revoked — stolen credentials die with the old password, not 30 days later.
+        if (isTokenRevokedByPasswordChange(decoded.userId, decoded.iat)) {
+          tokenInvalid = true;
+        } else {
+          (req as any).user = decoded;
+        }
       } catch (err: any) {
         tokenInvalid = true;
       }

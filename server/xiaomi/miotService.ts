@@ -43,7 +43,7 @@ export const castLogs: MiotCastLog[] = [
     timestamp: new Date(Date.now() - 3600000).toLocaleTimeString(),
     type: 'sync',
     message: 'TingLan MIoT 协议引擎已初始化',
-    detail: `发现 ${deviceRepository.getAllDevices().length} 台小米智能音箱设备`,
+    detail: '米家设备缓存将在存储路径就绪后自动装载',
     success: true
   },
   {

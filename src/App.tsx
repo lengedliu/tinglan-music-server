@@ -617,6 +617,12 @@ export default function App() {
         .then(data => {
           if (data && data.success && data.user) {
             setUser(data.user);
+            // [Fix A1] Sliding renewal: server re-issues a fresh token when the
+            // current one is past half its lifetime — persist it transparently
+            if (data.token) {
+              setStoredAuthToken(data.token);
+              setAuthToken(data.token);
+            }
           } else {
             setStoredAuthToken(null);
             setAuthToken(null);

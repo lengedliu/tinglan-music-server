@@ -31,6 +31,10 @@ export function configureStoragePaths(paths: Partial<StoragePaths>) {
   activeStoragePaths = { ...activeStoragePaths, ...paths };
 }
 
+export function getDevicesFilePath(): string {
+  return activeStoragePaths.DEVICES_FILE;
+}
+
 /**
  * Transparently decrypt sensitive secrets after reading from disk
  */

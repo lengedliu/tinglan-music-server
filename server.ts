@@ -29,6 +29,7 @@ import {
   createAuthMiddleware,
   SecuritySettings
 } from './server/core/security.js';
+import { hydratePasswordChangedAt } from './server/core/credentialRevocation.js';
 import { ensureSampleTracksSeeded } from './server/core/sampleTracks.js';
 import {
   restoreSessionAndDevicesOnStartup,
@@ -149,6 +150,10 @@ configureStoragePaths({
   DB_CONFIG_FILE
 });
 
+// [Fix B2] Device repository pulls its file path lazily — load it now that the
+// real (env-overridable) storage paths are configured.
+deviceRepository.reload();
+
 // ---------------- 6-MODULE ARCHITECTURE CORE INSTANCES ----------------
 export const ffmpegTranscoder = new FfmpegTranscoder(TRANSCODE_CACHE_DIR, undefined, DATA_DIR);
 export const musicEngine = new MusicEngine(MUSIC_DIR, DATA_DIR, ffmpegTranscoder);
@@ -207,6 +212,8 @@ const defaultAdminUser = {
   username: 'admin',
   email: 'admin@tinglan.audio',
   passwordHash: bcrypt.hashSync('admin123', 10),
+  // [A2] Seed credential epoch — admin password changes elsewhere revoke older tokens
+  passwordChangedAt: Date.now(),
   // [P0] Encrypted Subsonic password copy so token auth (t = md5(password + s))
   // works for Subsonic clients on fresh installs without a prior web login
   subsonicPasswordEnc: encryptSecret('admin123'),
@@ -223,6 +230,8 @@ storedUsers.forEach(u => {
   if (!u.avatarUrl) u.avatarUrl = getDefaultUserAvatar(u.role, u.username);
 });
 saveJson(USERS_FILE, storedUsers);
+// [Fix A2] Seed the JWT-revocation registry from persisted password-change stamps
+hydratePasswordChangedAt(storedUsers);
 
 // Database configuration
 let activeDbConfig: MultiDbConfig = loadJson(DB_CONFIG_FILE, {

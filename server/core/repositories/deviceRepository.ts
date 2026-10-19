@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { loadJson, saveJson, getDevicesFilePath } from '../../storage/jsonStorage.js';
 
 export interface DeviceCapabilities {
   hasPlayControl: boolean;
@@ -28,21 +29,38 @@ export interface XiaomiDeviceEntity {
 
 export class DeviceRepository {
   private dataDir: string;
-  private devicesFile: string;
   private devices: XiaomiDeviceEntity[] = [];
+  private loaded = false;
 
-  constructor(dataDir: string = path.join(process.cwd(), 'data')) {
-    this.dataDir = dataDir;
-    this.devicesFile = path.join(this.dataDir, 'devices.json');
+  constructor(dataDir?: string) {
+    // [Fix B2] Empty by default: the real path is resolved lazily. Constructing
+    // eagerly at module-import time used to freeze `cwd/data/devices.json`
+    // BEFORE server.ts got a chance to apply the DATA_DIR env override —
+    // meaning reads landed in one place and (plaintext) writes in another.
+    this.dataDir = dataDir || '';
+  }
 
-    this.ensureDirectory();
+  private get targetDir(): string {
+    return this.dataDir || path.dirname(getDevicesFilePath());
+  }
+
+  private get devicesFilePath(): string {
+    return this.dataDir ? path.join(this.dataDir, 'devices.json') : getDevicesFilePath();
+  }
+
+  /**
+   * [Fix B2] Load (or re-load) from disk. MUST be invoked after configureStoragePaths
+   * so encryption paths are consistent. server.ts calls it after startup wiring.
+   */
+  public reload(): void {
+    this.targetEnsureDirectory();
     this.loadDevices();
   }
 
-  private ensureDirectory() {
-    if (!fs.existsSync(this.dataDir)) {
+  private targetEnsureDirectory() {
+    if (!fs.existsSync(this.targetDir)) {
       try {
-        fs.mkdirSync(this.dataDir, { recursive: true });
+        fs.mkdirSync(this.targetDir, { recursive: true });
       } catch (err) {
         console.error('[DeviceRepository] Failed to create data dir:', err);
       }
@@ -50,20 +68,24 @@ export class DeviceRepository {
   }
 
   private loadDevices() {
-    try {
-      if (fs.existsSync(this.devicesFile)) {
-        const raw = fs.readFileSync(this.devicesFile, 'utf-8');
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          this.devices = parsed.map((d: any) => this.normalizeDevice(d));
-          console.log(`[DeviceRepository] Loaded ${this.devices.length} devices from disk.`);
-          return;
-        }
-      }
-    } catch (err) {
-      console.warn('[DeviceRepository] Could not parse devices.json:', err);
+    // [Fix B2] Route through jsonStorage: transparent token decryption
+    // (restoreDevicesFromDisk), atomic read and .bak self-healing are all shared
+    // with the rest of the persistence layer.
+    const devices = loadJson<XiaomiDeviceEntity[]>(this.devicesFilePath, []);
+    if (Array.isArray(devices) && devices.length > 0) {
+      this.devices = devices.map((d: any) => this.normalizeDevice(d));
+      console.log(`[DeviceRepository] Loaded ${this.devices.length} devices from ${this.devicesFilePath}.`);
+    } else {
+      this.devices = [];
     }
-    this.devices = [];
+    this.loaded = true;
+  }
+
+  private ensureDevicesLoaded() {
+    if (!this.loaded) {
+      this.targetEnsureDirectory();
+      this.loadDevices();
+    }
   }
 
   private normalizeDevice(d: any): XiaomiDeviceEntity {
@@ -89,32 +111,38 @@ export class DeviceRepository {
   }
 
   public persistDevices() {
-    try {
-      fs.writeFileSync(this.devicesFile, JSON.stringify(this.devices, null, 2), 'utf-8');
-    } catch (err) {
-      console.error('[DeviceRepository] Failed to persist devices.json:', err);
-    }
+    // [Fix B2] Atomic temp-file write with .bak rotation and at-rest token
+    // encryption (prepareDevicesForDisk). immediate=true keeps the previous
+    // synchronous-persist semantics of this method.
+    this.targetEnsureDirectory();
+    saveJson(this.devicesFilePath, this.devices, true);
   }
 
   public getAllDevices(): XiaomiDeviceEntity[] {
+    this.ensureDevicesLoaded();
     return this.devices;
   }
 
   public getDeviceByDid(did: string): XiaomiDeviceEntity | undefined {
+    this.ensureDevicesLoaded();
     return this.devices.find((d) => d.did === did);
   }
 
   public getDeviceByIp(ip: string): XiaomiDeviceEntity | undefined {
+    this.ensureDevicesLoaded();
     if (!ip) return undefined;
     return this.devices.find((d) => d.ip && ip.includes(d.ip));
   }
 
   public setDevices(devices: XiaomiDeviceEntity[]): void {
+    this.ensureDevicesLoaded();
     this.devices = devices.map((d) => this.normalizeDevice(d));
     this.persistDevices();
+    this.loaded = true;
   }
 
   public addOrUpdateDevice(device: XiaomiDeviceEntity): void {
+    this.ensureDevicesLoaded();
     const normalized = this.normalizeDevice(device);
     const idx = this.devices.findIndex((d) => d.did === normalized.did);
     if (idx >= 0) {
@@ -126,6 +154,7 @@ export class DeviceRepository {
   }
 
   public removeDevice(did: string): boolean {
+    this.ensureDevicesLoaded();
     const idx = this.devices.findIndex((d) => d.did === did);
     if (idx >= 0) {
       this.devices.splice(idx, 1);

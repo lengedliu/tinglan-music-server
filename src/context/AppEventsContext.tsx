@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
-import { getAuthToken } from '../utils/api';
+import { getAuthToken, setStoredAuthToken } from '../utils/api';
 
 export interface QueueStatusEvent {
   queue: any[];
@@ -160,11 +160,36 @@ export const AppEventsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
       es.onerror = () => {
         setIsConnected(false);
+        const wasHardDenied = es.readyState === EventSource.CLOSED;
         if (eventSourceRef.current) {
           eventSourceRef.current.close();
           eventSourceRef.current = null;
         }
-        // Auto-reconnect with 3-second delay
+
+        // [Fix A3] readyState CLOSED means the server definitively refused the
+        // stream (HTTP 4xx — expired/invalid token). EventSource does NOT
+        // auto-retry in that state, so a 3-second manual loop with a dead token
+        // is pure noise. Clear the stale token, surface the auth modal, and drop
+        // to a slow retry (30s) so a later re-login is picked up automatically.
+        if (wasHardDenied) {
+          // [Fix A3] Drop the stale token so the next attempt goes out without
+          // it (a fresh login naturally restores it).
+          setStoredAuthToken(null);
+          try {
+            window.dispatchEvent(new CustomEvent('tinglan_unauthorized', {
+              detail: { message: '登录状态已失效(令牌被服务器拒绝),实时通知已暂停。请重新登录。' }
+            }));
+          } catch {}
+          if (!reconnectTimeoutRef.current) {
+            reconnectTimeoutRef.current = setTimeout(() => {
+              reconnectTimeoutRef.current = null;
+              connect();
+            }, 30000);
+          }
+          return;
+        }
+
+        // Transient failure (network blip / server restart): keep the fast retry
         if (!reconnectTimeoutRef.current) {
           reconnectTimeoutRef.current = setTimeout(() => {
             reconnectTimeoutRef.current = null;

@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { logEngine } from '../core/logEngine.js';
 import { encryptSecret } from '../secureVault.js';
+import { setPasswordChangedAt } from '../core/credentialRevocation.js';
 
 export interface AuthRouterOptions {
   getSecuritySettings: () => any;
@@ -178,6 +179,10 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
 
       const passwordHash = await bcrypt.hash(String(newPassword), 10);
       targetUser.passwordHash = passwordHash;
+      // [A2] Stamp the password change time: the auth middleware revokes any JWT
+      // issued before this moment (stolen tokens die with the old password).
+      targetUser.passwordChangedAt = Date.now();
+      setPasswordChangedAt(targetUser.id, targetUser.passwordChangedAt);
       // [P0] Refresh the encrypted Subsonic password copy (used by Subsonic t+s token auth)
       try {
         targetUser.subsonicPasswordEnc = encryptSecret(String(newPassword));
@@ -263,6 +268,7 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
         username: trimmedUser,
         email: email ? String(email).trim() : `${trimmedUser}@tinglan.audio`,
         passwordHash,
+        passwordChangedAt: Date.now(),
         // [P0] Encrypted Subsonic password copy (reversible, vault-encrypted) —
         // required for Subsonic t+s token authentication (t = md5(password + s)),
         // which bcrypt hashes cannot verify.
@@ -274,6 +280,7 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
       };
 
       storedUsers.push(newUser);
+      setPasswordChangedAt(newUser.id, newUser.passwordChangedAt);
       setStoredUsers(storedUsers);
 
       if (sqliteDb) {
@@ -427,7 +434,24 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
         } catch {}
       }
       const { passwordHash: _, ...userWithoutPassword } = user;
-      return res.json({ success: true, user: { ...userWithoutPassword, isDefaultPassword } });
+      // [Fix A1] Sliding renewal: when more than half of the 30-day lifetime has
+      // elapsed, re-issue a fresh token (fresh iat) alongside the profile. The
+      // client stores it automatically — no more hard kicks at day 30 for
+      // consistently active users.
+      let freshToken: string | undefined;
+      const iat = Number(decoded.iat) || 0;
+      const tokenAgeSec = Math.max(0, Math.floor(Date.now() / 1000) - iat);
+      const HALF_LIFE_SEC = 15 * 24 * 3600;
+      if (iat > 0 && tokenAgeSec >= HALF_LIFE_SEC) {
+        try {
+          freshToken = jwt.sign(
+            { userId: user.id, username: user.username, role: user.role },
+            jwtSecret,
+            { expiresIn: '30d' }
+          );
+        } catch {}
+      }
+      return res.json({ success: true, user: { ...userWithoutPassword, isDefaultPassword }, token: freshToken });
     } catch (e) {
       return res.status(401).json({ success: false, user: null });
     }
@@ -483,6 +507,7 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
         username: trimmedUser,
         email: email ? String(email).trim() : `${trimmedUser}@tinglan.audio`,
         passwordHash,
+        passwordChangedAt: Date.now(),
         subsonicPasswordEnc: encryptSecret(String(password)),
         role: userRole,
         status: userStatus,
@@ -491,6 +516,7 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
       };
 
       storedUsers.push(newUser);
+      setPasswordChangedAt(newUser.id, newUser.passwordChangedAt);
       setStoredUsers(storedUsers);
 
       if (sqliteDb) {
@@ -632,6 +658,9 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
       }
 
       targetUser.passwordHash = await bcrypt.hash(String(newPassword), 10);
+      // [A2] Admin reset also revokes every previously-issued token of the user
+      targetUser.passwordChangedAt = Date.now();
+      setPasswordChangedAt(targetUser.id, targetUser.passwordChangedAt);
       // [P0] Keep the encrypted Subsonic password copy in sync
       try {
         targetUser.subsonicPasswordEnc = encryptSecret(String(newPassword));
