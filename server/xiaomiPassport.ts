@@ -115,15 +115,62 @@ export function buildMinaHeaders(userId: string, serviceToken: string, targetSpe
   };
 }
 
+/**
+ * [P0 Security Fix] Redact Xiaomi credentials (serviceToken / passToken /
+ * ssecurity / cookies / passwords / signed URLs) before they reach the console
+ * or the debug log file. Previously full live token values were appended in
+ * plaintext to ./passport_debug.log and stdout.
+ */
+const SENSITIVE_LOG_KEY = /(token|cookie|ssecurity|psecurity|pass|secret|auth|sign|credential)/i;
+const SECRET_LIKE_STRING =
+  /(serviceToken|passToken|ssecurity|psecurity|clientSign|userId=|=[A-Za-z0-9+/_-]{24,})|^[A-Za-z0-9+/_-]{24,}$/;
+
+function maskSecretLikeString(value: string): string {
+  if (value.length <= 16) return value;
+  return `${value.slice(0, 6)}••••${value.slice(-4)} (${value.length} chars)`;
+}
+
+function redactSensitiveForLog(value: any, depth = 0): any {
+  if (depth > 5) return '[truncated]';
+  if (typeof value === 'string') {
+    return SECRET_LIKE_STRING.test(value) ? maskSecretLikeString(value) : value;
+  }
+  if (value && typeof value === 'object') {
+    if (Array.isArray(value)) {
+      return value.map(item => redactSensitiveForLog(item, depth + 1));
+    }
+    const out: Record<string, any> = {};
+    for (const [key, item] of Object.entries(value)) {
+      if (SENSITIVE_LOG_KEY.test(key)) {
+        out[key] = typeof item === 'string' ? maskSecretLikeString(item) : '[REDACTED]';
+      } else if (item && typeof item === 'object') {
+        out[key] = redactSensitiveForLog(item, depth + 1);
+      } else if (typeof item === 'string') {
+        out[key] = SECRET_LIKE_STRING.test(item) ? maskSecretLikeString(item) : item;
+      } else {
+        out[key] = item;
+      }
+    }
+    return out;
+  }
+  return value;
+}
+
 function logDebug(message: string, data?: any) {
   const timestamp = new Date().toISOString();
-  const dataStr = data ? (typeof data === 'object' ? JSON.stringify(data) : String(data)) : '';
+  const safeData = data === undefined ? undefined : redactSensitiveForLog(data);
+  const dataStr = safeData !== undefined && safeData !== null
+    ? (typeof safeData === 'object' ? JSON.stringify(safeData) : String(safeData))
+    : '';
   console.log(`[Passport Log ${timestamp.slice(11, 19)}] ${message}`, dataStr);
-  const logMsg = `[${timestamp}] ${message} ${data ? (typeof data === 'object' ? JSON.stringify(data, null, 2) : data) : ''}\n`;
-  try {
-    fs.appendFileSync('./passport_debug.log', logMsg);
-  } catch (err) {
-    console.error('Failed to write passport_debug.log:', err);
+  // [P0] Debug file logging is now opt-in via XIAOMI_PASSPORT_DEBUG=1 (was always-on)
+  if (process.env.XIAOMI_PASSPORT_DEBUG === '1') {
+    const logMsg = `[${timestamp}] ${message} ${safeData !== undefined && safeData !== null ? (typeof safeData === 'object' ? JSON.stringify(safeData, null, 2) : safeData) : ''}\n`;
+    try {
+      fs.appendFileSync('./passport_debug.log', logMsg);
+    } catch (err) {
+      console.error('Failed to write passport_debug.log:', err);
+    }
   }
 }
 
@@ -595,7 +642,7 @@ export class XiaomiPassport {
     passToken: string,
     targetSid: 'xiaomiio' | 'micoapi',
     cUserId?: string
-  ): Promise<{ serviceToken?: string; ssecurity?: string; userId?: string; error?: string }> {
+  ): Promise<{ serviceToken?: string; ssecurity?: string; userId?: string; error?: string; dead?: boolean }> {
     const flightKey = `sts:${userId}:${targetSid}`;
     const inFlight = this.inFlightLogins.get(flightKey);
     if (inFlight) {
@@ -616,7 +663,7 @@ export class XiaomiPassport {
     passToken: string,
     targetSid: 'xiaomiio' | 'micoapi',
     cUserId?: string
-  ): Promise<{ serviceToken?: string; ssecurity?: string; userId?: string; error?: string }> {
+  ): Promise<{ serviceToken?: string; ssecurity?: string; userId?: string; error?: string; dead?: boolean }> {
     try {
       const cleanUid = String(userId || '').replace(/^uid_/, '').replace(/^["']|["']$/g, '').trim();
       const cleanPassToken = String(passToken || '').replace(/^["']|["']$/g, '').trim();
@@ -666,7 +713,10 @@ export class XiaomiPassport {
       if (json.code !== 0) {
         const desc = json.desc || json.description || `错误码: ${json.code}`;
         logDebug(`[fetchAdditionalStsToken] serviceLogin 失败:`, desc);
-        return { error: `serviceLogin for ${targetSid} failed: ${desc}` };
+        // [Fix: dead-credential detection] The passToken itself was rejected by
+        // Xiaomi Passport: silent renewal permanently ends here. Callers use the
+        // `dead` flag to stop retrying and surface a re-bind requirement.
+        return { error: `serviceLogin for ${targetSid} failed: ${desc}`, dead: true };
       }
 
       const returnedUserId = json.userId ? String(json.userId) : (json.cUserId || cleanUid);

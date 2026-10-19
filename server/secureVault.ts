@@ -144,9 +144,12 @@ export function prepareConfigForDisk(config: any): any {
     'serviceToken',
     'micoServiceToken',
     'miotServiceToken',
+    'xiaomiioServiceToken',
+    'xiaomiioToken',
     'passToken',
     'psecurity',
     'ssecurity',
+    'xiaomiioSsecurity',
     'password',
     'miPassword'
   ];
@@ -171,9 +174,12 @@ export function restoreConfigFromDisk(config: any): any {
     'serviceToken',
     'micoServiceToken',
     'miotServiceToken',
+    'xiaomiioServiceToken',
+    'xiaomiioToken',
     'passToken',
     'psecurity',
     'ssecurity',
+    'xiaomiioSsecurity',
     'password',
     'miPassword'
   ];

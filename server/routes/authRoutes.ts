@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { logEngine } from '../core/logEngine.js';
+import { encryptSecret } from '../secureVault.js';
 
 export interface AuthRouterOptions {
   getSecuritySettings: () => any;
@@ -52,6 +53,15 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
       } catch {}
     }
 
+    // [P0 Security Fix] The default-password state and user inventory are a remote
+    // recon oracle for the admin123 takeover chain — only disclose them to
+    // private/local (LAN) clients, which preserves the first-run setup UX
+    // (login form pre-fill, force-change-password prompt) where the server runs.
+    const revealInventory = isLan;
+    const publicIsDefaultAdminPassword = revealInventory && isDefaultAdminPassword;
+    const publicHasDefaultAdmin = revealInventory ? Boolean(adminUser) : undefined;
+    const publicUserCount = revealInventory ? storedUsers.length : undefined;
+
     res.json({
       success: true,
       authRequired,
@@ -63,9 +73,9 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
       allowUserMiotTts: Boolean(securitySettings.allowUserMiotTts),
       clientIp,
       isLan,
-      hasDefaultAdmin: Boolean(adminUser),
-      isDefaultAdminPassword,
-      userCount: storedUsers.length,
+      hasDefaultAdmin: publicHasDefaultAdmin,
+      isDefaultAdminPassword: publicIsDefaultAdminPassword,
+      userCount: publicUserCount,
       status: {
         success: true,
         authRequired,
@@ -77,9 +87,9 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
         allowUserMiotTts: Boolean(securitySettings.allowUserMiotTts),
         clientIp,
         isLan,
-        hasDefaultAdmin: Boolean(adminUser),
-        isDefaultAdminPassword,
-        userCount: storedUsers.length
+        hasDefaultAdmin: publicHasDefaultAdmin,
+        isDefaultAdminPassword: publicIsDefaultAdminPassword,
+        userCount: publicUserCount
       },
       settings: {
         ...securitySettings,
@@ -97,6 +107,17 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
         return res.status(400).json({ success: false, error: '新密码不能少于 6 位' });
       }
 
+      // [P0 Security Fix] This endpoint is auth-whitelisted (self-service reset) —
+      // rate-limit old-password guessing attempts, exactly like the login route.
+      const clientIp = getClientIp(req);
+      const rateCheck = checkLoginRateLimit(clientIp);
+      if (!rateCheck.allowed) {
+        return res.status(429).json({
+          success: false,
+          error: `密码修改尝试次数过多，该 IP 已临时锁定，请在 ${rateCheck.remainingLockSeconds} 秒后再试`
+        });
+      }
+
       const targetUsername = (username ? String(username).trim() : (clientUser?.username || 'admin')).toLowerCase();
       const storedUsers = getStoredUsers();
       const userIndex = storedUsers.findIndex(u => u.username.toLowerCase() === targetUsername || u.id === targetUsername);
@@ -112,8 +133,29 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
           return res.status(400).json({ success: false, error: '请输入当前旧密码以验证身份' });
         }
         if (targetUser.passwordHash) {
+          // [P0 Security Fix] The DEFAULT password may only bootstrap a new password
+          // from the LAN — kills the remote "confirm default via public status, then
+          // unauthenticated change-password → fresh 30-day admin JWT" takeover chain.
+          let targetUsesDefaultPassword = false;
+          try {
+            targetUsesDefaultPassword = bcrypt.compareSync('admin123', targetUser.passwordHash);
+          } catch {}
+          if (targetUsesDefaultPassword && !isPrivateOrLocalIp(clientIp)) {
+            recordLoginAttempt(clientIp, false);
+            logEngine.warn(
+              'audit',
+              '默认密码远程改密被拒绝',
+              `管理员仍使用默认密码，且修改请求来自非内网地址 (${clientIp})，已按安全策略拒绝`,
+              { clientIp, targetUsername }
+            );
+            return res.status(403).json({
+              success: false,
+              error: '管理员仍在使用默认密码，出于安全考虑，默认密码仅支持在局域网内验证并修改，请先在局域网环境（与服务器同一网络）操作。'
+            });
+          }
           const isOldMatch = await bcrypt.compare(String(oldPassword), targetUser.passwordHash);
           if (!isOldMatch) {
+            recordLoginAttempt(clientIp, false);
             return res.status(400).json({ success: false, error: '原密码验证失败，请输入正确的旧密码' });
           }
         }
@@ -136,6 +178,11 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
 
       const passwordHash = await bcrypt.hash(String(newPassword), 10);
       targetUser.passwordHash = passwordHash;
+      // [P0] Refresh the encrypted Subsonic password copy (used by Subsonic t+s token auth)
+      try {
+        targetUser.subsonicPasswordEnc = encryptSecret(String(newPassword));
+      } catch {}
+      recordLoginAttempt(clientIp, true);
       targetUser.updatedAt = new Date().toISOString();
       setStoredUsers(storedUsers);
 
@@ -216,6 +263,10 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
         username: trimmedUser,
         email: email ? String(email).trim() : `${trimmedUser}@tinglan.audio`,
         passwordHash,
+        // [P0] Encrypted Subsonic password copy (reversible, vault-encrypted) —
+        // required for Subsonic t+s token authentication (t = md5(password + s)),
+        // which bcrypt hashes cannot verify.
+        subsonicPasswordEnc: encryptSecret(String(password)),
         role: 'user',
         status: 'active',
         avatarUrl: getDefaultUserAvatar('user', trimmedUser),
@@ -287,9 +338,40 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
         return res.status(401).json({ success: false, error: '用户不存在或密码错误' });
       }
 
+      // [P0 Security Fix] The default admin password is usable ONLY from the LAN —
+      // kills the remote admin123 brute-force chain while preserving first-run
+      // local setup UX (the login UI pre-fill / force-change prompt are LAN-only too).
+      let usesDefaultPassword = false;
+      if (user.username === 'admin' && user.passwordHash) {
+        try {
+          usesDefaultPassword = bcrypt.compareSync('admin123', user.passwordHash);
+        } catch {}
+      }
+      if (usesDefaultPassword && !isPrivateOrLocalIp(clientIp)) {
+        recordLoginAttempt(clientIp, false);
+        logEngine.warn(
+          'audit',
+          '默认密码远程登录被拒绝',
+          `管理员仍使用默认密码，且登录请求来自非内网地址 (${clientIp})，已按安全策略拒绝`,
+          { clientIp, username: user.username }
+        );
+        return res.status(403).json({
+          success: false,
+          error: '检测到管理员仍在使用默认密码 admin123。出于安全考虑，默认密码仅允许在局域网内登录使用，请先在与服务器同一网络的环境登录并修改密码，之后再从外网访问。'
+        });
+      }
+
       recordLoginAttempt(clientIp, true);
 
       user.lastLoginAt = new Date().toISOString();
+
+      // [P0] Backfill the encrypted Subsonic password copy when missing
+      // (needed for Subsonic t+s token auth) — heals existing accounts on next login.
+      if (!user.subsonicPasswordEnc && typeof password === 'string' && password.length > 0) {
+        try {
+          user.subsonicPasswordEnc = encryptSecret(password);
+        } catch {}
+      }
       setStoredUsers(storedUsers);
 
       logEngine.info('audit', '用户登录成功', `用户「${user.username}」通过 IP ${clientIp} 成功登录系统`, {
@@ -401,6 +483,7 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
         username: trimmedUser,
         email: email ? String(email).trim() : `${trimmedUser}@tinglan.audio`,
         passwordHash,
+        subsonicPasswordEnc: encryptSecret(String(password)),
         role: userRole,
         status: userStatus,
         avatarUrl: getDefaultUserAvatar(userRole, trimmedUser),
@@ -460,6 +543,10 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
       if (avatarUrl) targetUser.avatarUrl = avatarUrl;
       if (password && String(password).length >= 6) {
         targetUser.passwordHash = await bcrypt.hash(String(password), 10);
+        // [P0] Keep the encrypted Subsonic password copy in sync
+        try {
+          targetUser.subsonicPasswordEnc = encryptSecret(String(password));
+        } catch {}
       }
       targetUser.updatedAt = new Date().toISOString();
 
@@ -545,6 +632,10 @@ export function createAuthRouter(options: AuthRouterOptions): Router {
       }
 
       targetUser.passwordHash = await bcrypt.hash(String(newPassword), 10);
+      // [P0] Keep the encrypted Subsonic password copy in sync
+      try {
+        targetUser.subsonicPasswordEnc = encryptSecret(String(newPassword));
+      } catch {}
       targetUser.updatedAt = new Date().toISOString();
       setStoredUsers(storedUsers);
 
@@ -638,6 +729,13 @@ export function createSecurityRouter(options: Pick<AuthRouterOptions, 'getSecuri
       } catch {}
     }
 
+    // [P0 Security Fix] Only disclose the default-password state and user
+    // inventory to LAN clients — blocks remote recon of the takeover chain.
+    const revealInventory = isLan;
+    const publicIsDefaultAdminPassword = revealInventory && isDefaultAdminPassword;
+    const publicHasDefaultAdmin = revealInventory ? Boolean(adminUser) : undefined;
+    const publicUserCount = revealInventory ? storedUsers.length : undefined;
+
     res.json({
       success: true,
       authRequired: isAuthRequired,
@@ -649,9 +747,9 @@ export function createSecurityRouter(options: Pick<AuthRouterOptions, 'getSecuri
       allowUserMiotTts: Boolean(securitySettings.allowUserMiotTts),
       clientIp,
       isLan,
-      isDefaultAdminPassword,
-      hasDefaultAdmin: Boolean(adminUser),
-      userCount: storedUsers.length,
+      isDefaultAdminPassword: publicIsDefaultAdminPassword,
+      hasDefaultAdmin: publicHasDefaultAdmin,
+      userCount: publicUserCount,
       settings: {
         ...securitySettings,
         allowRegistration
@@ -667,9 +765,9 @@ export function createSecurityRouter(options: Pick<AuthRouterOptions, 'getSecuri
         allowUserMiotTts: Boolean(securitySettings.allowUserMiotTts),
         clientIp,
         isLan,
-        isDefaultAdminPassword,
-        hasDefaultAdmin: Boolean(adminUser),
-        userCount: storedUsers.length
+        isDefaultAdminPassword: publicIsDefaultAdminPassword,
+        hasDefaultAdmin: publicHasDefaultAdmin,
+        userCount: publicUserCount
       },
       clientInfo: {
         ip: clientIp,

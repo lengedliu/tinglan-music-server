@@ -4,7 +4,7 @@ import { radioService } from '../services/radioService.js';
 import { deviceRepository } from '../core/repositories/deviceRepository.js';
 import { xiaomiAdapter } from '../xiaomi/xiaomiAdapter.js';
 import { sendMiioCommand, callMinaCloudApi, addCastLog } from '../xiaomi/miotService.js';
-import { isSafeRemoteStreamUrl } from '../core/security.js';
+import { isSafeRemoteStreamUrl, ssrfSafeFetch } from '../core/security.js';
 import { queueEngine } from '../core/queueEngine.js';
 
 export interface RadioRouterOptions {
@@ -31,7 +31,9 @@ async function relayRemoteStream(remoteUrl: string, req: Request, res: Response)
   }
 
   try {
-    const upstreamRes = await fetch(remoteUrl, {
+    // [P0 SSRF Fix] ssrfSafeFetch follows redirects manually, re-validating every hop
+    // against isSafeRemoteStreamUrl (blocks loopback / link-local / cloud-metadata targets)
+    const upstreamRes = await ssrfSafeFetch(remoteUrl, {
       headers: forwardHeaders,
       signal: abortController.signal
     });

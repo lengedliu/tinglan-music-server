@@ -89,12 +89,26 @@ export class FfmpegTranscoder {
   }
 
   /**
+   * [P0 Correctness Fix] Collision-free cache key for song ids.
+   * Previously `songId.replace(/[^a-zA-Z0-9_-]/g, '_')` collapsed EVERY CJK id
+   * to a run of underscores ("晴天" and "雨天" both became "__standard.mp3"),
+   * so song B could be served song A's cached audio when the freshness guard
+   * passed. Short pure-ASCII ids keep their legacy filename (existing caches
+   * stay valid); everything else (CJK, spaces, dots, >64 chars) is hashed.
+   */
+  private sanitizeCacheKey(songId: string): string {
+    const raw = String(songId || '');
+    if (/^[a-zA-Z0-9_-]{1,64}$/.test(raw)) return raw;
+    return crypto.createHash('md5').update(raw).digest('hex');
+  }
+
+  /**
    * Fast-lookup for existing fresh cached MP3 file on disk (Static Cache Hit)
    */
   public getCachedMp3(sourcePath: string, songId: string): string | null {
     if (!fs.existsSync(sourcePath)) return null;
-    const sanitizedId = songId.replace(/[^a-zA-Z0-9_-]/g, '_');
-    const cleanId = songId.replace(/\.(mp3|flac|wav|m4a|aac|ogg|opus|ape|dsf|dff)$/i, '').replace(/[^a-zA-Z0-9_-]/g, '_');
+    const sanitizedId = this.sanitizeCacheKey(songId);
+    const cleanId = this.sanitizeCacheKey(songId.replace(/\.(mp3|flac|wav|m4a|aac|ogg|opus|ape|dsf|dff)$/i, ''));
     const hashId = crypto.createHash('md5').update(sourcePath).digest('hex');
 
     const candidates = [
@@ -190,7 +204,7 @@ export class FfmpegTranscoder {
     let cacheWriteStream: fs.WriteStream | null = null;
 
     if (startSeconds === 0 && !options.durationSeconds && options.songId && options.persistCache !== false) {
-      const sanitizedId = options.songId.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const sanitizedId = this.sanitizeCacheKey(options.songId);
       targetCachePath = path.join(this.cacheDir, `${sanitizedId}_standard.mp3`);
       if (!fs.existsSync(targetCachePath)) {
         tmpCachePath = path.join(this.cacheDir, `${sanitizedId}_standard.tmp.${Date.now()}`);
@@ -341,7 +355,7 @@ export class FfmpegTranscoder {
                 fs.renameSync(tmpCachePath!, targetCachePath!);
                 const finalSize = fs.statSync(targetCachePath!).size;
                 const fileName = path.basename(targetCachePath!);
-                const cleanId = (options.songId || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+                const cleanId = this.sanitizeCacheKey(options.songId || '');
                 this.quotaManager.registerNewCache(fileName, cleanId, finalSize, sourcePath);
                 console.log(`✨ [FfmpegTranscoder] Tee Stream dual-output completed: Standard MP3 cached to ${fileName} (Single FFmpeg run)`);
               } else if (tmpCachePath && fs.existsSync(tmpCachePath)) {
@@ -478,7 +492,7 @@ export class FfmpegTranscoder {
       };
     }
 
-    const sanitizedId = songId.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const sanitizedId = this.sanitizeCacheKey(songId);
     const inFlight = this.inFlightTranscodes.get(sanitizedId);
     if (inFlight) {
       return inFlight;
@@ -631,7 +645,7 @@ export class FfmpegTranscoder {
     }
 
     const sourceStat = fs.statSync(sourcePath);
-    const sanitizedId = songId.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const sanitizedId = this.sanitizeCacheKey(songId);
     const cachedMp3Name = `${sanitizedId}_standard.mp3`;
     const cachedMp3Path = path.join(this.cacheDir, cachedMp3Name);
 
@@ -693,7 +707,7 @@ export class FfmpegTranscoder {
       return false;
     }
 
-    const sanitizedId = songId.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const sanitizedId = this.sanitizeCacheKey(songId);
     if (this.inFlightTranscodes.has(sanitizedId)) {
       return true;
     }

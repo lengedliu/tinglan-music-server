@@ -135,6 +135,8 @@ export interface MiotConfig {
   hasServiceToken?: boolean;
   hasMicoServiceToken?: boolean;
   hasMiotServiceToken?: boolean;
+  /** Set when Xiaomi rejected the passToken on both domains: silent renewal is permanently dead, re-binding required */
+  isCredentialsDead?: boolean;
   isMicoValid?: boolean;
   bindMode?: 'account' | 'token' | 'cookie';
   castMode?: 'auto' | 'cdn_direct' | 'xiaoai_directive' | 'lan_stream';

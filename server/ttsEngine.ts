@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { Communicate } from '@travisvn/edge-tts';
-import { miotRpcEngine } from './miotRpc';
+import { miotRpcEngine, buildMiotCloudAuth } from './miotRpc';
 import { dlnaEngine } from './dlnaEngine.js';
 
 export interface TtsVoiceOption {
@@ -26,6 +26,17 @@ const audioCache = new Map<string, { buffer: Buffer; createdAt: number }>();
 const MAX_CACHE_SIZE = 100;
 
 export class TtsEngine {
+  /**
+   * [P0 Security Fix] Factory for HMAC stream tokens bound to subject 'tts'.
+   * Wired in server.ts once JWT_SECRET is available. Speakers fetch TTS audio
+   * over plain HTTP without login — the signed token in the URL is their credential.
+   */
+  private streamTokenFactory: ((subject: string, ttlSeconds?: number) => string) | null = null;
+
+  public setStreamTokenFactory(factory: ((subject: string, ttlSeconds?: number) => string) | null) {
+    this.streamTokenFactory = factory;
+  }
+
   /**
    * Synthesize text to MP3 audio Buffer
    */
@@ -133,13 +144,10 @@ export class TtsEngine {
     }
 
     const activeMicoToken = miotConfig.micoServiceToken || (miotConfig.isMicoValid ? miotConfig.serviceToken : undefined);
-    const activeIoToken = miotConfig.miotServiceToken || miotConfig.xiaomiioServiceToken || (!miotConfig.isMicoValid ? miotConfig.serviceToken : undefined);
     const cleanUid = String(miotConfig.userId || '').replace(/^uid_/, '').trim();
-    const cloudAuth = (cleanUid && activeIoToken) ? {
-      userId: cleanUid,
-      serviceToken: activeIoToken,
-      ssecurity: miotConfig.ssecurity
-    } : undefined;
+    // [Fix b] Use a domain-consistent (token, ssecurity) pair for MIoT signing
+    // instead of blindly pairing the io token with config.ssecurity (mico secret)
+    const cloudAuth = buildMiotCloudAuth(miotConfig) ?? undefined;
 
     // ----------------------------------------------------
     // Channel 1: Local miIO UDP (if IP & Token present)
@@ -333,7 +341,10 @@ export class TtsEngine {
     if (serverHost && (mode === 'auto' || mode === 'audio_stream')) {
       triedChannels.push('高清音频串流投播 (Audio Stream TTS)');
       try {
-        const streamAudioUrl = `${serverHost.replace(/\/$/, '')}/api/tts/audio.mp3?text=${encodeURIComponent(cleanText)}&voice=${encodeURIComponent(voice)}&t=${Date.now()}`;
+        // [P0 Security Fix] Sign the TTS stream URL so speakers can authenticate
+        // (the /api/tts endpoints no longer serve anonymous requests)
+        const ttsToken = this.streamTokenFactory ? this.streamTokenFactory('tts', 600) : '';
+        const streamAudioUrl = `${serverHost.replace(/\/$/, '')}/api/tts/audio.mp3?text=${encodeURIComponent(cleanText)}&voice=${encodeURIComponent(voice)}&t=${Date.now()}${ttsToken ? `&token=${encodeURIComponent(ttsToken)}` : ''}`;
 
         // 1. Try Mina player_play_url
         if (miotConfig.isLoggedIn && activeMicoToken) {

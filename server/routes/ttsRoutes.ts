@@ -1,8 +1,51 @@
 import { Router, Request, Response } from 'express';
+import jwt from 'jsonwebtoken';
 import { ttsEngine, POPULAR_TTS_VOICES } from '../ttsEngine.js';
 
-export function createTtsRouter(): Router {
+export interface TtsRouterOptions {
+  jwtSecret?: string;
+  verifyStreamToken?: (subjectId: string, token: string) => boolean;
+  isAuthRequiredForRequest?: (req: Request) => boolean;
+}
+
+export function createTtsRouter(options: TtsRouterOptions = {}): Router {
   const router = Router();
+
+  // [P0 Security Fix] /api/tts/* is whitelisted from the global auth middleware,
+  // so TTS handlers must verify access themselves (HMAC stream token bound to
+  // subject 'tts' for speakers, JWT for browsers, or auth-not-required).
+  const verifyTtsAccess = (req: Request, res: Response): boolean => {
+    const tokenSources: string[] = [];
+    const authHeader = String(req.headers.authorization || '');
+    if (authHeader.startsWith('Bearer ')) tokenSources.push(authHeader.slice(7).trim());
+    const queryToken = String(req.query.token || '').trim();
+    if (queryToken) tokenSources.push(queryToken);
+
+    const preAuthed = Boolean((req as any).user && ((req as any).user.userId || (req as any).user.id));
+
+    if (tokenSources.length === 0) {
+      if (preAuthed) return true;
+      // No auth policy provider wired → fail-closed (deny anonymous synthesis)
+      if (options.isAuthRequiredForRequest ? options.isAuthRequiredForRequest(req) : true) {
+        res.status(401).send('Authentication required for TTS synthesis (please login or provide a stream token)');
+        return false;
+      }
+      return true;
+    }
+
+    for (const token of tokenSources) {
+      if (options.verifyStreamToken && options.verifyStreamToken('tts', token)) return true;
+      if (options.jwtSecret) {
+        try {
+          const decoded: any = jwt.verify(token, options.jwtSecret);
+          if (decoded && (decoded.userId || decoded.id)) return true;
+        } catch {}
+      }
+    }
+    if (preAuthed) return true;
+    res.status(403).send('Invalid or expired stream token');
+    return false;
+  };
 
   // Get available TTS voices
   router.get('/voices', (req: Request, res: Response) => {
@@ -26,6 +69,10 @@ export function createTtsRouter(): Router {
 
     if (req.method === 'OPTIONS') {
       return res.status(200).end();
+    }
+
+    if (!verifyTtsAccess(req, res)) {
+      return;
     }
 
     if (!text) {

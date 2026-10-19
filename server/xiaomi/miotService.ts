@@ -5,7 +5,7 @@ import net from 'net';
 import dgram from 'dgram';
 import crypto from 'crypto';
 import { dlnaEngine } from '../dlnaEngine.js';
-import { xiaomiPassport } from '../xiaomiPassport.js';
+import { xiaomiPassport, XiaomiPassportResult } from '../xiaomiPassport.js';
 import { deviceRepository, XiaomiDeviceEntity } from '../core/repositories/deviceRepository.js';
 import { musicRepository } from '../core/repositories/musicRepository.js';
 import { xiaoaiResolverEngine } from '../xiaoaiResolver.js';
@@ -307,22 +307,24 @@ export async function queryXiaomiMinaDevices(userId: string, serviceToken: strin
   }
 }
 
-export async function authenticateXiaomiPassport(user: string, pass: string): Promise<{
-  success: boolean;
-  userId?: string;
-  serviceToken?: string;
-  micoServiceToken?: string;
-  xiaomiioServiceToken?: string;
-  passToken?: string;
-  ssecurity?: string;
-  devices?: any[];
-  error?: string;
-}> {
-  return xiaomiPassport.loginWithPassword(user, pass);
+export async function authenticateXiaomiPassport(
+  user: string,
+  pass: string,
+  options?: { captchaCode?: string; captchaIck?: string }
+): Promise<XiaomiPassportResult> {
+  // [Fix a/f] Pass through the raw passport result (including stsTokens,
+  // xiaomiioSsecurity and captcha challenge fields) instead of pretending a
+  // reshaped payload with non-existent fields.
+  return xiaomiPassport.loginWithPassword(user, pass, 'micoapi', options);
 }
 
 let isRefreshingTokens = false;
 let lastTokenRefreshTimestamp = 0;
+// [Fix e] Failures previously bypassed the cooldown entirely (the timestamp was
+// only recorded on success), so a dead passToken triggered an immediate retry
+// storm on every 401. Failures now get their own shorter cooldown.
+let lastTokenRefreshFailureTimestamp = 0;
+const TOKEN_REFRESH_FAILURE_COOLDOWN_MS = 60 * 1000;
 let refreshTokensPromiseInstance: Promise<{ success: boolean; serviceToken?: string; error?: string }> | null = null;
 
 export async function refreshXiaomiTokens(
@@ -339,6 +341,23 @@ export async function refreshXiaomiTokens(
       error: 'Token refresh skipped (within 10-minute cooldown window)'
     };
   }
+  if (!force && now - lastTokenRefreshFailureTimestamp < TOKEN_REFRESH_FAILURE_COOLDOWN_MS) {
+    return {
+      success: false,
+      error: 'Token refresh skipped (recent failure cooldown)'
+    };
+  }
+
+  // [Fix: dead short-circuit] Once the passToken has been rejected by Xiaomi,
+  // proactively refreshing (orming new tokens) definitively cannot succeed. Stop
+  // knocking on Xiaomi's door on every 401 until the user re-binds (or resets
+  // via /circuit-reset). `force` still bypasses this for manual recovery.
+  if (!force && miotConfig.isCredentialsDead) {
+    return {
+      success: false,
+      error: 'Credentials marked dead (passToken rejected by Xiaomi) — re-binding required'
+    };
+  }
 
   if (isRefreshingTokens && refreshTokensPromiseInstance) {
     return refreshTokensPromiseInstance;
@@ -347,6 +366,7 @@ export async function refreshXiaomiTokens(
   const cleanUid = String(miotConfig.userId || '').trim();
   const passToken = String(miotConfig.passToken || '').trim();
   if (!cleanUid || !passToken) {
+    lastTokenRefreshFailureTimestamp = Date.now();
     return { success: false, error: 'No passToken available for silent refresh' };
   }
 
@@ -382,14 +402,33 @@ export async function refreshXiaomiTokens(
       }
 
       if (updated) {
+        // [Fix: dead flag] A successful renewal proves the passToken is alive —
+        // clear any stale dead marker (e.g. after a transient false positive).
+        if (miotConfig.isCredentialsDead) {
+          miotConfig.isCredentialsDead = false;
+          console.log('🔑 [Token Refresh] 绑定失效标记已解除 (续期成功)');
+        }
         lastTokenRefreshTimestamp = Date.now();
         saveMiotConfigFn(miotConfig);
         return { success: true, serviceToken: newMicoToken || miotConfig.serviceToken };
       }
 
-      return { success: false, error: 'Both token refresh requests failed' };
+      lastTokenRefreshFailureTimestamp = Date.now();
+      // [Fix: dead-credential detection] serviceLogin (the passToken validation
+      // itself) rejected on BOTH domains means the passToken is invalidated
+      // (password change / risk-control logout). No silent recovery exists —
+      // mark it once so callers stop retrying and the UI can prompt re-binding.
+      const micoAuthDead = micoRes.status === 'fulfilled' && micoRes.value.dead === true;
+      const ioAuthDead = ioRes.status === 'fulfilled' && ioRes.value.dead === true;
+      if (micoAuthDead && ioAuthDead && !miotConfig.isCredentialsDead) {
+        miotConfig.isCredentialsDead = true;
+        saveMiotConfigFn(miotConfig);
+        console.error('🔑 [Token Refresh] ❌ passToken 已被小米 Passport 拒绝（双域均认证失败），绑定已失效。已停止自动续期重试，请在绑定面板重新扫码/账号登录。');
+      }
+      return { success: false, error: 'Both token refresh requests failed' + (micoAuthDead && ioAuthDead ? ' (dead credentials)' : '') };
     } catch (err: any) {
       console.warn('🔑 [Token Refresh] 异常:', err?.message || err);
+      lastTokenRefreshFailureTimestamp = Date.now();
       return { success: false, error: err?.message || 'Token refresh failed' };
     } finally {
       isRefreshingTokens = false;
@@ -445,7 +484,7 @@ async function doCallMinaCloudApi(
   const activeMicoToken = String(rawToken).replace(/[^\x20-\x7E]/g, '').trim();
   const cleanUid = String(rawUid).replace(/[^\x20-\x7E]/g, '').trim();
 
-  if ((!activeMicoToken || !cleanUid) && miotConfig.passToken && retryCount === 0 && saveMiotConfigFn) {
+  if ((!activeMicoToken || !cleanUid) && miotConfig.passToken && retryCount === 0 && saveMiotConfigFn && !miotConfig.isCredentialsDead) {
     try {
       const refreshed = await xiaomiPassport.fetchAdditionalStsToken(cleanUid || '0', miotConfig.passToken, 'micoapi');
       if (refreshed.serviceToken) {
@@ -515,6 +554,16 @@ async function doCallMinaCloudApi(
     clearTimeout(timeout);
 
     if (resp.status === 401 && retryCount < 1 && miotConfig.passToken && saveMiotConfigFn) {
+      // [Fix 2] passToken already rejected by Xiaomi — refreshing definitively
+      // cannot succeed. Fail fast with actionable guidance instead of knocking
+      // on Xiaomi's door on every request (risk-control stimulant).
+      if (miotConfig.isCredentialsDead) {
+        return {
+          success: false,
+          error: '小米绑定已失效（passToken 已过期或被吊销），请在绑定面板重新扫码/账号登录',
+          statusCode: 401
+        };
+      }
       const refreshed = await refreshXiaomiTokens(miotConfig, saveMiotConfigFn, 'mina_rest_401');
       if (refreshed.success) {
         return doCallMinaCloudApi(pathName, methodName, messageObj, targetDid, retryCount + 1, miotConfig, saveMiotConfigFn);

@@ -17,6 +17,24 @@ export function setStoredAuthToken(token: string | null) {
   } catch {}
 }
 
+/**
+ * [P0 Security Fix companion] Append the stored JWT to same-origin stream URLs.
+ * The server's /api/stream & /api/tts routes now enforce access control; browser
+ * <audio>/<img> elements and DLNA cast URLs cannot send Authorization headers,
+ * so the JWT travels as a query parameter instead.
+ * - Only same-origin paths (starting with '/') are touched; remote URLs unchanged
+ * - An existing ?token= (server-signed speaker/HMAC URLs) is never overridden
+ */
+export function appendAuthToken<T extends string | null | undefined>(url: T): T {
+  if (!url) return url;
+  const rawUrl = String(url);
+  if (!rawUrl.startsWith('/')) return url;
+  const token = getAuthToken();
+  if (!token) return url;
+  if (/[?&]token=/.test(rawUrl)) return url;
+  return `${rawUrl}${rawUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}` as T;
+}
+
 export async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   const token = getAuthToken();
   const headers = new Headers(init.headers || (input instanceof Request ? input.headers : undefined));

@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { Song } from '../core/musicEngine.js';
 import { interactionRepository } from '../core/repositories/interactionRepository.js';
+import { decryptSecret } from '../secureVault.js';
 
 export interface SubsonicRouterOptions {
   getStoredSongs: () => Song[];
@@ -45,16 +46,14 @@ export function createSubsonicRouter(options: SubsonicRouterOptions): Router {
     const t = String(req.query.t || '').trim();
     const s = String(req.query.s || '').trim();
 
-    const clientIp = options.getClientIp ? options.getClientIp(req) : String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '127.0.0.1');
-    const isLoopback = clientIp.includes('127.0.0.1') || clientIp.includes('::1') || clientIp.includes('localhost');
-
     const storedUsers = options.getStoredUsers();
     if (!storedUsers || storedUsers.length === 0) {
       return true; // No users initialized yet
     }
 
+    // [P0 Security Fix] A username is always required — previously a loopback
+    // client WITHOUT any username was fully authenticated.
     if (!u) {
-      if (isLoopback) return true;
       subsonicError(req, res, 10, 'Required parameter is missing: u');
       return false;
     }
@@ -85,12 +84,25 @@ export function createSubsonicRouter(options: SubsonicRouterOptions): Router {
       } catch {}
     }
 
-    // 2. MD5 token + salt authentication
+    // 2. MD5 token + salt authentication (Subsonic standard: t = md5(password + s))
+    // [P0 Security Fix] Previously this branch contained two critical bypasses:
+    //   a) "token equals the user's id or username" authenticated without any secret
+    //   b) a hardcoded MD5 of the default 'admin123' password accepted forever
+    // Both are removed. Real token auth now verifies against the user's
+    // encrypted password copy (subsonicPasswordEnc, captured at password-set /
+    // login time) — one-way bcrypt hashes cannot verify md5(password + salt).
     if (t && s) {
-      if (user.id === t || user.username === t) return true;
-      const adminMd5 = crypto.createHash('md5').update('admin123' + s).digest('hex');
-      if (t.toLowerCase() === adminMd5.toLowerCase() && user.username === 'admin') {
-        return true;
+      const enc = user.subsonicPasswordEnc;
+      if (enc && typeof enc === 'string') {
+        try {
+          const plain = decryptSecret(enc);
+          if (plain && typeof plain === 'string') {
+            const expectedToken = crypto.createHash('md5').update(plain + s).digest('hex');
+            if (t.toLowerCase() === expectedToken.toLowerCase()) {
+              return true;
+            }
+          }
+        } catch {}
       }
     }
 

@@ -3,6 +3,7 @@ import { Mic2, ShieldCheck, Volume2, Send } from 'lucide-react';
 import { XiaomiDevice, DeviceCommandState } from '../../types';
 import { useTheme } from '../../context/ThemeContext';
 import { cleanDeviceName } from './speakerUtils';
+import { appendAuthToken } from '../../utils/api';
 
 interface TtsBroadcastTabProps {
   activeDevice?: XiaomiDevice;
@@ -128,7 +129,8 @@ export const TtsBroadcastTab: React.FC<TtsBroadcastTabProps> = ({
     }
 
     // 3. Fallback: HTML5 Audio Stream from server
-    const streamUrl = `/api/tts/audio.mp3?text=${encodeURIComponent(cleanText)}&voice=${encodeURIComponent(selectedTtsVoice)}&t=${Date.now()}`;
+    // [P0 Security Fix companion] /api/tts now enforces access — attach the JWT
+    const streamUrl = appendAuthToken(`/api/tts/audio.mp3?text=${encodeURIComponent(cleanText)}&voice=${encodeURIComponent(selectedTtsVoice)}&t=${Date.now()}`);
     const audio = new Audio(streamUrl);
     audio.preload = 'auto';
     audioPreviewRef.current = audio;

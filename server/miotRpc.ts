@@ -4,6 +4,48 @@ import zlib from 'zlib';
 import { getPersistentClientDeviceId } from './xiaomiPassport';
 
 /**
+ * [Fix b: domain-consistent credential pairing]
+ * Xiaomi service sessions are scoped per domain (micoapi vs xiaomiio): the
+ * serviceToken and the ssecurity obtained from the SAME STS exchange must
+ * travel together. The RPC call sites previously mixed `xiaomiioServiceToken`
+ * with `config.ssecurity` (which usually holds the micoapi-domain secret),
+ * producing RC4 signatures the MIoT endpoint rejects. This helper always
+ * returns an internally-consistent (token, ssecurity) pair.
+ */
+export interface MiotCloudAuth {
+  userId: string;
+  serviceToken: string;
+  ssecurity: string;
+}
+
+export function buildMiotCloudAuth(config: any): MiotCloudAuth | null {
+  if (!config) return null;
+  const userId = String(config.userId || '').replace(/^uid_/, '').trim();
+  if (!userId) return null;
+
+  // Prefer the correctly-paired xiaomiio (MIoT) credentials
+  const ioToken = String(config.xiaomiioServiceToken || config.xiaomiioToken || '').trim();
+  const ioSsecurity = String(config.xiaomiioSsecurity || '').trim();
+  if (ioToken && ioSsecurity) {
+    return { userId, serviceToken: ioToken, ssecurity: ioSsecurity };
+  }
+
+  // Fall back to the internally-consistent micoapi (Mina) pair
+  const micoToken = String(config.micoServiceToken || config.serviceToken || '').trim();
+  const micoSsecurity = String(config.ssecurity || '').trim();
+  if (micoToken && micoSsecurity) {
+    return { userId, serviceToken: micoToken, ssecurity: micoSsecurity };
+  }
+
+  // Last resort (previous behavior): a token without its matching secret
+  if (ioToken || micoToken) {
+    return { userId, serviceToken: ioToken || micoToken, ssecurity: micoSsecurity };
+  }
+  return null;
+}
+
+
+/**
  * Pure JavaScript / TypeScript implementation of RC4-drop1024
  *
  * Xiaomi api.io.mi.com (xiaomiio) requires RC4 encryption where the first 1024 bytes

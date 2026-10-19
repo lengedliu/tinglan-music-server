@@ -30,7 +30,7 @@ import { usePlaybackTimeActions } from './context/PlaybackTimeContext';
 import { useAppEvents } from './context/AppEventsContext';
 import { Song, Playlist, XiaomiDevice, MiotConfig, CastLog, User, SecurityStatus, DeviceCommandState, SleepTimerConfig, ABLoopConfig, AudioEngineSettings } from './types';
 import { INITIAL_SONGS, INITIAL_PLAYLISTS, INITIAL_XIAOMI_DEVICES } from './data/mockSongs';
-import { apiFetch, setStoredAuthToken, getAuthToken } from './utils/api';
+import { apiFetch, setStoredAuthToken, getAuthToken, appendAuthToken } from './utils/api';
 import { formatTime } from './utils/lyricParser';
 import { recordSongPlay } from './utils/dynamicPlaylists';
 import { CheckCircle2, AlertCircle, Radio, X } from 'lucide-react';
@@ -272,7 +272,7 @@ export default function App() {
       return;
     }
 
-    const playSrc = currentSong?.url || (currentSong ? `/api/stream/${encodeURIComponent(currentSong.id)}` : '');
+    const playSrc = appendAuthToken(currentSong?.url || (currentSong ? `/api/stream/${encodeURIComponent(currentSong.id)}` : ''));
     if (!playSrc) return;
 
     const isHlsStream = /\.m3u8($|\?)/i.test(playSrc);
@@ -873,9 +873,9 @@ export default function App() {
     if (!nextSong) return;
 
     const isNavi = Boolean((nextSong.id && nextSong.id.startsWith('navidrome-')) || (nextSong.url && nextSong.url.includes('/rest/stream')));
-    const nextSrc = (nextSong.url && !nextSong.url.includes('pixabay') && !isNavi) 
+    const nextSrc = appendAuthToken((nextSong.url && !nextSong.url.includes('pixabay') && !isNavi) 
       ? nextSong.url 
-      : `/api/stream/${encodeURIComponent(nextSong.id)}`;
+      : `/api/stream/${encodeURIComponent(nextSong.id)}`);
 
     if (preloadAudioRef.current) {
       if (!preloadAudioRef.current.src || !preloadAudioRef.current.src.includes(encodeURIComponent(nextSong.id))) {
@@ -976,9 +976,9 @@ export default function App() {
         if (audioRef.current) {
           audioRef.current.volume = volume;
           const isNavi = Boolean((currentSong.id && currentSong.id.startsWith('navidrome-')) || (currentSong.url && currentSong.url.includes('/rest/stream')));
-          const playSrc = (currentSong.url && !currentSong.url.includes('pixabay') && !isNavi) 
+          const playSrc = appendAuthToken((currentSong.url && !currentSong.url.includes('pixabay') && !isNavi) 
             ? currentSong.url 
-            : `/api/stream/${encodeURIComponent(currentSong.id)}`;
+            : `/api/stream/${encodeURIComponent(currentSong.id)}`);
           if (!audioRef.current.src || !audioRef.current.src.includes(currentSong.id)) {
             audioRef.current.src = playSrc;
           }
@@ -1042,9 +1042,9 @@ export default function App() {
     } else {
       // In Local Playback Mode: load and play HTML5 audio directly through browser/computer speakers
       const isNavi = Boolean((song.id && song.id.startsWith('navidrome-')) || (song.url && song.url.includes('/rest/stream')));
-      const playSrc = (song.url && !song.url.includes('pixabay') && !isNavi) 
+      const playSrc = appendAuthToken((song.url && !song.url.includes('pixabay') && !isNavi) 
         ? song.url 
-        : `/api/stream/${encodeURIComponent(song.id)}`;
+        : `/api/stream/${encodeURIComponent(song.id)}`);
 
       const isHlsStream = /\.m3u8($|\?)/i.test(playSrc);
 
@@ -1427,10 +1427,13 @@ export default function App() {
     
     let streamUrl = song.url || '';
     if (streamUrl && streamUrl.startsWith('/api/')) {
-      streamUrl = `${streamBase}${streamUrl}`;
+      streamUrl = `${streamBase}${appendAuthToken(streamUrl)}`;
     } else if (!streamUrl || !streamUrl.startsWith('http')) {
       const cleanId = song.id.replace(/\.(mp3|flac|wav|m4a|aac|ogg|opus|ape)$/i, '');
-      streamUrl = `${streamBase}/api/stream/${encodeURIComponent(cleanId)}.mp3`;
+      // [P0 Security Fix companion] DLNA speakers fetch this URL over plain HTTP
+      // without login — attach the user JWT so the now-enforced /api/stream route accepts it
+      const jwtToken = getAuthToken();
+      streamUrl = `${streamBase}/api/stream/${encodeURIComponent(cleanId)}.mp3${jwtToken ? `?token=${encodeURIComponent(jwtToken)}` : ''}`;
     }
 
     const queueToSend = (customQueue && customQueue.length > 0) ? customQueue : (playQueue.length > 0 ? playQueue : songs);
@@ -1711,9 +1714,9 @@ export default function App() {
       // If playback was active, seamlessly resume on local browser audio
       if (currentSong && isPlaying) {
         const isNavi = Boolean((currentSong.id && currentSong.id.startsWith('navidrome-')) || (currentSong.url && currentSong.url.includes('/rest/stream')));
-        const playSrc = (currentSong.url && !currentSong.url.includes('pixabay') && !isNavi) 
+        const playSrc = appendAuthToken((currentSong.url && !currentSong.url.includes('pixabay') && !isNavi) 
           ? currentSong.url 
-          : `/api/stream/${encodeURIComponent(currentSong.id)}`;
+          : `/api/stream/${encodeURIComponent(currentSong.id)}`);
         if (audioRef.current) {
           audioRef.current.src = playSrc;
           audioRef.current.currentTime = timeActions.getCurrentTime();
@@ -2563,7 +2566,7 @@ export default function App() {
         {/* Hidden Audio Engine */}
         <audio
           ref={audioRef}
-          src={currentSong?.url || (currentSong ? `/api/stream/${encodeURIComponent(currentSong.id)}` : undefined)}
+          src={appendAuthToken(currentSong?.url || (currentSong ? `/api/stream/${encodeURIComponent(currentSong.id)}` : undefined))}
           crossOrigin="anonymous"
           preload="auto"
           playsInline

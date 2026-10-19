@@ -7,6 +7,7 @@ import { voiceCommandService } from '../voiceCommandService.js';
 import { logEngine } from '../core/logEngine.js';
 import { appEventBus } from '../core/eventBus.js';
 import { getResolvedServerHost } from '../xiaomi/miotService.js';
+import { getClientIp, isPrivateOrLocalIp } from '../core/security.js';
 
 export function createSkillRouter(): Router {
   const router = Router();
@@ -68,6 +69,24 @@ export function createSkillRouter(): Router {
           return res.status(401).json({
             success: false,
             error: 'AI Skill 回调鉴权失败，请检查 Authorization Bearer Token'
+          });
+        }
+      } else {
+        // [P0 Security Fix] No webhook token configured: previously ANY anonymous
+        // internet caller could inject task records, trigger library scans and push
+        // TTS to household speakers. Restrict the un-tokened webhook to private /
+        // local networks only (LAN home-automation use case).
+        const clientIp = getClientIp(req);
+        if (!isPrivateOrLocalIp(clientIp)) {
+          logEngine.warn(
+            'automation',
+            'AI Skill 外部回调已拒绝',
+            `未配置回调 Token，且请求来自非内网地址 (${clientIp})，已按安全策略拒绝。可在 AI 模型设置中配置 aiSkillAuthToken 以启用公网回调。`,
+            { traceId, clientIp }
+          );
+          return res.status(403).json({
+            success: false,
+            error: 'AI Skill 回调未配置鉴权 Token，仅允许来自局域网的回调请求。如需公网回调，请先在「AI 模型设置」中配置回调 Token。'
           });
         }
       }

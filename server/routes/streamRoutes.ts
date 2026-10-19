@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
 import { Readable } from 'stream';
+import jwt from 'jsonwebtoken';
 import { Song } from '../core/musicEngine.js';
 import { FfmpegTranscoder } from '../streaming/ffmpegTranscoder.js';
 import { StreamServer } from '../streaming/streamServer.js';
@@ -10,6 +11,7 @@ import { queueEngine } from '../core/queueEngine.js';
 import { ttsEngine, POPULAR_TTS_VOICES } from '../ttsEngine.js';
 import { radioService } from '../services/radioService.js';
 import { nasStorageService } from '../core/nasStorageService.js';
+import { ssrfSafeFetch } from '../core/security.js';
 
 export interface StreamEventInfo {
   timestamp: string;
@@ -40,6 +42,8 @@ export interface StreamRouterOptions {
   isSafeRemoteStreamUrl: (url: string) => boolean;
   getSubsonicAuthQuery: (user: string, pass: string, apiVer?: string) => string;
   getSubsonicPassAuthQuery: (user: string, pass: string, apiVer?: string) => string;
+  jwtSecret: string;
+  isAuthRequiredForRequest: (req: Request) => boolean;
   logCastAction?: (log: any) => void;
 }
 
@@ -163,6 +167,52 @@ export function createStreamRouter(options: StreamRouterOptions) {
     });
   }
 
+  /**
+   * [P0 Security Fix] Unified access verification for self-verifying whitelisted routes
+   * (/api/stream/*, /api/tts/*). The global auth middleware skips these families,
+   * so the handlers MUST verify access themselves:
+   *   1. valid HMAC stream token bound to subjectId (XiaoAi speakers / DLNA),
+   *   2. valid JWT (query token — browser <audio>/<img> cannot send headers —
+   *      or Authorization Bearer),
+   *   3. an already-authenticated req.user (global middleware / API key),
+   *   4. or "authentication not required" per current security settings.
+   */
+  const verifySelfRouteAccess = (req: Request, subjectId: string): { ok: boolean; status: number; message: string } => {
+    const tokenSources: string[] = [];
+    const authHeader = String(req.headers.authorization || '');
+    if (authHeader.startsWith('Bearer ')) tokenSources.push(authHeader.slice(7).trim());
+    const queryToken = String(req.query.token || '').trim();
+    if (queryToken) tokenSources.push(queryToken);
+
+    const preAuthed = Boolean((req as any).user && ((req as any).user.userId || (req as any).user.id));
+
+    if (tokenSources.length === 0) {
+      if (preAuthed) return { ok: true, status: 200, message: '' };
+      if (options.isAuthRequiredForRequest(req)) {
+        return {
+          ok: false,
+          status: 401,
+          message: 'Authentication required to stream audio (please login or provide a stream token)'
+        };
+      }
+      return { ok: true, status: 200, message: '' };
+    }
+
+    for (const token of tokenSources) {
+      if (options.verifyStreamToken(subjectId, token)) {
+        return { ok: true, status: 200, message: '' };
+      }
+      try {
+        const decoded: any = jwt.verify(token, options.jwtSecret);
+        if (decoded && (decoded.userId || decoded.id)) {
+          return { ok: true, status: 200, message: '' };
+        }
+      } catch {}
+    }
+    if (preAuthed) return { ok: true, status: 200, message: '' };
+    return { ok: false, status: 403, message: 'Invalid or expired stream token' };
+  };
+
   // Handle TTS audio stream
   const handleTtsAudioStream = async (req: Request, res: Response) => {
     const text = String(req.query.text || req.body?.text || '').trim();
@@ -176,6 +226,13 @@ export function createStreamRouter(options: StreamRouterOptions) {
 
     if (req.method === 'OPTIONS') {
       return res.status(200).end();
+    }
+
+    // [P0 Security Fix] TTS synthesis was previously fully anonymous. Enforce access now:
+    // speakers carry an HMAC stream token (bound to subject 'tts'), browsers a JWT.
+    const ttsAccess = verifySelfRouteAccess(req, 'tts');
+    if (!ttsAccess.ok) {
+      return res.status(ttsAccess.status).send(ttsAccess.message);
     }
 
     if (!text) {
@@ -240,12 +297,23 @@ export function createStreamRouter(options: StreamRouterOptions) {
       return res.status(200).end();
     }
 
-    const token = (req.query.token as string) || '';
-    const rawCleanSongId = decodeURIComponent(songId).replace(/\.(mp3|wav|flac|m4a|aac|ogg|opus|ape|dsf|dff)$/i, '').trim();
+    const rawCleanSongId = (() => {
+      try {
+        return decodeURIComponent(songId).replace(/\.(mp3|wav|flac|m4a|aac|ogg|opus|ape|dsf|dff)$/i, '').trim();
+      } catch {
+        return String(songId || '').trim();
+      }
+    })();
 
-    // Verify token if supplied
-    if (token) {
-      options.verifyStreamToken(rawCleanSongId, token);
+    // [P0 Security Fix] Previously the stream-token verification result was
+    // DISCARDED (options.verifyStreamToken(...) return value ignored), and the
+    // auth middleware whitelists /api/stream/* — making the entire music library
+    // anonymously streamable. Now actually enforce access:
+    //   valid HMAC stream token (speakers) / valid JWT (browsers) /
+    //   pre-authenticated user / or auth-not-required per security settings.
+    const streamAccess = verifySelfRouteAccess(req, rawCleanSongId);
+    if (!streamAccess.ok) {
+      return res.status(streamAccess.status).send(streamAccess.message);
     }
 
     const storedSongs = options.getStoredSongs();
@@ -278,7 +346,8 @@ export function createStreamRouter(options: StreamRouterOptions) {
       const streamCandidates = [radioStation.url, ...(radioStation.backupUrls || [])];
       for (const targetUrl of streamCandidates) {
         try {
-          const upstreamRes = await fetch(targetUrl, {
+          // [P0 SSRF Fix] ssrfSafeFetch follows redirects manually and re-validates every hop
+          const upstreamRes = await ssrfSafeFetch(targetUrl, {
             headers: forwardHeaders,
             signal: abortController.signal
           });
@@ -569,10 +638,30 @@ export function createStreamRouter(options: StreamRouterOptions) {
       }
 
       // Inject WebDAV credentials if proxying remote NAS WebDAV stream
+      // [P0 SSRF Fix] Only send NAS Basic credentials when the proxied target host
+      // matches the CONFIGURED NAS server host — never forward credentials to
+      // arbitrary attacker-influenced URLs.
       if (foundSong && (foundSong.source === 'nas' || foundSong.id.startsWith('nas-'))) {
         const nasCfg = nasStorageService.getConfig();
         if (nasCfg.username && !proxyHeaders['Authorization']) {
-          proxyHeaders['Authorization'] = `Basic ${Buffer.from(`${nasCfg.username}:${nasCfg.password || ''}`).toString('base64')}`;
+          let targetHost = '';
+          let nasHost = '';
+          try {
+            targetHost = new URL(remoteStreamUrl).hostname.toLowerCase();
+          } catch {}
+          try {
+            const nasUrlRaw = String(nasCfg.serverUrl || '').trim();
+            const nasUrl = /^https?:\/\//i.test(nasUrlRaw) ? nasUrlRaw : `http://${nasUrlRaw}`;
+            nasHost = new URL(nasUrl).hostname.toLowerCase();
+          } catch {}
+          if (targetHost && nasHost && targetHost === nasHost) {
+            proxyHeaders['Authorization'] = `Basic ${Buffer.from(`${nasCfg.username}:${nasCfg.password || ''}`).toString('base64')}`;
+          } else {
+            console.warn(
+              `[StreamServer] ⚠️ Refused to attach NAS credentials: proxied host ` +
+              `"${targetHost || 'unknown'}" does not match configured NAS host "${nasHost || 'unknown'}"`
+            );
+          }
         }
       }
 
@@ -583,29 +672,30 @@ export function createStreamRouter(options: StreamRouterOptions) {
 
       try {
         let remoteRes: any;
+        // [P0 SSRF Fix] ssrfSafeFetch: manual redirects, every hop re-validated
         if (req.method === 'HEAD') {
           try {
-            remoteRes = await fetch(remoteStreamUrl, {
+            remoteRes = await ssrfSafeFetch(remoteStreamUrl, {
               method: 'HEAD',
               headers: proxyHeaders,
               signal: abortController.signal
             });
             if (remoteRes.status === 405) {
-              remoteRes = await fetch(remoteStreamUrl, {
+              remoteRes = await ssrfSafeFetch(remoteStreamUrl, {
                 method: 'GET',
                 headers: { ...proxyHeaders, Range: 'bytes=0-0' },
                 signal: abortController.signal
               });
             }
           } catch {
-            remoteRes = await fetch(remoteStreamUrl, {
+            remoteRes = await ssrfSafeFetch(remoteStreamUrl, {
               method: 'GET',
               headers: { ...proxyHeaders, Range: 'bytes=0-0' },
               signal: abortController.signal
             });
           }
         } else {
-          remoteRes = await fetch(remoteStreamUrl, {
+          remoteRes = await ssrfSafeFetch(remoteStreamUrl, {
             method: 'GET',
             headers: proxyHeaders,
             signal: abortController.signal

@@ -58,7 +58,7 @@ import {
   Loader2
 } from 'lucide-react';
 import { XiaomiDevice, MiotConfig, CastLog, Song, DeviceCommandState, Playlist } from '../types';
-import { apiFetch, getAuthToken } from '../utils/api';
+import { apiFetch, getAuthToken, appendAuthToken } from '../utils/api';
 import { useAppEvents } from '../context/AppEventsContext';
 import { VoiceCommandSection } from './VoiceCommandSection';
 import { LogTerminalTab } from './speaker/LogTerminalTab';
@@ -362,7 +362,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
     setStreamTestResult({ testing: true });
     try {
       const tStart = Date.now();
-      const res = await fetch('/api/stream/song-1', { method: 'HEAD' });
+      const res = await fetch(appendAuthToken('/api/stream/song-1'), { method: 'HEAD' });
       const elapsed = Date.now() - tStart;
       const cType = res.headers.get('content-type') || '未知';
       const cLength = res.headers.get('content-length') || '0';
@@ -986,7 +986,8 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
     }
 
     // 3. Fallback: HTML5 Audio Stream from server
-    const streamUrl = `/api/tts/audio.mp3?text=${encodeURIComponent(cleanText)}&voice=${encodeURIComponent(selectedTtsVoice)}&t=${Date.now()}`;
+    // [P0 Security Fix companion] /api/tts now enforces access — attach the JWT
+    const streamUrl = appendAuthToken(`/api/tts/audio.mp3?text=${encodeURIComponent(cleanText)}&voice=${encodeURIComponent(selectedTtsVoice)}&t=${Date.now()}`);
     const audio = new Audio(streamUrl);
     audio.preload = 'auto';
     audioPreviewRef.current = audio;
@@ -1855,6 +1856,19 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
               </div>
               <div className="space-y-2 max-w-lg mx-auto">
                 <h4 className={`text-base font-bold ${isLight ? 'text-zinc-900' : 'text-white'}`}>暂未发现可联动的小米音箱设备</h4>
+                {miotConfig.isCredentialsDead && (
+                  <div className={`p-3 rounded-xl border text-xs text-left space-y-1 ${
+                    isLight ? 'bg-rose-50 border-rose-200 text-rose-900' : 'bg-rose-500/10 border-rose-500/20 text-rose-200'
+                  }`}>
+                    <p className="font-semibold flex items-center gap-1.5">
+                      <XCircle className="w-3.5 h-3.5 flex-shrink-0" />
+                      小米绑定已失效（passToken 已过期或被小米吊销）
+                    </p>
+                    <p className={`text-[11px] leading-relaxed ${isLight ? 'text-rose-700' : 'text-rose-300/80'}`}>
+                      云端凭证无法自动续期（修改密码或触发风控均会导致）。请在【账号与凭据】中<b>重新扫码登录</b>恢复云端投播与语音联动。
+                    </p>
+                  </div>
+                )}
                 {miotConfig.isLoggedIn && (
                   <div className={`p-3 rounded-xl border text-xs text-left space-y-1 ${
                     isLight ? 'bg-amber-50 border-amber-200 text-amber-900' : 'bg-amber-500/10 border-amber-500/20 text-amber-200'

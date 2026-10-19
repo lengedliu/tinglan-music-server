@@ -86,14 +86,19 @@ export class TaskSchedulerEngine extends EventEmitter {
 
         if (shouldExecute) {
           console.log(`[TaskSchedulerEngine] 🚀 触发定时任务 [${task.title}] (${task.type}) -> 设备: ${task.targetDid}`);
-          await this.executeTask(task);
 
+          // [P0 Race Fix] Mark lastExecutedAt (and disable one-off tasks) BEFORE
+          // awaiting executeTask. executeTask can easily run longer than the 15s
+          // tick interval (TTS multi-channel retries take 1.5-2s per channel),
+          // and the next tick used to re-fire the same task in the same minute.
           task.lastExecutedAt = nowIso;
           if (task.type === 'sleep_timer' || (!task.repeatDays || task.repeatDays.length === 0)) {
             // One-off task disables itself upon completion
             task.isEnabled = false;
           }
           scheduledTaskRepository.upsertTask(task);
+
+          await this.executeTask(task);
           this.emit('taskExecuted', task);
         }
       } catch (err: any) {

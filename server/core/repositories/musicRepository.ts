@@ -292,6 +292,49 @@ export class MusicRepository {
   }
 
   /**
+   * [P0 Data-Loss Fix] Synchronous flush of any pending debounced catalog writes.
+   * The 800ms debounce timers were previously killed by process.exit() in the
+   * SIGINT/SIGTERM handlers — the last catalog/playlist changes were lost on
+   * every Ctrl+C. Called from the shutdown hooks in server.ts.
+   */
+  public flushPendingWritesSync(): void {
+    const hadPendingSongs = this.songsPersistTimer !== null;
+    const hadPendingPlaylists = this.playlistsPersistTimer !== null;
+    if (this.songsPersistTimer) {
+      clearTimeout(this.songsPersistTimer);
+      this.songsPersistTimer = null;
+    }
+    if (this.playlistsPersistTimer) {
+      clearTimeout(this.playlistsPersistTimer);
+      this.playlistsPersistTimer = null;
+    }
+    if (hadPendingSongs && !this.isBatchMode && !this.isPersistingSongs) {
+      const tmpFile = `${this.songsFile}.tmp.${Date.now()}`;
+      try {
+        fs.writeFileSync(tmpFile, JSON.stringify(this.songs, null, 2), 'utf-8');
+        fs.renameSync(tmpFile, this.songsFile);
+      } catch (err: any) {
+        console.error('[MusicRepository] Shutdown flush (songs) failed:', err?.message);
+        try {
+          if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
+        } catch {}
+      }
+    }
+    if (hadPendingPlaylists && !this.isPersistingPlaylists) {
+      const tmpFile = `${this.playlistsFile}.tmp.${Date.now()}`;
+      try {
+        fs.writeFileSync(tmpFile, JSON.stringify(this.playlists, null, 2), 'utf-8');
+        fs.renameSync(tmpFile, this.playlistsFile);
+      } catch (err: any) {
+        console.error('[MusicRepository] Shutdown flush (playlists) failed:', err?.message);
+        try {
+          if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
+        } catch {}
+      }
+    }
+  }
+
+  /**
    * Atomic asynchronous persistence using temporary file and rename
    */
   public async persistSongsAsync(): Promise<void> {

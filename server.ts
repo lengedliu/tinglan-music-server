@@ -13,6 +13,7 @@ import {
   flushAllPendingWritesSync,
   configureStoragePaths
 } from './server/storage/jsonStorage.js';
+import { encryptSecret } from './server/secureVault.js';
 import { initSqliteDatabase } from './server/storage/sqliteInit.js';
 import { multiDbManager, MultiDbConfig } from './server/storage/multiDbClient.js';
 import {
@@ -105,7 +106,8 @@ process.on('unhandledRejection', (reason: any) => {
 });
 
 const app = express();
-const PORT = 3000;
+// PORT overridable via environment (defaults to 3000)
+const PORT = Math.max(1, Math.min(65535, parseInt(process.env.PORT || '3000', 10) || 3000));
 const SERVER_START_TIME = Date.now();
 const API_KEY = process.env.API_KEY || '';
 
@@ -205,6 +207,9 @@ const defaultAdminUser = {
   username: 'admin',
   email: 'admin@tinglan.audio',
   passwordHash: bcrypt.hashSync('admin123', 10),
+  // [P0] Encrypted Subsonic password copy so token auth (t = md5(password + s))
+  // works for Subsonic clients on fresh installs without a prior web login
+  subsonicPasswordEnc: encryptSecret('admin123'),
   role: 'admin',
   avatarUrl: DEFAULT_ADMIN_USER_AVATAR,
   createdAt: new Date().toISOString()
@@ -554,13 +559,36 @@ app.use('/api', createAuthMiddleware({
 }));
 
 // Flush writes on shutdown
-process.on('beforeExit', flushAllPendingWritesSync);
+// [P0 Data-Loss Fix] The previous handlers only flushed jsonStorage's 200ms-debounced
+// JSON writes. The SQLite wrapper's 400ms save timer and musicRepository's 800ms
+// debounce were killed by process.exit(0) — the last play history / favorites /
+// logs / catalog changes were lost on every Ctrl+C. Flush everything here,
+// synchronously ('exit' only permits sync operations), plus an 'exit' safety net.
+function flushAllDataOnShutdown() {
+  try {
+    flushAllPendingWritesSync();
+  } catch (err: any) {
+    console.error('[Shutdown] jsonStorage flush error:', err?.message);
+  }
+  try {
+    sqliteDb?.saveSync();
+  } catch (err: any) {
+    console.error('[Shutdown] SQLite flush error:', err?.message);
+  }
+  try {
+    musicRepository.flushPendingWritesSync();
+  } catch (err: any) {
+    console.error('[Shutdown] musicRepository flush error:', err?.message);
+  }
+}
+process.on('beforeExit', flushAllDataOnShutdown);
+process.on('exit', flushAllDataOnShutdown);
 process.on('SIGINT', () => {
-  flushAllPendingWritesSync();
+  flushAllDataOnShutdown();
   process.exit(0);
 });
 process.on('SIGTERM', () => {
-  flushAllPendingWritesSync();
+  flushAllDataOnShutdown();
   process.exit(0);
 });
 
@@ -789,6 +817,10 @@ const {
   isSafeRemoteStreamUrl: (url) => isSafeRemoteStreamUrl(url, navidromeConfig.serverUrl),
   getSubsonicAuthQuery,
   getSubsonicPassAuthQuery,
+  // [P0 Security Fix] the /api/stream & /api/tts route families self-verify access
+  // (HMAC stream token / JWT / isAuthRequiredForRequest) — provide the material here
+  jwtSecret: JWT_SECRET,
+  isAuthRequiredForRequest: (req) => isAuthRequiredForRequest(req, () => securitySettings),
   logCastAction: (log) => {
     castLogs.unshift(log);
     if (castLogs.length > 50) castLogs.pop();
@@ -805,7 +837,13 @@ const {
 app.use(streamRouter);
 
 // 4. TTS Engine & Radio & Phase 3 Automation & System Backup & AI Hub
-app.use('/api/tts', createTtsRouter());
+// [P0 Security Fix] /api/tts/* self-verifies access — wire the verification material
+ttsEngine.setStreamTokenFactory((subject, ttlSeconds) => generateStreamToken(subject, JWT_SECRET, ttlSeconds || 600));
+app.use('/api/tts', createTtsRouter({
+  jwtSecret: JWT_SECRET,
+  verifyStreamToken: (subjectId, token) => verifyStreamToken(subjectId, token, JWT_SECRET),
+  isAuthRequiredForRequest: (req) => isAuthRequiredForRequest(req, () => securitySettings)
+}));
 app.use('/api/ai', createAiRoutes());
 app.use('/api/skill', createSkillRouter());
 app.use('/api/fetcher', createFetcherRoutes());

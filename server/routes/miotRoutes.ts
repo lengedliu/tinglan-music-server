@@ -17,7 +17,7 @@ import { xiaomiPassport } from '../xiaomiPassport.js';
 import { xiaomiCircuitBreaker } from '../circuitBreaker.js';
 import { minaWsClient } from '../minaWebSocket.js';
 import { voiceCommandService } from '../voiceCommandService.js';
-import { miotRpcEngine } from '../miotRpc.js';
+import { miotRpcEngine, buildMiotCloudAuth } from '../miotRpc.js';
 import { appEventBus } from '../core/eventBus.js';
 import {
   castLogs,
@@ -237,7 +237,7 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
   router.post('/login', async (req: Request, res: Response) => {
     if (!checkMiotAdminPermission(req, res)) return;
 
-    const { mode, userId, serviceToken, miUser, miPassword, ip, token, did } = req.body;
+    const { mode, userId, serviceToken, miUser, miPassword, ip, token, did, captchaCode, captchaIck } = req.body;
     const miotConfig = getMiotConfig();
 
     if (mode === 'token' || (ip && token)) {
@@ -390,6 +390,8 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
       miotConfig.miUser = miUser || `uid_${cleanUid}`;
       miotConfig.isLoggedIn = true;
       miotConfig.bindMode = 'account';
+      // [Fix] A fresh binding means fresh credentials — clear any dead marker
+      miotConfig.isCredentialsDead = false;
 
       if (isMicoValid && activeServiceToken) {
         try {
@@ -443,32 +445,79 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
     }
 
     try {
-      const authResult = await authenticateXiaomiPassport(miUser, miPassword);
+      const authResult = await authenticateXiaomiPassport(miUser, miPassword, {
+        captchaCode: captchaCode ? String(captchaCode).trim() : undefined,
+        captchaIck: captchaIck ? String(captchaIck).trim() : undefined
+      });
       if (!authResult.success) {
-        return res.status(401).json({ success: false, error: authResult.error || '小米账号登录鉴权失败' });
+        // [Fix f] Surface captcha / 2FA challenge details so the client can
+        // complete the slider verification loop instead of a dead end
+        return res.status(401).json({
+          success: false,
+          error: authResult.error || '小米账号登录鉴权失败',
+          code: authResult.code,
+          captchaUrl: authResult.captchaUrl,
+          notificationUrl: authResult.notificationUrl
+        });
       }
 
+      // [Fix a] Wire domain-correct credentials. authenticateXiaomiPassport returns
+      // the raw passport result: stsTokens.micoapi is the Mina-domain token and
+      // stsTokens.xiaomiio the MIoT-domain token. The previous wiring read
+      // non-existent result fields (micoServiceToken/xiaomiioServiceToken) and
+      // fell back to stuffing the micoapi token into the xiaomiio fields.
+      const micoToken = String(authResult.stsTokens?.micoapi || authResult.serviceToken || '').trim();
+      const ioToken = String(authResult.stsTokens?.xiaomiio || '').trim();
+
       miotConfig.userId = authResult.userId;
-      miotConfig.serviceToken = authResult.micoServiceToken || authResult.serviceToken || '';
-      miotConfig.micoServiceToken = authResult.micoServiceToken || authResult.serviceToken || '';
-      miotConfig.miotServiceToken = authResult.xiaomiioServiceToken || authResult.serviceToken || '';
-      miotConfig.xiaomiioServiceToken = authResult.xiaomiioServiceToken || authResult.serviceToken || '';
+      miotConfig.serviceToken = micoToken;
+      miotConfig.micoServiceToken = micoToken;
+      miotConfig.xiaomiioServiceToken = ioToken;
+      miotConfig.xiaomiioToken = ioToken;
+      miotConfig.miotServiceToken = ioToken;
       miotConfig.passToken = authResult.passToken;
-      miotConfig.ssecurity = authResult.ssecurity;
+      // ssecurity is domain-scoped: mico secret pairs with mico token, io secret with io token
+      miotConfig.ssecurity = authResult.ssecurity || '';
+      if (authResult.xiaomiioSsecurity) miotConfig.xiaomiioSsecurity = authResult.xiaomiioSsecurity;
+      if (authResult.cUserId) (miotConfig as any).cUserId = authResult.cUserId;
       miotConfig.miUser = miUser;
       miotConfig.isLoggedIn = true;
       miotConfig.bindMode = 'account';
+      // [Fix] A fresh binding means fresh credentials — clear any dead marker
+      miotConfig.isCredentialsDead = false;
 
-      if (authResult.devices && authResult.devices.length > 0) {
-        deviceRepository.setDevices(authResult.devices);
-      }
       ensureValidActiveDeviceId(miotConfig, setMiotConfig);
       setMiotConfig(miotConfig);
 
-      if (authResult.userId && (authResult.micoServiceToken || authResult.serviceToken)) {
+      if (authResult.userId && micoToken) {
         try {
-          minaWsClient.connect(authResult.userId, authResult.micoServiceToken || authResult.serviceToken!, miotConfig.activeDeviceId || '');
+          minaWsClient.connect(authResult.userId, micoToken, miotConfig.activeDeviceId || '');
         } catch {}
+      }
+
+      // [Fix] Password login previously never synced the cloud device list
+      // (authResult.devices does not exist on the passport result) — resolve now,
+      // same as the cookie/QR modes.
+      try {
+        const resolvePromise = xiaoaiResolverEngine.resolveDevices({
+          userId: authResult.userId,
+          micoServiceToken: micoToken || undefined,
+          miotServiceToken: ioToken || undefined,
+          ssecurity: miotConfig.xiaomiioSsecurity || miotConfig.ssecurity,
+          existingDevices: deviceRepository.getAllDevices(),
+          activeStreamIps: Array.from(activeStreamIps)
+        });
+        const timeoutPromise = new Promise<any>((resolve) =>
+          setTimeout(() => resolve({ xiaoAiDevices: [] }), 8000)
+        );
+        const resolveResult = await Promise.race([resolvePromise, timeoutPromise]);
+        if (resolveResult.xiaoAiDevices && resolveResult.xiaoAiDevices.length > 0) {
+          deviceRepository.setDevices(resolveResult.xiaoAiDevices);
+          ensureValidActiveDeviceId(miotConfig, setMiotConfig);
+          setMiotConfig(miotConfig);
+        }
+      } catch (err: any) {
+        console.warn('Auto resolve devices error on password login:', err.message);
       }
 
       addCastLog({
@@ -503,7 +552,13 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
     miotConfig.micoServiceToken = '';
     miotConfig.miotServiceToken = '';
     miotConfig.xiaomiioServiceToken = '';
+    miotConfig.xiaomiioToken = '';
     miotConfig.passToken = '';
+    // [Fix c] Also purge domain secrets and identifiers that previously survived
+    // logout (ssecurity entries were even left in plaintext on disk)
+    miotConfig.ssecurity = '';
+    miotConfig.xiaomiioSsecurity = '';
+    delete (miotConfig as any).cUserId;
     setMiotConfig(miotConfig);
 
     addCastLog({
@@ -544,21 +599,25 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
       let primaryToken = checkRes.serviceToken || '';
       let micoServiceToken = effectiveSid === 'micoapi' ? primaryToken : undefined;
       let miotServiceToken = effectiveSid === 'micoapi' ? undefined : primaryToken;
-      let ssecurity = checkRes.ssecurity || '';
+      // [Fix b] ssecurity is domain-scoped. The previous single-field logic let
+      // the micoapi exchange overwrite the xiaomiio secret (or vice versa),
+      // producing mismatched RC4 signature pairs. Track both domains explicitly.
+      let micoSsecurity = effectiveSid === 'micoapi' ? (checkRes.ssecurity || '') : '';
+      let ioSsecurity = effectiveSid === 'micoapi' ? '' : (checkRes.ssecurity || '');
 
       if (checkRes.userId && checkRes.passToken) {
         if (!micoServiceToken) {
           try {
             const micoTokenRes = await xiaomiPassport.fetchAdditionalStsToken(checkRes.userId, checkRes.passToken, 'micoapi');
             if (micoTokenRes.serviceToken) micoServiceToken = micoTokenRes.serviceToken;
-            if (micoTokenRes.ssecurity) ssecurity = micoTokenRes.ssecurity;
+            if (micoTokenRes.ssecurity) micoSsecurity = micoTokenRes.ssecurity;
           } catch {}
         }
         if (!miotServiceToken) {
           try {
             const ioTokenRes = await xiaomiPassport.fetchAdditionalStsToken(checkRes.userId, checkRes.passToken, 'xiaomiio');
             if (ioTokenRes.serviceToken) miotServiceToken = ioTokenRes.serviceToken;
-            if (ioTokenRes.ssecurity && !ssecurity) ssecurity = ioTokenRes.ssecurity;
+            if (ioTokenRes.ssecurity) ioSsecurity = ioTokenRes.ssecurity;
           } catch {}
         }
       }
@@ -575,12 +634,18 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
       miotConfig.micoServiceToken = micoServiceToken;
       miotConfig.miotServiceToken = miotServiceToken;
       miotConfig.xiaomiioServiceToken = miotServiceToken;
+      miotConfig.xiaomiioToken = miotServiceToken;
       miotConfig.isMicoValid = Boolean(micoServiceToken);
-      miotConfig.ssecurity = ssecurity;
+      // Legacy single field: prefer the mico-domain secret (paired with
+      // micoServiceToken); fall back to the io secret when mico is absent
+      miotConfig.ssecurity = micoSsecurity || ioSsecurity;
+      if (ioSsecurity) miotConfig.xiaomiioSsecurity = ioSsecurity;
       miotConfig.passToken = checkRes.passToken;
       miotConfig.miUser = `uid_${checkRes.userId}`;
       miotConfig.isLoggedIn = true;
       miotConfig.bindMode = 'account';
+      // [Fix] A fresh binding means fresh credentials — clear any dead marker
+      miotConfig.isCredentialsDead = false;
       setMiotConfig(miotConfig);
 
       if (micoServiceToken) {
@@ -595,7 +660,7 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
           userId: checkRes.userId,
           micoServiceToken,
           miotServiceToken,
-          ssecurity,
+          ssecurity: micoSsecurity || ioSsecurity,
           existingDevices: deviceRepository.getAllDevices(),
           activeStreamIps: Array.from(activeStreamIps)
         });
@@ -659,8 +724,23 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
 
   router.post('/circuit-reset', (req: Request, res: Response) => {
     if (!checkMiotAdminPermission(req, res)) return;
+    // [Fix] Manual reset is also the escape hatch for a falsely-dead credential
+    // marker: give the refresh engine one more chance on the next 401.
+    const miotConfig = getMiotConfig();
+    let deadFlagCleared = false;
+    if (miotConfig.isCredentialsDead) {
+      miotConfig.isCredentialsDead = false;
+      setMiotConfig(miotConfig);
+      deadFlagCleared = true;
+    }
     xiaomiCircuitBreaker.reset();
-    res.json({ success: true, message: '风控熔断器已重置为正常就绪状态', status: xiaomiCircuitBreaker.getStatus() });
+    res.json({
+      success: true,
+      message: deadFlagCleared
+        ? '风控熔断器已重置，绑死凭证失效标记已解除（下次 401 将重试续期）'
+        : '风控熔断器已重置为正常就绪状态',
+      status: xiaomiCircuitBreaker.getStatus()
+    });
   });
 
   router.get('/cloud/snapshots', (req: Request, res: Response) => {
@@ -744,13 +824,7 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
     }
 
     const miotConfig = getMiotConfig();
-    const cloudAuth = (miotConfig.userId && miotConfig.serviceToken)
-      ? {
-          userId: miotConfig.userId,
-          serviceToken: miotConfig.xiaomiioServiceToken || miotConfig.serviceToken,
-          ssecurity: miotConfig.ssecurity
-        }
-      : undefined;
+    const cloudAuth = buildMiotCloudAuth(miotConfig);
 
     const result = await miotRpcEngine.getProperty(targetDev, Number(siid) || 2, Number(piid) || 1, cloudAuth);
     res.json(result);
@@ -765,13 +839,7 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
     }
 
     const miotConfig = getMiotConfig();
-    const cloudAuth = (miotConfig.userId && miotConfig.serviceToken)
-      ? {
-          userId: miotConfig.userId,
-          serviceToken: miotConfig.xiaomiioServiceToken || miotConfig.serviceToken,
-          ssecurity: miotConfig.ssecurity
-        }
-      : undefined;
+    const cloudAuth = buildMiotCloudAuth(miotConfig);
 
     const result = await miotRpcEngine.setProperty(targetDev, Number(siid) || 2, Number(piid) || 1, value, cloudAuth);
     res.json(result);
@@ -786,13 +854,7 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
     }
 
     const miotConfig = getMiotConfig();
-    const cloudAuth = (miotConfig.userId && miotConfig.serviceToken)
-      ? {
-          userId: miotConfig.userId,
-          serviceToken: miotConfig.xiaomiioServiceToken || miotConfig.serviceToken,
-          ssecurity: miotConfig.ssecurity
-        }
-      : undefined;
+    const cloudAuth = buildMiotCloudAuth(miotConfig);
 
     const result = await miotRpcEngine.executeAction(targetDev, Number(siid) || 3, Number(aiid) || 1, inArgs || [], cloudAuth);
     res.json(result);
@@ -808,17 +870,14 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
     }
 
     const miotConfig = getMiotConfig();
-    if (did && miotConfig.userId && miotConfig.serviceToken) {
+    const cloudAuth = buildMiotCloudAuth(miotConfig);
+    if (did && cloudAuth) {
       const result = await miotRpcEngine.executeAction(
         { did, ip, token },
         Number(siid) || 3,
         Number(aiid) || 1,
         inArgs || [],
-        {
-          userId: miotConfig.userId,
-          serviceToken: miotConfig.xiaomiioServiceToken || miotConfig.serviceToken,
-          ssecurity: miotConfig.ssecurity
-        }
+        cloudAuth
       );
       return res.json(result);
     }

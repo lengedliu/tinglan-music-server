@@ -122,27 +122,130 @@ export function verifyStreamToken(songId: string, token: string, jwtSecret: stri
   }
 }
 
-export function isSafeRemoteStreamUrl(urlString: string, navidromeServerUrl?: string): boolean {
+/**
+ * Normalize an IPv4 literal written in any common encoding
+ * (dotted decimal, pure decimal, 0x-hex, bare 8-digit hex, octal parts)
+ * into a standard dotted-decimal string, or null if not an IPv4 literal.
+ */
+function normalizeIpv4Literal(host: string): string | null {
+  const h = host.replace(/^\[|\]$/g, '').trim();
+  if (!h) return null;
+  // Dotted form (possibly with hex/octal parts) — normalize each part
+  if (h.includes('.')) {
+    const parts = h.split('.');
+    if (parts.length !== 4) return null;
+    const nums: number[] = [];
+    for (const part of parts) {
+      let n: number;
+      if (/^0x[0-9a-f]+$/i.test(part)) n = parseInt(part, 16);
+      else if (/^0[0-7]+$/.test(part) && part.length > 1) n = parseInt(part, 8);
+      else if (/^\d{1,10}$/.test(part)) n = parseInt(part, 10);
+      else return null;
+      if (isNaN(n) || n < 0 || n > 255) return null;
+      nums.push(n);
+    }
+    return nums.join('.');
+  }
+  // Single-integer forms: decimal / 0x-hex / bare 8-digit hex
+  if (/^\d{1,10}$/.test(h)) {
+    const n = parseInt(h, 10);
+    if (n > 0xffffffff) return null;
+    return [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.');
+  }
+  if (/^0x[0-9a-f]{1,8}$/i.test(h) || /^[0-9a-f]{8}$/i.test(h)) {
+    const n = parseInt(h.replace(/^0x/i, ''), 16);
+    if (n > 0xffffffff) return null;
+    return [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.');
+  }
+  return null;
+}
+
+function isBlockedIpV4(dotted: string): boolean {
+  const parts = dotted.split('.').map(Number);
+  if (parts.length !== 4 || parts.some(p => isNaN(p))) return false;
+  const [a, b] = parts;
+  // Loopback 127.0.0.0/8 (incl. 127.0.0.1 in every encoding)
+  if (a === 127) return true;
+  // Link-local 169.254.0.0/16 (incl. AWS/GCP/OpenStack metadata 169.254.169.254)
+  if (a === 169 && b === 254) return true;
+  // "This network" / unspecified 0.0.0.0/8
+  if (a === 0) return true;
+  // Alibaba Cloud metadata endpoint
+  if (dotted === '100.100.100.200') return true;
+  return false;
+}
+
+const BLOCKED_METADATA_HOSTNAMES = new Set([
+  'metadata.google.internal',
+  'metadata',
+  'metadata.goog',
+  'metadata.azure.internal'
+]);
+
+export function isSafeRemoteStreamUrl(urlString: string, _navidromeServerUrl?: string): boolean {
   try {
     if (!urlString || typeof urlString !== 'string') return false;
     const parsed = new URL(urlString.trim());
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
-    const hostname = parsed.hostname.toLowerCase();
-    
-    // Prohibit AWS / GCP / Cloud metadata endpoint SSRF attacks
-    if (
-      hostname === '169.254.169.254' ||
-      hostname === 'metadata.google.internal' ||
-      hostname === 'metadata'
-    ) {
+    const hostname = parsed.hostname.toLowerCase().replace(/\.+$/, '');
+    const bareHost = hostname.replace(/^\[|\]$/g, '');
+
+    // Block cloud metadata service hostnames (DNS forms)
+    if (BLOCKED_METADATA_HOSTNAMES.has(hostname) || BLOCKED_METADATA_HOSTNAMES.has(bareHost)) {
       return false;
     }
-    
-    // Allow local LAN IPs, localhost, .local, and user-configured remote servers
+
+    // Block localhost in every form (name, IPv4 loopback in every encoding, IPv6 loopback)
+    if (hostname === 'localhost' || hostname.endsWith('.localhost')) return false;
+    if (bareHost === '::1' || bareHost === '::' || bareHost.startsWith('::ffff:127.')) return false;
+
+    // Block IPv4 literals in any encoding that resolve to loopback / link-local / metadata ranges
+    const normalizedV4 = normalizeIpv4Literal(hostname);
+    if (normalizedV4 && isBlockedIpV4(normalizedV4)) return false;
+
+    // IPv6 link-local (fe80::/10) — used by some metadata/link-local services
+    if (/^fe[89ab][0-9a-f]?:/i.test(bareHost)) return false;
+
+    // NOTE: RFC1918 private ranges (10.x / 172.16-31.x / 192.168.x) stay ALLOWED by design —
+    // this is a self-hosted home music server whose Navidrome / NAS / radio sources commonly
+    // live on the same LAN. Only loopback, link-local and cloud-metadata targets are blocked.
     return true;
   } catch {
     return false;
   }
+}
+
+/**
+ * SSRF-safe fetch wrapper: follows redirects MANUALLY and re-validates every
+ * redirect target with isSafeRemoteStreamUrl, so an allowed URL cannot bounce
+ * to a blocked (metadata/loopback) target via 3xx.
+ */
+export async function ssrfSafeFetch(
+  url: string,
+  init: RequestInit & { maxRedirects?: number } = {}
+): Promise<globalThis.Response> {
+  const { maxRedirects = 3, ...fetchInit } = init;
+  let currentUrl = String(url || '');
+  let method = (fetchInit.method as string) || 'GET';
+
+  for (let hop = 0; hop <= maxRedirects; hop++) {
+    if (!isSafeRemoteStreamUrl(currentUrl)) {
+      throw new Error(`Blocked unsafe remote stream URL (SSRF guard): ${currentUrl}`);
+    }
+    const res = await fetch(currentUrl, { ...fetchInit, method, redirect: 'manual' });
+    if ([301, 302, 303, 307, 308].includes(res.status)) {
+      const location = res.headers.get('location');
+      if (!location) return res;
+      // Discard redirect body to release the socket
+      try { await res.arrayBuffer(); } catch {}
+      currentUrl = new URL(location, currentUrl).toString();
+      // 303 always converts to GET; 301/302 historically downgrade POST but keep HEAD/GET
+      if (res.status === 303 && method !== 'HEAD') method = 'GET';
+      continue;
+    }
+    return res;
+  }
+  throw new Error('Too many redirects while fetching remote stream (SSRF guard)');
 }
 
 export function createCsrfMiddleware() {
@@ -262,9 +365,10 @@ export function createAuthMiddleware(options: AuthMiddlewareOptions) {
     if (
       fullPath.startsWith('/api/stream') ||
       fullPath.startsWith('/api/tts') ||
-      fullPath.startsWith('/api/skill') ||
-      (fullPath.startsWith('/api/songs/') && (fullPath.endsWith('/stream') || fullPath.endsWith('/cover')))
+      fullPath.startsWith('/api/skill')
     ) {
+      // NOTE: These route families self-verify access inside their handlers
+      // (stream HMAC token / JWT / isAuthRequiredForRequest) — they are NOT open endpoints.
       return next();
     }
 

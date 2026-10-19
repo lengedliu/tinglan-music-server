@@ -76,6 +76,9 @@ class AutomationService {
   private scenes: AutomationScene[] = [];
   private logs: AutomationLog[] = [];
   private timer: NodeJS.Timeout | null = null;
+  // [P0 Race Fix] In-flight scene guard — executeScene can outlast the 30s tick
+  // interval (multi-device TTS retries + radio waits), previously causing double fires.
+  private inFlightScenes = new Set<string>();
   private actionHandler?: (scene: AutomationScene, context?: { serverHost?: string }) => Promise<{ success: boolean; message: string }>;
 
   constructor() {
@@ -243,6 +246,9 @@ class AutomationService {
           if (!isNaN(cronMin) && !isNaN(cronHour)) {
             if (currentMinute === cronMin && currentHour === cronHour) {
               // Avoid duplicate execution in the same minute
+              if (this.inFlightScenes.has(scene.id)) {
+                return;
+              }
               if (scene.lastRunTime) {
                 const lastRun = new Date(scene.lastRunTime);
                 if (
@@ -257,7 +263,19 @@ class AutomationService {
               }
 
               console.log(`[Automation Scheduler] ⏰ Cron Triggered: ${scene.name}`);
-              this.executeScene(scene, false);
+              // [P0 Race Fix] Pre-mark lastRunTime AND hold an in-flight guard
+              // BEFORE dispatching the (floating) async execution — a scene with
+              // several speakers can easily exceed the 30s tick interval,
+              // previously causing duplicate execution in the same minute.
+              scene.lastRunTime = now.toISOString();
+              this.inFlightScenes.add(scene.id);
+              this.executeScene(scene, false)
+                .catch(err => {
+                  console.error('[Automation Scheduler] Scene execution error:', err?.message || err);
+                })
+                .finally(() => {
+                  this.inFlightScenes.delete(scene.id);
+                });
             }
           }
         }
