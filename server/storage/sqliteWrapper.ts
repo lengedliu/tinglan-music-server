@@ -18,6 +18,12 @@ export class SqliteDatabaseWrapper {
   private queue: Array<() => void> = [];
   private saveTimeout: NodeJS.Timeout | null = null;
   private isDirty = false;
+  // [Fix B3] Mirror-write failures used to be plain console.warn noise, so a
+  // persistently broken mirror (schema drift, bad file) diverged from the JSON
+  // source of truth without anyone noticing. Count consecutive failures and
+  // raise ONE loud error when it is clearly systematic.
+  private consecutiveFailures = 0;
+  private divergenceAlarmRaised = false;
 
   constructor(filePath: string, onInitialized?: (db: SqliteDatabaseWrapper) => void) {
     this.filePath = filePath;
@@ -72,6 +78,32 @@ export class SqliteDatabaseWrapper {
     return this.isReady;
   }
 
+  // [Fix B3] Failure accounting: one loud divergence alarm after 10 consecutive
+  // failed statements, reset on the first success.
+  private noteFailure(context: string, err: any) {
+    this.consecutiveFailures++;
+    const detail = err?.message || String(err || '');
+    if (this.consecutiveFailures >= 10 && !this.divergenceAlarmRaised) {
+      this.divergenceAlarmRaised = true;
+      console.error(
+        `[SQLite] ⚠️ 10+ consecutive statement failures (${context}; last: ${detail}). ` +
+        'The SQLite mirror has silently diverged from the JSON source of truth — ' +
+        'recent writes may be LOST for anything restored from SQLite on boot. ' +
+        'Check data/tinglan.sqlite schema/permissions. Further failures are logged at debug level until a statement succeeds.'
+      );
+    } else if (this.divergenceAlarmRaised) {
+      // Keep the log stream quiet while the alarm is already raised
+      console.debug(`[SQLite] ${context} failed: ${detail}`);
+    } else {
+      console.warn(`[SQLite] ${context} failed:`, detail);
+    }
+  }
+
+  private noteSuccess() {
+    this.consecutiveFailures = 0;
+    this.divergenceAlarmRaised = false;
+  }
+
   public serialize(fn: () => void): this {
     if (!this.isReady) {
       this.queue.push(() => this.serialize(fn));
@@ -99,9 +131,11 @@ export class SqliteDatabaseWrapper {
         this.db.run(sql);
       }
       this.scheduleSave();
+      this.noteSuccess();
       if (callback) callback(null);
     } catch (err: any) {
       console.warn(`[SQLite] Run error on SQL: ${sql.slice(0, 80)}...`, err?.message);
+      this.noteFailure(`Run on ${sql.slice(0, 60)}`, err);
       if (callback) callback(err);
     }
     return this;
@@ -122,10 +156,12 @@ export class SqliteDatabaseWrapper {
       const hasRow = stmt.step();
       const row = hasRow ? stmt.getAsObject() : undefined;
       stmt.free();
+      this.noteSuccess();
       if (callback) callback(null, row);
       return row;
     } catch (err: any) {
       console.warn(`[SQLite] Get error on SQL: ${sql.slice(0, 80)}...`, err?.message);
+      this.noteFailure(`Get on ${sql.slice(0, 60)}`, err);
       if (callback) callback(err, undefined);
       return undefined;
     }
@@ -148,10 +184,12 @@ export class SqliteDatabaseWrapper {
         rows.push(stmt.getAsObject());
       }
       stmt.free();
+      this.noteSuccess();
       if (callback) callback(null, rows);
       return rows;
     } catch (err: any) {
       console.warn(`[SQLite] All error on SQL: ${sql.slice(0, 80)}...`, err?.message);
+      this.noteFailure(`All on ${sql.slice(0, 60)}`, err);
       if (callback) callback(err, []);
       return [];
     }

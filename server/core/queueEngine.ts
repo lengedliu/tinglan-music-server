@@ -54,6 +54,14 @@ export class QueueEngine extends EventEmitter {
   private pauseDispatcher: PauseDispatcherFn | null = null;
   private songProvider: SongProviderFn | null = null;
   private isTransitioning: boolean = false;
+  /**
+   * [Fix B4] Monotonic transition generation. JumpToState is released the moment
+   * its cast dispatch SETTLES (not on a blind 1.5s timer); if someone
+   * force-unlocks mid-flight (explicit skip / sync / prev), the superseded
+   * transition detects the generation bump after its await and skips its
+   * post-processing instead of clobbering the successor's timers.
+   */
+  private transitionGen: number = 0;
   private preheatHandler: ((song: Song, targetDid: string, isDeep?: boolean) => void) | null = null;
   private deepPreheatDoneForIndex: number = -1;
   private stateFilePath: string;
@@ -198,7 +206,8 @@ export class QueueEngine extends EventEmitter {
     if (mode) this.loopMode = mode;
 
     this.clearTimer();
-    this.isTransitioning = false;
+    // [Fix B4] External sync supersedes any in-flight transition
+    this.forceUnlockTransition();
 
     const isLive = this.isLiveStream(song);
     const songs = allSongs && allSongs.length > 0 ? allSongs : (this.songProvider ? this.songProvider() : []);
@@ -612,6 +621,12 @@ export class QueueEngine extends EventEmitter {
 
     console.log(`[QueueEngine] 🔄 触发跨音箱无缝流转: 从【${oldTargetName || oldTargetDid}】->【${newTargetDeviceName || newTargetDid}】，保持曲目《${currentSong?.title}》，接续进度 ${elapsedSeconds}s`);
 
+    // [Fix B4] Handover supersedes any in-flight transition; capture our
+    // generation so a jumpTo started during our dispatch await owns the
+    // post-processing instead of both racing on the schedules.
+    this.forceUnlockTransition();
+    const gen = this.transitionGen;
+
     // 1. Pause / Stop playback on the old speaker
     if (oldTargetDid && oldTargetDid !== newTargetDid && this.pauseDispatcher) {
       try {
@@ -633,6 +648,17 @@ export class QueueEngine extends EventEmitter {
       } catch (err: any) {
         dispatchRes = { success: false, error: err.message };
       }
+    }
+
+    // [Fix B4] A newer transition took over while we were dispatching
+    if (gen !== this.transitionGen) {
+      console.log('[QueueEngine] ♻️ 检测到流转途中出现更新的切歌指令，放弃过期后续处理');
+      return {
+        success: dispatchRes.success,
+        message: dispatchRes.error ? `流转下发异常，已被更新的切歌指令接管: ${dispatchRes.error}` : '流转已被更新的切歌指令接管',
+        elapsedSeconds,
+        song: currentSong
+      };
     }
 
     // 4. Update playback timer and remaining duration
@@ -663,7 +689,7 @@ export class QueueEngine extends EventEmitter {
     }
 
     if (force) {
-      this.isTransitioning = false;
+      this.forceUnlockTransition();
     }
 
     let nextIdx = this.currentIndex;
@@ -697,7 +723,8 @@ export class QueueEngine extends EventEmitter {
       return { success: false, song: null, message: '播放队列为空' };
     }
 
-    this.isTransitioning = false;
+    // [Fix B4] prev is an explicit user action mid-transition — supersede, not break
+    this.forceUnlockTransition();
 
     let prevIdx = 0;
     if (this.loopMode === 'shuffle') {
@@ -725,7 +752,12 @@ export class QueueEngine extends EventEmitter {
       return { success: true, song: this.queue[this.currentIndex], message: '正在切换中' };
     }
 
+    // [Fix B4] The lock is now released when the cast dispatch SETTLES, not on
+    // a blind 1.5s timer. A hung dispatch is bounded by the failsafe ceiling
+    // below so the engine can never wedge permanently.
     this.isTransitioning = true;
+    this.transitionGen++;
+    const gen = this.transitionGen;
     this.clearTimer();
 
     this.currentIndex = Math.max(0, Math.min(index, this.queue.length - 1));
@@ -740,11 +772,33 @@ export class QueueEngine extends EventEmitter {
 
     let dispatchRes: { success: boolean; message?: string; error?: string } = { success: true, message: '已切歌并下发投播' };
     if (this.castDispatcher && this.targetDid) {
+      const DISPATCH_FAILSAFE_MS = 15000;
       try {
-        dispatchRes = await this.castDispatcher(song, this.targetDid);
+        // [Fix B4] Race the dispatch against a failsafe ceiling: a hung
+        // network call used to leave the only protection (the transition
+        // flag) expired after 1.5s while the watchdog kept firing next() into
+        // an in-flight transition. Now the lock holds until settle OR ceiling.
+        dispatchRes = await Promise.race([
+          this.castDispatcher(song, this.targetDid),
+          new Promise<{ success: false; error: string }>(resolve =>
+            setTimeout(() => resolve({ success: false, error: `投播下发超过 ${DISPATCH_FAILSAFE_MS / 1000}s 未响应（已放行后续指令，引擎将继续看护）` }), DISPATCH_FAILSAFE_MS)
+          )
+        ]);
       } catch (err: any) {
         dispatchRes = { success: false, error: err.message };
       }
+    }
+
+    // [Fix B4] A force-unlock (explicit skip / external sync) happened while we
+    // awaited the dispatch: the successor owns the engine state now. Skip our
+    // post-processing so we cannot clobber its timers or schedules.
+    if (gen !== this.transitionGen) {
+      console.log('[QueueEngine] ♻️ 检测到本次切歌已被更新的指令取代，放弃过期后续处理');
+      return {
+        success: dispatchRes.success,
+        song,
+        message: dispatchRes.message || `已切换至第 ${this.currentIndex + 1}/${this.queue.length} 首：《${song.title}》`
+      };
     }
 
     if (!isLive) {
@@ -757,9 +811,10 @@ export class QueueEngine extends EventEmitter {
     }
     this.emit('change', this.getStatus());
 
-    setTimeout(() => {
-      this.isTransitioning = false;
-    }, 1500);
+    // [Fix B4] Settled release (was: blind setTimeout 1500ms). This whole block
+    // after the await is synchronous, so the lock liftoff is atomic with the
+    // fresh autoAdvance/heartbeat scheduling.
+    this.isTransitioning = false;
 
     return {
       success: dispatchRes.success,
@@ -981,6 +1036,17 @@ export class QueueEngine extends EventEmitter {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
+  }
+
+  /**
+   * [Fix B4] Force-release the transition lock from OUTSIDE an in-flight
+   * transition (explicit user skip / external sync / prev). Bumping the
+   * generation causes the superseded transition to abandon its post-processing
+   * after its dispatch await settles.
+   */
+  private forceUnlockTransition() {
+    this.isTransitioning = false;
+    this.transitionGen++;
   }
 
   private clearTimer() {

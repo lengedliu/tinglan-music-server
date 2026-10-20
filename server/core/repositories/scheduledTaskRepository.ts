@@ -60,33 +60,48 @@ export class ScheduledTaskRepository {
   private syncFromSqlite() {
     if (!this.sqliteDb) return;
     try {
+      // [Fix B3] Used to BLINDLY overwrite every task loaded from JSON with the
+      // SQLite row. When the mirror had silently failed to record a write
+      // (schema drift / permission error), the stale SQLite row clobbered the
+      // fresher JSON state on every boot. Merge instead: keep whichever record
+      // has the newer updatedAt, and reconcile JSON so both stores converge.
+      // IDs absent from SQLite are untouched — deletion always happens in both
+      // stores (and mirror failures are now loudly alarmed by the wrapper).
       this.sqliteDb.all('SELECT * FROM scheduled_tasks', (err: any, rows: any[]) => {
-        if (!err && Array.isArray(rows) && rows.length > 0) {
-          rows.forEach(r => {
-            const task: ScheduledTask = {
-              id: r.id,
-              userId: r.user_id,
-              title: r.title,
-              type: r.type,
-              cronExpr: r.cron_expr,
-              targetTime: r.target_time,
-              targetDid: r.target_did,
-              targetDeviceName: r.target_device_name,
-              playlistId: r.playlist_id,
-              songId: r.song_id,
-              action: r.action,
-              volume: r.volume,
-              fadeDurationSeconds: r.fade_duration_seconds,
-              repeatDays: r.repeat_days ? JSON.parse(r.repeat_days) : undefined,
-              isEnabled: Boolean(r.is_enabled),
-              lastExecutedAt: r.last_executed_at,
-              nextRunAt: r.next_run_at,
-              ttsText: r.tts_text,
-              createdAt: r.created_at,
-              updatedAt: r.updated_at
-            };
+        if (err || !Array.isArray(rows)) return;
+        let merged = 0;
+        for (const r of rows) {
+          const task: ScheduledTask = {
+            id: r.id,
+            userId: r.user_id,
+            title: r.title,
+            type: r.type,
+            cronExpr: r.cron_expr,
+            targetTime: r.target_time,
+            targetDid: r.target_did,
+            targetDeviceName: r.target_device_name,
+            playlistId: r.playlist_id,
+            songId: r.song_id,
+            action: r.action,
+            volume: r.volume,
+            fadeDurationSeconds: r.fade_duration_seconds,
+            repeatDays: r.repeat_days ? JSON.parse(r.repeat_days) : undefined,
+            isEnabled: Boolean(r.is_enabled),
+            lastExecutedAt: r.last_executed_at,
+            nextRunAt: r.next_run_at,
+            ttsText: r.tts_text,
+            createdAt: r.created_at,
+            updatedAt: r.updated_at
+          };
+          const existing = this.tasks.get(task.id);
+          if (!existing || String(task.updatedAt || '') >= String(existing.updatedAt || '')) {
             this.tasks.set(task.id, task);
-          });
+            merged++;
+          }
+        }
+        if (merged > 0) {
+          this.persistAsync();
+          console.log(`[ScheduledTaskRepository] 🔁 从 SQLite 镜像合并了 ${merged} 条任务记录 (按 updatedAt 取新, 严格不回退)`);
         }
       });
     } catch (e) {
