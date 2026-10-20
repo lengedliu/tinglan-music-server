@@ -8,13 +8,32 @@ export function createSystemBackupRouter(): Router {
   const dataDir = path.join(process.cwd(), 'data');
   const snapshotsDir = path.join(dataDir, 'backups');
 
+  // [Fix N2] All backup endpoints are privileged: export hands out config
+  // secrets (Xiaomi tokens, NAS credentials) and restore can overwrite
+  // security.json (persistently disabling authentication). They previously had
+  // NO role check — any self-registered low-priv user (or anonymous visitor when
+  // auth was toggled off) could exfiltrate or rewrite the whole system config.
+  // Admin login is required even when the system is in no-auth mode.
+  const requireAdmin = (req: Request, res: Response): boolean => {
+    const clientUser = (req as any).user;
+    if (!clientUser || clientUser.role !== 'admin') {
+      res.status(403).json({
+        success: false,
+        error: '权限不足：系统备份导出/恢复属于管理员专属操作，请以管理员账号登录后使用'
+      });
+      return false;
+    }
+    return true;
+  };
+
   if (!fs.existsSync(snapshotsDir)) {
     try { fs.mkdirSync(snapshotsDir, { recursive: true }); } catch {}
   }
 
   // GET /api/system/export-backup - 全量系统配置与家庭数据导出 JSON
-  router.get('/export-backup', (_req: Request, res: Response) => {
+  router.get('/export-backup', (req: Request, res: Response) => {
     try {
+      if (!requireAdmin(req, res)) return;
       const backupData = {
         version: '3.5.0',
         exportedAt: new Date().toISOString(),
@@ -43,6 +62,7 @@ export function createSystemBackupRouter(): Router {
   // POST /api/system/restore-backup - 导入并恢复全量家庭灾备 JSON
   router.post('/restore-backup', (req: Request, res: Response) => {
     try {
+      if (!requireAdmin(req, res)) return;
       const backupData = req.body;
       if (!backupData || typeof backupData !== 'object') {
         res.status(400).json({ success: false, error: '无效的备份数据格式' });
@@ -111,8 +131,9 @@ export function createSystemBackupRouter(): Router {
   });
 
   // GET /api/system/snapshots - 获取本地灾备快照列表
-  router.get('/snapshots', (_req: Request, res: Response) => {
+  router.get('/snapshots', (req: Request, res: Response) => {
     try {
+      if (!requireAdmin(req, res)) return;
       if (!fs.existsSync(snapshotsDir)) {
         return res.json({ success: true, snapshots: [] });
       }
@@ -134,8 +155,9 @@ export function createSystemBackupRouter(): Router {
   });
 
   // POST /api/system/snapshots/create - 生成全量 DR 灾备快照
-  router.post('/snapshots/create', (_req: Request, res: Response) => {
+  router.post('/snapshots/create', (req: Request, res: Response) => {
     try {
+      if (!requireAdmin(req, res)) return;
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const filename = `dr_snapshot_${timestamp}.json`;
       const filePath = path.join(snapshotsDir, filename);

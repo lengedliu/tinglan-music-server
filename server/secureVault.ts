@@ -40,10 +40,14 @@ function getMasterKey(): Buffer {
     masterKeyCache = newKey;
     return masterKeyCache;
   } catch (err) {
-    console.warn('[SecureVault] Failed to access key file, falling back to process-derived key:', err);
+    // [Fix N4] Fail closed: the previous fallback derived the key from a
+    // machine-known string (`sha256("tinglan-music-vault-" + cwd)`), which made
+    // the entire vault decorative for anyone who could obtain a disk image.
+    // Use an EPHEMERAL random key instead — secrets stay unreadable to
+    // outsiders, at the cost of a restart-rollover for this degraded session.
+    console.error('[SecureVault] ⚠️ Key file unusable (' + (err as any)?.message + '). Using an EPHEMERAL in-memory key: secrets encrypted in this session become unreadable after restart. Fix data/ directory permissions!');
     if (!masterKeyCache) {
-      // Fallback deterministic fallback key based on machine context
-      masterKeyCache = crypto.createHash('sha256').update(`tinglan-music-vault-${process.cwd()}`).digest();
+      masterKeyCache = crypto.randomBytes(32);
     }
     return masterKeyCache;
   }

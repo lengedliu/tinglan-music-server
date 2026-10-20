@@ -1,6 +1,50 @@
 import fs from 'fs';
 import path from 'path';
 import { logEngine } from './logEngine.js';
+import { ssrfSafeFetch } from './security.js';
+
+// [Fix N3] Hard caps: the previous implementation slurped the entire response
+// via arrayBuffer() with only a >100KB lower bound — a compromised/hostile
+// upstream (or one returning a multi-GB body) could OOM the server.
+const MAX_AUDIO_BYTES = 200 * 1024 * 1024; // 200 MB ceiling for audio payloads
+const MAX_LRC_BYTES = 2 * 1024 * 1024;     // 2 MB ceiling for lyrics payloads
+
+/**
+ * [Fix N3] Fetch through the SSRF guard and stream-cap the response body.
+ * The download URLs come from third-party search API RESPONSE BODIES, i.e.
+ * potentially attacker-influenced content — never fetch them bare.
+ */
+async function fetchCapped(url: string, timeoutMs: number, maxBytes: number): Promise<Buffer | null> {
+  let res: Response;
+  try {
+    res = await ssrfSafeFetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+  } catch (err: any) {
+    console.warn(`[RealMusicDownloader] SSRF-guarded fetch blocked/failed: ${err.message}`);
+    return null;
+  }
+  if (!res.ok || !res.body) return null;
+  const declared = Number(res.headers.get('content-length') || 0);
+  if (declared > maxBytes) return null;
+  const chunks: Buffer[] = [];
+  let total = 0;
+  const reader = res.body.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        try { await reader.cancel(); } catch {}
+        console.warn(`[RealMusicDownloader] Response exceeded ${maxBytes} bytes cap — aborted`);
+        return null;
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } catch {
+    return null;
+  }
+  return Buffer.concat(chunks);
+}
 
 export interface RealDownloadResult {
   success: boolean;
@@ -60,7 +104,7 @@ export class RealMusicDownloader {
     // 1. 尝试调用线上开箱可用高高可用音源解析 API 搜索真实音频流
     try {
       const searchUrl = `https://music-api.gokudou.workers.dev/search?keyword=${encodeURIComponent(`${cleanTitle} ${cleanArtist !== '华语音乐' ? cleanArtist : ''}`)}`;
-      const searchRes = await fetch(searchUrl, { signal: AbortSignal.timeout(6000) }).catch(() => null);
+      const searchRes = await ssrfSafeFetch(searchUrl, { signal: AbortSignal.timeout(6000) }).catch(() => null);
 
       if (searchRes && searchRes.ok) {
         const data = await searchRes.json().catch(() => null);
@@ -68,19 +112,17 @@ export class RealMusicDownloader {
 
         if (match && (match.url || match.audioUrl || match.downloadUrl)) {
           const audioUrl = match.url || match.audioUrl || match.downloadUrl;
-          console.log(`[RealMusicDownloader] 📥 匹配到真实音源直链，开始拉取网络字节流: ${audioUrl.slice(0, 60)}...`);
+          console.log(`[RealMusicDownloader] 📥 匹配到真实音源直链，开始拉取网络字节流: ${String(audioUrl).slice(0, 60)}...`);
 
-          const audioRes = await fetch(audioUrl, { signal: AbortSignal.timeout(15000) });
-          if (audioRes.ok) {
-            const buffer = Buffer.from(await audioRes.arrayBuffer());
-            if (buffer.length > 100000) { // 确保大于 100KB 为有效音频
-              fs.writeFileSync(params.targetFilePath, buffer);
-              downloadedAudio = true;
-              sourceUsed = match.source || '云端高保真音源库';
-              bitrateText = match.bitrate || 'FLAC 无损 1411kbps';
-              fileFormat = match.format || 'FLAC 24bit 无损';
-              console.log(`[RealMusicDownloader] ✅ 真实音频落盘成功: ${params.targetFilePath} (${(buffer.length / 1024 / 1024).toFixed(2)} MB)`);
-            }
+          // [Fix N3] Upstream-supplied URL: SSRF-guarded + size-capped streaming read
+          const buffer = await fetchCapped(String(audioUrl), 15000, MAX_AUDIO_BYTES);
+          if (buffer && buffer.length > 100000) { // 确保大于 100KB 为有效音频
+            fs.writeFileSync(params.targetFilePath, buffer);
+            downloadedAudio = true;
+            sourceUsed = match.source || '云端高保真音源库';
+            bitrateText = match.bitrate || 'FLAC 无损 1411kbps';
+            fileFormat = match.format || 'FLAC 24bit 无损';
+            console.log(`[RealMusicDownloader] ✅ 真实音频落盘成功: ${params.targetFilePath} (${(buffer.length / 1024 / 1024).toFixed(2)} MB)`);
           }
         }
       }
@@ -93,20 +135,18 @@ export class RealMusicDownloader {
       try {
         // 尝试开放公开音源搜索解析备用节点
         const altSearchUrl = `https://api.vocaloid.site/search?song=${encodeURIComponent(cleanTitle)}&artist=${encodeURIComponent(cleanArtist)}`;
-        const altRes = await fetch(altSearchUrl, { signal: AbortSignal.timeout(5000) }).catch(() => null);
+        const altRes = await ssrfSafeFetch(altSearchUrl, { signal: AbortSignal.timeout(5000) }).catch(() => null);
         if (altRes && altRes.ok) {
           const altData = await altRes.json().catch(() => null);
           const dlUrl = altData?.url || altData?.songUrl;
           if (dlUrl) {
-            const streamRes = await fetch(dlUrl, { signal: AbortSignal.timeout(12000) });
-            if (streamRes.ok) {
-              const buf = Buffer.from(await streamRes.arrayBuffer());
-              if (buf.length > 100000) {
-                fs.writeFileSync(params.targetFilePath, buf);
-                downloadedAudio = true;
-                sourceUsed = '开源音源抓轨引擎';
-                console.log(`[RealMusicDownloader] ✅ 备用音源真实音频落盘成功: ${params.targetFilePath}`);
-              }
+            // [Fix N3] SSRF-guarded + size-capped streaming read
+            const buf = await fetchCapped(String(dlUrl), 12000, MAX_AUDIO_BYTES);
+            if (buf && buf.length > 100000) {
+              fs.writeFileSync(params.targetFilePath, buf);
+              downloadedAudio = true;
+              sourceUsed = '开源音源抓轨引擎';
+              console.log(`[RealMusicDownloader] ✅ 备用音源真实音频落盘成功: ${params.targetFilePath}`);
             }
           }
         }
@@ -118,11 +158,12 @@ export class RealMusicDownloader {
     // 3. 在线搜索并抓取真正的逐句 LRC 动态同步歌词
     try {
       const lrcSearchUrl = `https://lrc-api.vocaloid.site/lrc?title=${encodeURIComponent(cleanTitle)}&artist=${encodeURIComponent(cleanArtist)}`;
-      const lrcRes = await fetch(lrcSearchUrl, { signal: AbortSignal.timeout(4000) }).catch(() => null);
+      const lrcRes = await ssrfSafeFetch(lrcSearchUrl, { signal: AbortSignal.timeout(4000) }).catch(() => null);
       if (lrcRes && lrcRes.ok) {
         const lrcData = await lrcRes.json().catch(() => null);
         const lrcText = lrcData?.lrc || lrcData?.lyrics;
-        if (lrcText && lrcText.includes('[')) {
+        // [Fix N3] Enforce a size cap on lyric content before writing to disk
+        if (lrcText && lrcText.includes('[') && String(lrcText).length <= MAX_LRC_BYTES) {
           fs.writeFileSync(params.companionLrcPath, lrcText, 'utf-8');
           fetchedLrc = true;
           console.log(`[RealMusicDownloader] 📜 真实逐句 LRC 歌词落盘成功: ${params.companionLrcPath}`);
@@ -132,21 +173,10 @@ export class RealMusicDownloader {
       console.warn('[RealMusicDownloader] Lyrics fetch notice:', lrcErr.message);
     }
 
-    // 4. 如果歌词未从线上抓到，生成该曲目的精准实时歌词
-    if (!fetchedLrc) {
-      const tailoredLrc = `[00:00.00]${cleanTitle} - ${cleanArtist}
-[00:02.00]专辑: ${params.album || '经典精选集'}
-[00:05.00]音质规格: ${fileFormat} / Tinglan 听澜母带重现
-[00:10.00]（前奏优美旋律）
-[00:18.00]天青色等烟雨 而我在等你
-[00:25.00]炊烟袅袅升起 隔江千万里
-[00:32.00]在瓶底书汉隶仿前朝的飘逸
-[00:39.00]就当我为遇见你伏笔
-[00:46.00]小爱音箱正在高保真投放《${cleanTitle}》
-[01:00.00]已完成真实音源离线下载并热同步至 NAS`;
-      fs.writeFileSync(params.companionLrcPath, tailoredLrc, 'utf-8');
-      fetchedLrc = true;
-    }
+    // [Fix N3] The old fallback block fabricated a fake lyrics file (real song
+    // lyrics pasted as "genuine line-by-line LRC") whenever the online fetch
+    // missed. Fake content must never be written to the library — leave
+    // fetchedLrc=false; the downstream flow already tolerates a missing .lrc.
 
     // 5. 如果未命中任何真实音源直链，返回下载失败状态，不生成假文件或模拟数据
     if (!downloadedAudio) {

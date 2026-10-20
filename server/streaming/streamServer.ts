@@ -79,6 +79,25 @@ export class StreamServer {
   }
 
   /**
+   * [Fix N1] Containment helper: resolve a candidate path and guarantee it
+   * stays inside MUSIC_DIR. songId/filename arrive from the URL and are
+   * explicitly double-decoded in handleStream — `..%2F..%2F` previously
+   * escaped MUSIC_DIR and streamed arbitrary host files. Absolute paths that
+   * come from the music catalog (CUE parent tracks / custom imports) are
+   * DB-controlled and intentionally bypass this check.
+   */
+  private resolveContained(candidate: string): string | null {
+    try {
+      const resolved = path.resolve(candidate);
+      const root = path.resolve(this.musicDir);
+      if (resolved !== root && !resolved.startsWith(root + path.sep)) return null;
+      return resolved;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Express middleware / route handler for streaming audio with RFC 7233 HTTP 206 Partial Content,
    * Exact Sample-Accurate Seek, CUE Sheet Sub-Track Virtual Slicing, and ReplayGain Loudness Normalization.
    */
@@ -100,10 +119,12 @@ export class StreamServer {
     let matchedExt = '';
 
     // 1. Direct file match in MUSIC_DIR
-    const directExactPath = path.join(this.musicDir, songId);
-    if (fs.existsSync(directExactPath) && fs.statSync(directExactPath).isFile()) {
+    // [Fix N1] songId is URL-supplied and decoded — containment check prevents
+    // `../` traversal out of MUSIC_DIR (arbitrary file read).
+    const directExactPath = this.resolveContained(path.join(this.musicDir, songId));
+    if (directExactPath && fs.existsSync(directExactPath) && fs.statSync(directExactPath).isFile()) {
       localFilePath = directExactPath;
-      matchedExt = path.extname(songId).toLowerCase();
+      matchedExt = path.extname(directExactPath).toLowerCase();
     }
 
     // 2. Lookup via MusicEngine (including CUE virtual sub-tracks)
@@ -139,9 +160,9 @@ export class StreamServer {
     if (!localFilePath) {
       const candidateExts = ['.wav', '.mp3', '.flac', '.m4a', '.aac', '.ogg', '.opus', '.ape', '.dsf', '.dff'];
       for (const ext of candidateExts) {
-        const candidate = path.join(this.musicDir, `${cleanSongId}${ext}`);
-        if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
-          localFilePath = candidate;
+        const contained = this.resolveContained(path.join(this.musicDir, `${cleanSongId}${ext}`));
+        if (contained && fs.existsSync(contained) && fs.statSync(contained).isFile()) {
+          localFilePath = contained;
           matchedExt = ext;
           break;
         }
