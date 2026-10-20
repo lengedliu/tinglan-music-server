@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { getDataDir } from '../storage/jsonStorage.js';
 
 export interface CachedVoiceIntent {
   query: string;
@@ -17,7 +18,7 @@ export interface CacheStats {
   topQueries: Array<{ query: string; hits: number; lastHit: number }>;
 }
 
-const CACHE_FILE = path.join(process.cwd(), 'data', 'ai-semantic-cache.json');
+const CACHE_FILE = path.join(getDataDir(), 'ai-semantic-cache.json');
 const MAX_CACHE_ENTRIES = 300;
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 

@@ -18,17 +18,27 @@ export interface StoragePaths {
   DB_CONFIG_FILE: string;
 }
 
+// [C4-path] Single source of truth for the data directory: env DATA_DIR wins
+// by default (test/isolated instances must never touch the real data/), and
+// server.ts may override via configureStoragePaths after explicit resolution.
+// Every module that persists anything under data/ must resolve through
+// getDataDir() — hardcoded process.cwd()/'data' paths caused test instances
+// to pollute the real data directory (nas_config.json incident).
 let activeStoragePaths: StoragePaths = {
-  DATA_DIR: path.join(process.cwd(), 'data'),
-  MUSIC_DIR: path.join(process.cwd(), 'music'),
-  CONFIG_FILE: path.join(process.cwd(), 'data', 'config.json'),
-  DEVICES_FILE: path.join(process.cwd(), 'data', 'devices.json'),
-  NAVIDROME_FILE: path.join(process.cwd(), 'data', 'navidrome.json'),
-  DB_CONFIG_FILE: path.join(process.cwd(), 'data', 'db_config.json')
+  DATA_DIR: process.env.DATA_DIR || path.join(process.cwd(), 'data'),
+  MUSIC_DIR: process.env.MUSIC_DIR || path.join(process.cwd(), 'music'),
+  CONFIG_FILE: path.join(process.env.DATA_DIR || path.join(process.cwd(), 'data'), 'config.json'),
+  DEVICES_FILE: path.join(process.env.DATA_DIR || path.join(process.cwd(), 'data'), 'devices.json'),
+  NAVIDROME_FILE: path.join(process.env.DATA_DIR || path.join(process.cwd(), 'data'), 'navidrome.json'),
+  DB_CONFIG_FILE: path.join(process.env.DATA_DIR || path.join(process.cwd(), 'data'), 'db_config.json')
 };
 
 export function configureStoragePaths(paths: Partial<StoragePaths>) {
   activeStoragePaths = { ...activeStoragePaths, ...paths };
+}
+
+export function getDataDir(): string {
+  return activeStoragePaths.DATA_DIR;
 }
 
 export function getDevicesFilePath(): string {

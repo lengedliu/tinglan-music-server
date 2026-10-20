@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { appEventBus } from './eventBus.js';
 import { asyncMusicScanner } from './asyncMusicScanner.js';
+import { getDataDir } from '../storage/jsonStorage.js';
 import { voiceCommandService } from '../voiceCommandService.js';
 import { aiService, buildAiPromptPayload } from './aiService.js';
 import { getResolvedServerHost } from '../xiaomi/miotService.js';
@@ -56,8 +57,8 @@ const DEFAULT_FETCHER_CONFIG: FetcherConfig = {
   targetStoragePath: DEFAULT_MUSIC_DIR
 };
 
-const TASKS_FILE = path.join(process.cwd(), 'data', 'fetcher-tasks.json');
-const CONFIG_FILE = path.join(process.cwd(), 'data', 'fetcher-config.json');
+const TASKS_FILE = path.join(getDataDir(), 'fetcher-tasks.json');
+const CONFIG_FILE = path.join(getDataDir(), 'fetcher-config.json');
 
 export class MusicAutoFetcherService {
   private static instance: MusicAutoFetcherService;
@@ -84,7 +85,7 @@ export class MusicAutoFetcherService {
   }
 
   private ensureDirs() {
-    const dataDir = path.join(process.cwd(), 'data');
+    const dataDir = getDataDir();
     if (!fs.existsSync(dataDir)) {
       fs.mkdirSync(dataDir, { recursive: true });
     }

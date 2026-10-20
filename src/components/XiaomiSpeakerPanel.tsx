@@ -144,6 +144,73 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
   const [showTokenTutorial, setShowTokenTutorial] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
+  // [C1] Xiaomi risk-control circuit breaker status (Geetest slider challenge /
+  // rate-limit throttle visibility). Backend endpoints: /api/miot/circuit-status|reset.
+  const [circuitStatus, setCircuitStatus] = useState<{
+    state: 'CLOSED' | 'OPEN' | 'HALF_OPEN';
+    failuresCount: number;
+    cooldownRemainingSec: number;
+    rateLimitHits: number;
+    geetestChallengeDetected: boolean;
+    geetestChallengeUrl?: string;
+  } | null>(null);
+  const [isResettingCircuit, setIsResettingCircuit] = useState(false);
+  const [circuitAccessDenied, setCircuitAccessDenied] = useState(false);
+
+  // [C1] Poll breaker status: every 15s while healthy (cheap), every 3s while
+  // OPEN/HALF_OPEN so the cooldown countdown stays fresh. 403 (non-admin
+  // viewer) disables the banner entirely instead of spam-polling.
+  useEffect(() => {
+    let stopped = false;
+    let timer: any = null;
+    const schedule = (ms: number) => {
+      if (stopped) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(tick, ms);
+    };
+    const tick = async () => {
+      try {
+        const res = await apiFetch('/api/miot/circuit-status');
+        if (res.status === 403) {
+          stopped = true;
+          setCircuitAccessDenied(true);
+          return;
+        }
+        if (res.ok) {
+          const data = await res.json();
+          if (data.status) {
+            setCircuitStatus(data.status);
+            schedule(data.status.state === 'CLOSED' ? 15000 : 3000);
+            return;
+          }
+        }
+      } catch {}
+      schedule(15000);
+    };
+    tick();
+    return () => { stopped = true; if (timer) clearTimeout(timer); };
+  }, []);
+
+  // [C1] Manual reset — the documented escape hatch for a stuck/tripped breaker
+  // (also clears a falsely-dead credential flag server-side).
+  const handleResetCircuit = async () => {
+    setIsResettingCircuit(true);
+    try {
+      const res = await apiFetch('/api/miot/circuit-reset', { method: 'POST' });
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success) {
+        if (data.status) setCircuitStatus(data.status);
+        setLoginSuccessMsg(data.message || '风控熔断器已重置为正常就绪状态');
+      } else {
+        setLoginError(data?.error || '熔断器重置失败，请稍后重试');
+      }
+    } catch (e: any) {
+      setLoginError(`熔断器重置请求异常: ${e.message}`);
+    } finally {
+      setIsResettingCircuit(false);
+    }
+  };
+
   useEffect(() => {
     if (miotConfig.serverHost) {
       setServerHostInput(miotConfig.serverHost);
@@ -4010,6 +4077,68 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                 )}
               </div>
             </div>
+
+            {/* [C1] Xiaomi risk-control circuit breaker banner — Geetest slider
+                challenge / open breaker / rate-limit throttle visibility */}
+            {circuitStatus && !circuitAccessDenied && (
+              circuitStatus.state !== 'CLOSED' || (circuitStatus.rateLimitHits || 0) >= 30
+            ) && (
+              <div className={`p-4 rounded-2xl border text-xs flex items-start gap-3 ${
+                circuitStatus.geetestChallengeDetected
+                  ? 'bg-amber-500/15 border-amber-500/30 text-amber-300'
+                  : circuitStatus.state === 'OPEN'
+                    ? 'bg-rose-500/15 border-rose-500/30 text-rose-300'
+                    : 'bg-amber-500/10 border-amber-500/20 text-amber-200/90'
+              }`}>
+                <AlertTriangle className={`w-5 h-5 flex-shrink-0 mt-0.5 ${
+                  circuitStatus.geetestChallengeDetected ? 'text-amber-400' : circuitStatus.state === 'OPEN' ? 'text-rose-400' : 'text-amber-300/80'
+                }`} />
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold">
+                    {circuitStatus.geetestChallengeDetected
+                      ? '小米安全风控已触发滑块验证码挑战 (Geetest)'
+                      : circuitStatus.state === 'OPEN'
+                        ? `小米接口熔断保护中${circuitStatus.cooldownRemainingSec > 0 ? `（冷却约 ${circuitStatus.cooldownRemainingSec} 秒）` : '（即将自动恢复）'}`
+                        : '熔断器半开探测中（正在放行单次试探请求）'}
+                  </p>
+                  <p className="mt-0.5 opacity-90 leading-relaxed">
+                    {circuitStatus.geetestChallengeDetected ? (
+                      <>账号密码直连登录已被风控临时拦截，冷却倒计时约 {circuitStatus.cooldownRemainingSec} 秒。建议切换到【方式二：手机扫码一键登录】——扫码授权不经过密码风控通道，成功率不受影响。</>
+                    ) : circuitStatus.state === 'OPEN' ? (
+                      <>小米云端接口连续异常或触发频控，已自动熔断{circuitStatus.cooldownRemainingSec > 0 ? `，约 ${circuitStatus.cooldownRemainingSec} 秒后自动恢复试探` : ''}。期间语音指令与云端控制将自动降级重试，无需干预。</>
+                    ) : (
+                      <>冷却已结束，正在放行单次探测请求验证服务恢复情况，若成功将自动回到正常模式…</>
+                    )}
+                  </p>
+                  {circuitStatus.geetestChallengeUrl && (
+                    <a
+                      href={circuitStatus.geetestChallengeUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-1.5 inline-flex items-center gap-1 underline underline-offset-2 hover:opacity-80"
+                    >
+                      <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                      <span className="truncate max-w-[280px]">查看小米风控挑战页面</span>
+                    </a>
+                  )}
+                  {(circuitStatus.rateLimitHits || 0) >= 30 && (
+                    <p className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] bg-black/20 rounded-full px-2.5 py-1">
+                      <Zap className="w-3 h-3 flex-shrink-0" />
+                      <span>请求频次 {circuitStatus.rateLimitHits}/35 每分钟，接近平滑限流阈值</span>
+                    </p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleResetCircuit}
+                  disabled={isResettingCircuit}
+                  className="flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/10 transition disabled:opacity-50"
+                >
+                  {isResettingCircuit ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
+                  <span>{isResettingCircuit ? '重置中…' : '重置熔断器'}</span>
+                </button>
+              </div>
+            )}
 
             {/* Error Message Box */}
             {loginError && (

@@ -131,6 +131,18 @@ const DB_CONFIG_FILE = path.join(DATA_DIR, 'db_config.json');
 const SECURITY_FILE = path.join(DATA_DIR, 'security.json');
 const SQLITE_FILE = path.join(DATA_DIR, 'tinglan.sqlite');
 
+/**
+ * [Fix C4] Single funnel for every data/config.json write: saveJson routes
+ * through wrapEncryptedDiskData (prepareConfigForDisk), so credentials
+ * (passToken / serviceToken / ssecurity / xiaomiio* ...) are vault-encrypted
+ * at rest — previously miotService had direct fs writes that bypassed the
+ * funnel and persisted plaintext. Immediate atomic write: credentials must
+ * never sit in a debounce window.
+ */
+function persistMiotConfig(cfg: any): void {
+  saveJson(CONFIG_FILE, cfg, true);
+}
+
 for (const dir of [DATA_DIR, MUSIC_DIR, TRANSCODE_CACHE_DIR]) {
   if (!fs.existsSync(dir)) {
     try {
@@ -264,7 +276,7 @@ taskSchedulerEngine.setHandlers({
       await xiaomiAdapter.setPlaybackOperation(
         dev,
         'pause',
-        (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry, miotConfig, (cfg) => saveJson(CONFIG_FILE, cfg)),
+        (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry, miotConfig, (cfg) => persistMiotConfig(cfg)),
         (ip, token, method, params, timeoutMs) => sendMiioCommand(ip, token, method, params, timeoutMs || 2500),
         miotConfig
       );
@@ -279,7 +291,7 @@ taskSchedulerEngine.setHandlers({
       song,
       targetDid: did,
       miotConfig,
-      saveMiotConfigFn: (cfg) => saveJson(CONFIG_FILE, cfg),
+      saveMiotConfigFn: (cfg) => persistMiotConfig(cfg),
       serverPort: PORT,
       jwtSecret: JWT_SECRET,
       activeStreamIps
@@ -295,7 +307,7 @@ taskSchedulerEngine.setHandlers({
       song: firstSong,
       targetDid: did,
       miotConfig,
-      saveMiotConfigFn: (cfg) => saveJson(CONFIG_FILE, cfg),
+      saveMiotConfigFn: (cfg) => persistMiotConfig(cfg),
       serverPort: PORT,
       jwtSecret: JWT_SECRET,
       activeStreamIps
@@ -308,7 +320,7 @@ taskSchedulerEngine.setHandlers({
     const res = await xiaomiAdapter.setVolume(
       dev,
       volume,
-      (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry, miotConfig, (cfg) => saveJson(CONFIG_FILE, cfg)),
+      (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry, miotConfig, (cfg) => persistMiotConfig(cfg)),
       sendMiioCommand,
       miotConfig
     );
@@ -322,7 +334,7 @@ taskSchedulerEngine.setHandlers({
       text,
       miotConfig,
       sendMiioCommandFn: sendMiioCommand,
-      callMinaCloudApiFn: (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry, miotConfig, (cfg) => saveJson(CONFIG_FILE, cfg))
+      callMinaCloudApiFn: (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry, miotConfig, (cfg) => persistMiotConfig(cfg))
     });
     return res.success;
   }
@@ -401,7 +413,7 @@ automationService.registerActionHandler(async (scene, context) => {
           scene.payload.volume,
           (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry, activeMiotConfig, (cfg) => {
             activeMiotConfig = cfg;
-            saveJson(CONFIG_FILE, cfg);
+            persistMiotConfig(cfg);
           }),
           sendMiioCommand,
           activeMiotConfig
@@ -434,7 +446,7 @@ automationService.registerActionHandler(async (scene, context) => {
           sendMiioCommandFn: (ip, token, method, params, timeoutMs) => sendMiioCommand(ip, token, method, params, timeoutMs || 2500),
           callMinaCloudApiFn: (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry, activeMiotConfig, (cfg) => {
             activeMiotConfig = cfg;
-            saveJson(CONFIG_FILE, cfg);
+            persistMiotConfig(cfg);
           })
         });
 
@@ -477,7 +489,7 @@ automationService.registerActionHandler(async (scene, context) => {
           miotConfig: activeMiotConfig,
           saveMiotConfigFn: (cfg) => {
             activeMiotConfig = cfg;
-            saveJson(CONFIG_FILE, cfg);
+            persistMiotConfig(cfg);
           },
           serverPort: PORT,
           jwtSecret: JWT_SECRET,
@@ -498,7 +510,7 @@ automationService.registerActionHandler(async (scene, context) => {
           miotConfig: activeMiotConfig,
           saveMiotConfigFn: (cfg) => {
             activeMiotConfig = cfg;
-            saveJson(CONFIG_FILE, cfg);
+            persistMiotConfig(cfg);
           },
           serverPort: PORT,
           jwtSecret: JWT_SECRET,
@@ -513,7 +525,7 @@ automationService.registerActionHandler(async (scene, context) => {
           'pause',
           (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry, activeMiotConfig, (cfg) => {
             activeMiotConfig = cfg;
-            saveJson(CONFIG_FILE, cfg);
+            persistMiotConfig(cfg);
           }),
           (ip, token, method, params, timeoutMs) => sendMiioCommand(ip, token, method, params, timeoutMs || 2500),
           activeMiotConfig
@@ -532,7 +544,7 @@ automationService.registerActionHandler(async (scene, context) => {
 });
 
 adaptiveHeartbeatEngine.setRpcHandlers(
-  (path, method, msg, tDid) => callMinaCloudApi(path, method, msg, tDid, 0, miotConfig, (cfg) => saveJson(CONFIG_FILE, cfg)),
+  (path, method, msg, tDid) => callMinaCloudApi(path, method, msg, tDid, 0, miotConfig, (cfg) => persistMiotConfig(cfg)),
   (ip, token, method, params, timeoutMs) => sendMiioCommand(ip, token, method, params, timeoutMs)
 );
 adaptiveHeartbeatEngine.onStateSync((did, status) => {
@@ -720,6 +732,12 @@ const DEFAULT_CONFIG: MiotConfig = {
 };
 
 let miotConfig = loadJson(CONFIG_FILE, DEFAULT_CONFIG);
+// [C4] One-time at-rest migration: a config.json written by pre-encryption
+// builds (plaintext credentials) self-heals — re-save through the encrypting
+// funnel on boot (idempotent once encrypted; loadJson transparently decrypts).
+if (fs.existsSync(CONFIG_FILE)) {
+  persistMiotConfig(miotConfig);
+}
 if ((miotConfig as any).enableReplayGain) {
   streamServer.setLoudnessConfig(true, (miotConfig as any).targetLufs || -16);
 }
@@ -826,7 +844,7 @@ const {
   getMiotConfig: () => miotConfig,
   saveMiotConfig: (cfg) => {
     miotConfig = cfg;
-    saveJson(CONFIG_FILE, miotConfig);
+    persistMiotConfig(miotConfig);
   },
   verifyStreamToken: (songId, token) => verifyStreamToken(songId, token, JWT_SECRET),
   isSafeRemoteStreamUrl: (url) => isSafeRemoteStreamUrl(url, navidromeConfig.serverUrl),
@@ -866,7 +884,7 @@ app.use('/api/radio', createRadioRouter({
   getMiotConfig: () => miotConfig,
   setMiotConfig: (cfg) => {
     miotConfig = cfg;
-    saveJson(CONFIG_FILE, miotConfig);
+    persistMiotConfig(miotConfig);
   }
 }));
 app.use('/api/automation', createAutomationRouter());
@@ -922,7 +940,7 @@ app.use('/api/miot', createMiotRouter({
   getMiotConfig: () => miotConfig,
   setMiotConfig: (cfg) => {
     miotConfig = cfg;
-    saveJson(CONFIG_FILE, miotConfig);
+    persistMiotConfig(miotConfig);
   },
   getSecuritySettings: () => securitySettings,
   isAuthRequiredForRequest: (req) => isAuthRequiredForRequest(req, () => securitySettings),
@@ -943,7 +961,7 @@ const groupRouter = createGroupRouter({
   getMiotConfig: () => miotConfig,
   saveMiotConfig: (cfg) => {
     miotConfig = cfg;
-    saveJson(CONFIG_FILE, miotConfig);
+    persistMiotConfig(miotConfig);
   },
   dispatchCastSongDirectly: (args: any) => dispatchCastSongDirectly({
     ...args,
@@ -965,7 +983,7 @@ queueEngine.setCastDispatcher(async (song: any, targetDid: string, seekSeconds?:
     miotConfig: currentMiotConfig,
     saveMiotConfigFn: (cfg) => {
       miotConfig = cfg;
-      saveJson(CONFIG_FILE, cfg);
+      persistMiotConfig(cfg);
     },
     serverPort: PORT,
     jwtSecret: JWT_SECRET,
@@ -981,7 +999,7 @@ queueEngine.setPauseDispatcher(async (did: string) => {
     await xiaomiAdapter.setPlaybackOperation(
       dev,
       'pause',
-      (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry, miotConfig, (cfg) => saveJson(CONFIG_FILE, cfg)),
+      (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry, miotConfig, (cfg) => persistMiotConfig(cfg)),
       (ip, token, method, params, timeoutMs) => sendMiioCommand(ip, token, method, params, timeoutMs || 2500),
       miotConfig
     );
@@ -1159,7 +1177,7 @@ app.all('/api/*', (req: Request, res: Response) => {
 async function startServer() {
   restoreSessionAndDevicesOnStartup({
     getMiotConfig: () => miotConfig,
-    saveMiotConfig: (cfg) => saveJson(CONFIG_FILE, cfg),
+    saveMiotConfig: (cfg) => persistMiotConfig(cfg),
     activeStreamIps,
     serverPort: PORT,
     jwtSecret: JWT_SECRET
@@ -1167,7 +1185,7 @@ async function startServer() {
 
   bindVoiceCommandCallbacks({
     getMiotConfig: () => miotConfig,
-    saveMiotConfig: (cfg) => saveJson(CONFIG_FILE, cfg),
+    saveMiotConfig: (cfg) => persistMiotConfig(cfg),
     activeStreamIps,
     serverPort: PORT,
     jwtSecret: JWT_SECRET

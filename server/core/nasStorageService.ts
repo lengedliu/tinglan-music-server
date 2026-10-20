@@ -5,6 +5,8 @@ import net from 'net';
 import crypto from 'crypto';
 import { Readable } from 'stream';
 import { parseBuffer } from 'music-metadata';
+import { encryptSecret, decryptSecret } from '../secureVault.js';
+import { getDataDir } from '../storage/jsonStorage.js';
 // @ts-ignore
 import SMB2 from '@marsaud/smb2';
 import { Song } from './musicEngine.js';
@@ -66,7 +68,7 @@ const SUPPORTED_EXTS = new Set([
 ]);
 
 export class NasStorageService {
-  private configPath: string = path.join(process.cwd(), 'data', 'nas_config.json');
+  private configPath: string = path.join(getDataDir(), 'nas_config.json');
   private config: NasConfig = {
     enabled: false,
     type: 'webdav',
@@ -98,6 +100,12 @@ export class NasStorageService {
       if (fs.existsSync(this.configPath)) {
         const raw = fs.readFileSync(this.configPath, 'utf-8');
         const parsed = JSON.parse(raw);
+        // [C4] Transparent decryption: legacy plaintext passwords pass through
+        // unchanged; `enc:v1:` values decrypt via the vault. saveConfig()
+        // re-persists encrypted on the next save (boot stays read-only here).
+        if (typeof parsed.password === 'string' && parsed.password) {
+          parsed.password = decryptSecret(parsed.password);
+        }
         this.config = { ...this.config, ...parsed };
       }
     } catch (err) {
@@ -112,7 +120,14 @@ export class NasStorageService {
       if (!fs.existsSync(dataDir)) {
         fs.mkdirSync(dataDir, { recursive: true });
       }
-      fs.writeFileSync(this.configPath, JSON.stringify(this.config, null, 2), 'utf-8');
+      // [C4] The WebDAV password used to persist as PLAINTEXT in
+      // nas_config.json — vault-encrypt it at rest (idempotent, in-memory
+      // this.config keeps the plaintext for active connections).
+      const onDisk = { ...this.config };
+      if (typeof onDisk.password === 'string' && onDisk.password) {
+        onDisk.password = encryptSecret(onDisk.password);
+      }
+      fs.writeFileSync(this.configPath, JSON.stringify(onDisk, null, 2), 'utf-8');
       logEngine.info('system', 'NAS 存储配置保存成功', `配置已更新: 协议=${this.config.type}, 服务器=${this.config.serverUrl || this.config.basePath}${this.config.port ? ':' + this.config.port : ''}`, {
         type: this.config.type,
         serverUrl: this.config.serverUrl,

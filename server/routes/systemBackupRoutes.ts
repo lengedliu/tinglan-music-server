@@ -1,11 +1,14 @@
 import { Router, Request, Response } from 'express';
 import fs from 'fs';
 import path from 'path';
-import { loadJson, saveJson } from '../storage/jsonStorage.js';
+import { loadJson, saveJson, getDataDir } from '../storage/jsonStorage.js';
 
 export function createSystemBackupRouter(): Router {
   const router = Router();
-  const dataDir = path.join(process.cwd(), 'data');
+  // [C4-path] Follow the resolved DATA_DIR (env/configureStoragePaths) instead
+  // of hardcoding cwd/data — test instances with DATA_DIR must never touch the
+  // real data directory.
+  const dataDir = getDataDir();
   const snapshotsDir = path.join(dataDir, 'backups');
 
   // [Fix N2] All backup endpoints are privileged: export hands out config
@@ -72,7 +75,10 @@ export function createSystemBackupRouter(): Router {
       let restoredCount = 0;
 
       if (backupData.config) {
-        saveJson(path.join(dataDir, 'config.json'), backupData.config, true);
+        // [C4] saveJson funnels through wrapEncryptedDiskData (config.json path
+        // match) so restored configs land encrypted-at-rest; legacy plaintext
+        // backup fields are encrypted on the way in.
+        saveJson(path.join(getDataDir(), 'config.json'), backupData.config, true);
         restoredCount++;
       }
       if (Array.isArray(backupData.devices)) {

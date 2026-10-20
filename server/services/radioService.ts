@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { getDataDir } from '../storage/jsonStorage.js';
 
 export interface RadioStation {
   id: string;
@@ -37,8 +38,8 @@ export interface PodcastSubscription {
   createdAt: number;
 }
 
-const STATIONS_FILE = path.join(process.cwd(), 'data', 'radio-stations.json');
-const PODCASTS_FILE = path.join(process.cwd(), 'data', 'podcasts.json');
+const STATIONS_FILE = path.join(getDataDir(), 'radio-stations.json');
+const PODCASTS_FILE = path.join(getDataDir(), 'podcasts.json');
 
 const PRESET_STATIONS: RadioStation[] = [
   {

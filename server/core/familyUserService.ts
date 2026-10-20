@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { appEventBus } from './eventBus.js';
+import { getDataDir } from '../storage/jsonStorage.js';
 
 export interface FamilyUser {
   id: string;
@@ -24,10 +25,10 @@ export interface UserHistoryRecord {
 }
 
 export class FamilyUserService {
-  private usersPath: string = path.join(process.cwd(), 'data', 'family_users.json');
-  private favoritesPath: string = path.join(process.cwd(), 'data', 'user_favorites.json');
-  private historyPath: string = path.join(process.cwd(), 'data', 'user_history.json');
-  private activeUserPath: string = path.join(process.cwd(), 'data', 'active_user.json');
+  private usersPath: string = path.join(getDataDir(), 'family_users.json');
+  private favoritesPath: string = path.join(getDataDir(), 'user_favorites.json');
+  private historyPath: string = path.join(getDataDir(), 'user_history.json');
+  private activeUserPath: string = path.join(getDataDir(), 'active_user.json');
 
   private users: FamilyUser[] = [];
   private favoritesMap: Record<string, string[]> = {}; // userId -> songIds

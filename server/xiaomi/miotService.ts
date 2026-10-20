@@ -6,6 +6,7 @@ import dgram from 'dgram';
 import crypto from 'crypto';
 import { dlnaEngine } from '../dlnaEngine.js';
 import { xiaomiPassport, XiaomiPassportResult } from '../xiaomiPassport.js';
+import { getDataDir } from '../storage/jsonStorage.js';
 import { deviceRepository, XiaomiDeviceEntity } from '../core/repositories/deviceRepository.js';
 import { musicRepository } from '../core/repositories/musicRepository.js';
 import { xiaoaiResolverEngine } from '../xiaoaiResolver.js';
@@ -669,7 +670,7 @@ export function getBestLanIpForTarget(targetSpeakerIp?: string, serverHost?: str
  */
 export function getResolvedServerHost(): string {
   try {
-    const configPath = path.join(process.cwd(), 'data', 'config.json');
+    const configPath = path.join(getDataDir(), 'config.json');
     if (fs.existsSync(configPath)) {
       const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
       if (cfg && cfg.serverHost && typeof cfg.serverHost === 'string' && cfg.serverHost.startsWith('http')) {

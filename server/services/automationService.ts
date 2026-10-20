@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { loadJson, saveJson } from '../storage/jsonStorage.js';
+import { loadJson, saveJson, getDataDir } from '../storage/jsonStorage.js';
 import { logEngine } from '../core/logEngine.js';
 
 export interface AutomationScene {
@@ -35,8 +35,8 @@ export interface AutomationLog {
   details?: any;
 }
 
-const AUTOMATION_FILE = path.join(process.cwd(), 'data', 'automation_scenes.json');
-const LOGS_FILE = path.join(process.cwd(), 'data', 'automation_logs.json');
+const AUTOMATION_FILE = path.join(getDataDir(), 'automation_scenes.json');
+const LOGS_FILE = path.join(getDataDir(), 'automation_logs.json');
 
 // Default initial preset scenes for Phase 3
 const DEFAULT_SCENES: AutomationScene[] = [

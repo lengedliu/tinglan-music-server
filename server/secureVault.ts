@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 
-const DATA_DIR = path.join(process.cwd(), 'data');
+const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
 const KEY_FILE = path.join(DATA_DIR, '.vault_master.key');
 const ALGORITHM = 'aes-256-gcm';
 const PREFIX = 'enc:v1:';

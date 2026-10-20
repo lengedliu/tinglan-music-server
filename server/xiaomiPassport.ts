@@ -3,6 +3,7 @@ import QRCode from 'qrcode';
 import fs from 'fs';
 import path from 'path';
 import { xiaomiCircuitBreaker } from './circuitBreaker';
+import { getDataDir } from './storage/jsonStorage.js';
 
 let cachedClientDeviceId = '';
 
@@ -15,7 +16,7 @@ export function getPersistentClientDeviceId(userId?: string): string {
     return cachedClientDeviceId;
   }
   try {
-    const dataDir = path.join(process.cwd(), 'data');
+    const dataDir = getDataDir();
     const clientIdentityFile = path.join(dataDir, 'mina_client_id.json');
     if (fs.existsSync(clientIdentityFile)) {
       const parsed = JSON.parse(fs.readFileSync(clientIdentityFile, 'utf-8'));

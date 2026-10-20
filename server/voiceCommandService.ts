@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { Song, Playlist } from '../src/types';
+import { getDataDir } from './storage/jsonStorage.js';
 import { generateMinaRequestId, buildMinaHeaders } from './xiaomiPassport';
 import { computeSongMatchScore } from './pinyinHelper';
 import { xiaomiCircuitBreaker } from './circuitBreaker';
@@ -82,9 +83,9 @@ export interface DialogueSessionContext {
   pendingPlay?: PendingPlayContext;
 }
 
-const VOICE_CONFIG_FILE = path.join(process.cwd(), 'data', 'voice-config.json');
-const VOICE_SLANG_FILE = path.join(process.cwd(), 'data', 'voice-slang.json');
-const VOICE_LOGS_FILE = path.join(process.cwd(), 'data', 'voice-dialogues.json');
+const VOICE_CONFIG_FILE = path.join(getDataDir(), 'voice-config.json');
+const VOICE_SLANG_FILE = path.join(getDataDir(), 'voice-slang.json');
+const VOICE_LOGS_FILE = path.join(getDataDir(), 'voice-dialogues.json');
 
 const DEFAULT_SLANG_RULES: VoiceSlangRule[] = [
   {

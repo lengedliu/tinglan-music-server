@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { GoogleGenAI } from '@google/genai';
+import { getDataDir } from '../storage/jsonStorage.js';
 import { computeSongMatchScore } from '../pinyinHelper.js';
 import { aiSemanticCache } from './aiSemanticCache.js';
 import { musicAutoFetcherService, isSchedulerModeActive } from './musicAutoFetcherService.js';
@@ -231,7 +232,7 @@ const DEFAULT_AI_CONFIG: AiServiceConfig = {
   aiSkillAuthToken: ''
 };
 
-const AI_CONFIG_FILE = path.join(process.cwd(), 'data', 'ai-config.json');
+const AI_CONFIG_FILE = path.join(getDataDir(), 'ai-config.json');
 
 function cleanTtsTitle(title: string): string {
   if (!title) return '';
