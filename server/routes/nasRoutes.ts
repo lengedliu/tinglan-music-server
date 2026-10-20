@@ -3,12 +3,42 @@ import { nasStorageService } from '../core/nasStorageService.js';
 
 const router = express.Router();
 
+// [Fix B5] These route families had NO role checks: /config returned the full
+// NAS/WebDAV config INCLUDING the plaintext password to any authenticated
+// low-priv user (and to anonymous visitors in no-auth mode), /save accepted
+// arbitrary config writes and /test performed arbitrary connection probes.
+// Admin-only, enforced even when the system runs in no-auth mode (secret
+// exposure + config rewrite = same class as the system backup endpoints).
+// /sync and /status stay "any authenticated" — they are progress/operation
+// endpoints invoked by external automation (AI Skill webhook callback), and
+// /status scrubs credentials from its response instead of gating them away.
+const requireAdmin = (req: Request, res: Response): boolean => {
+  const clientUser = (req as any).user;
+  if (!clientUser || clientUser.role !== 'admin') {
+    res.status(403).json({
+      success: false,
+      error: '权限不足：NAS 存储配置属于管理员专属操作，请以管理员账号登录后使用'
+    });
+    return false;
+  }
+  return true;
+};
+
+/** [Fix B5] Never hand NAS/WebDAV credentials back through progress endpoints. */
+const scrubNasConfig = (config: any) => {
+  if (!config || typeof config !== 'object') return config;
+  const safe = { ...config };
+  delete safe.password;
+  return safe;
+};
+
 /**
  * GET /api/nas/config
  * Get current NAS configuration & last sync status
  */
 router.get('/config', (req: Request, res: Response) => {
   try {
+    if (!requireAdmin(req, res)) return;
     const config = nasStorageService.getConfig();
     const progress = nasStorageService.getProgress();
     return res.json({ success: true, config, progress });
@@ -23,6 +53,7 @@ router.get('/config', (req: Request, res: Response) => {
  */
 router.post('/test', async (req: Request, res: Response) => {
   try {
+    if (!requireAdmin(req, res)) return;
     const testCfg = req.body;
     const result = await nasStorageService.testConnection(testCfg);
     return res.json({ success: true, result });
@@ -38,6 +69,7 @@ router.post('/test', async (req: Request, res: Response) => {
  */
 router.post('/save', (req: Request, res: Response) => {
   try {
+    if (!requireAdmin(req, res)) return;
     const newConfig = req.body;
     const saved = nasStorageService.saveConfig(newConfig);
     return res.json({ success: true, config: saved, message: 'NAS 远程存储配置保存成功' });
@@ -78,6 +110,9 @@ router.get('/status', (req: Request, res: Response) => {
     return res.json({
       success: true,
       progress,
+      // [Fix B5] Full config used to leak the WebDAV password to any viewer of
+      // this progress endpoint — hand out a scrubbed copy instead.
+      config: scrubNasConfig(config),
       lastSyncTime: config.lastSyncTime,
       lastSyncResult: config.lastSyncResult
     });

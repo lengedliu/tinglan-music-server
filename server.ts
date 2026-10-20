@@ -753,7 +753,13 @@ app.use('/api/auth', createAuthRouter({
   },
   setStoredUsers: (users) => {
     storedUsers = users;
-    saveJson(USERS_FILE, storedUsers);
+    // [Fix B6] Immediate atomic write (was debounced 200ms): register/update flows
+    // update the in-memory array here, but any getStoredUsers() before the
+    // debounce fired re-read the STALE file and clobbered the fresh memory —
+    // the classic symptom was "register succeeds, immediate login says user
+    // not found". Users.json writes are rare (register / password change / user
+    // CRUD), so synchronous atomic writes are cheap and close the race.
+    saveJson(USERS_FILE, storedUsers, true);
   },
   getClientIp,
   isPrivateOrLocalIp,

@@ -485,23 +485,17 @@ async function doCallMinaCloudApi(
   const cleanUid = String(rawUid).replace(/[^\x20-\x7E]/g, '').trim();
 
   if ((!activeMicoToken || !cleanUid) && miotConfig.passToken && retryCount === 0 && saveMiotConfigFn && !miotConfig.isCredentialsDead) {
-    try {
-      const refreshed = await xiaomiPassport.fetchAdditionalStsToken(cleanUid || '0', miotConfig.passToken, 'micoapi');
-      if (refreshed.serviceToken) {
-        miotConfig.micoServiceToken = refreshed.serviceToken;
-        miotConfig.isMicoValid = true;
-        miotConfig.serviceToken = refreshed.serviceToken;
-        if (refreshed.ssecurity) miotConfig.ssecurity = refreshed.ssecurity;
-        if (refreshed.userId) {
-          miotConfig.userId = refreshed.userId;
-          miotConfig.miUser = `uid_${refreshed.userId}`;
-        }
-        miotConfig.isLoggedIn = true;
-        saveMiotConfigFn(miotConfig);
-        return doCallMinaCloudApi(pathName, methodName, messageObj, targetDid, retryCount + 1, miotConfig, saveMiotConfigFn);
-      }
-    } catch (err: any) {
-      console.warn('[Mina] Pre-flight STS refresh failed:', err.message);
+    // [Fix C3] This pre-flight used to call Xiaomi Passport DIRECTLY, bypassing
+    // the shared refresh guards entirely (10-min success cooldown, 60s failure
+    // cooldown, dead-credentials short-circuit, single-flight dedup). A blank
+    // token plus a live passToken turned EVERY queued cloud call into a fresh
+    // login attempt — a storm vector after 401s. Route through the shared
+    // refresh so all guards apply; skipped/failure falls through to the
+    // structured error below (checked exceptions land there too).
+    const refreshed = await refreshXiaomiTokens(miotConfig, saveMiotConfigFn, 'mina_preflight');
+    const refreshedMico = String(refreshed.serviceToken || '').replace(/[^\x20-\x7E]/g, '').trim();
+    if (refreshed.success && refreshedMico) {
+      return doCallMinaCloudApi(pathName, methodName, messageObj, targetDid, retryCount + 1, miotConfig, saveMiotConfigFn);
     }
   }
 
