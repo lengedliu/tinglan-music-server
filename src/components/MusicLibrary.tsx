@@ -533,9 +533,9 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
   const currentPlaylist = playlists.find(p => p.id === selectedPlaylistId);
 
   return (
-    <div className="space-y-4 sm:space-y-6 pb-36 sm:pb-28">
+    <div className="flex-1 min-h-0 flex flex-col gap-2.5 sm:gap-3">
       {/* 1. Top Bar: Title, Stats & Primary Action Buttons */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4">
+      <div className="shrink-0 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-4">
         <div>
           <h2 className={`text-xl sm:text-2xl font-bold flex items-center gap-2 sm:gap-2.5 ${isLight ? 'text-zinc-900' : 'text-white'}`}>
             <Music className="w-6 h-6 sm:w-7 sm:h-7 text-[#FF6700]" />
@@ -616,7 +616,7 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
 
       {/* 1.5 Active Family User Perspective Banner */}
       {activeFamilyUser && !dismissedPerspectiveUserIds.includes(activeFamilyUser.id) && (
-        <div className={`p-3.5 rounded-2xl border mb-4 flex items-center justify-between text-xs font-semibold animate-in fade-in ${
+        <div className={`shrink-0 p-2.5 sm:p-3 rounded-2xl border flex items-center justify-between text-xs font-semibold animate-in fade-in ${
           activeFamilyUser.role === 'kid'
             ? isLight ? 'bg-purple-50 border-purple-200 text-purple-900' : 'bg-purple-900/20 border-purple-500/30 text-purple-200'
             : isLight ? 'bg-orange-50/90 border-orange-200 text-orange-900' : 'bg-orange-500/10 border-orange-500/20 text-orange-200'
@@ -664,110 +664,120 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
       )}
 
       {/* 2. Cross-Device Resume Points Shelf (Phase 1) */}
-      <ResumePointsShelf
-        onPlaySong={(s, pos) => {
-          onPlaySong(s, undefined, pos && pos > 0 ? pos : undefined);
-        }}
-        onCastSongToXiaomi={(s) => onCastSongToXiaomi(s)}
-        activeDevice={activeDevice}
-        currentSongId={currentSong?.id}
-      />
+      <div className="shrink-0 empty:hidden">
+        <ResumePointsShelf
+          onPlaySong={(s, pos) => {
+            onPlaySong(s, undefined, pos && pos > 0 ? pos : undefined);
+          }}
+          onCastSongToXiaomi={(s) => onCastSongToXiaomi(s)}
+          activeDevice={activeDevice}
+          currentSongId={currentSong?.id}
+        />
+      </div>
 
       {/* 3. Playlist Tabs Strip */}
-      <PlaylistTabs
-        playlists={visiblePlaylists}
-        selectedPlaylistId={selectedPlaylistId}
-        onSelectPlaylist={(id) => setSelectedPlaylistId(id)}
-        onOpenNewPlaylistModal={() => setShowNewPlaylistModal(true)}
-        onOpenImportPlaylistModal={() => setShowImportPlaylistModal(true)}
-        isLight={isLight}
-        totalSongCount={songs.length}
-        favoriteSongCount={libraryStats.favCount}
-        topPlayedCount={libraryStats.topCount}
-        recentlyPlayedCount={libraryStats.recentCount}
-        losslessCount={libraryStats.losslessCount}
-      />
+      <div className="shrink-0">
+        <PlaylistTabs
+          playlists={visiblePlaylists}
+          selectedPlaylistId={selectedPlaylistId}
+          onSelectPlaylist={(id) => setSelectedPlaylistId(id)}
+          onOpenNewPlaylistModal={() => setShowNewPlaylistModal(true)}
+          onOpenImportPlaylistModal={() => setShowImportPlaylistModal(true)}
+          isLight={isLight}
+          totalSongCount={songs.length}
+          favoriteSongCount={libraryStats.favCount}
+          topPlayedCount={libraryStats.topCount}
+          recentlyPlayedCount={libraryStats.recentCount}
+          losslessCount={libraryStats.losslessCount}
+        />
+      </div>
 
       {/* 3. Selected Custom or Dynamic Playlist Header Information Banner */}
       {(
         (selectedPlaylistId !== 'all' && selectedPlaylistId !== 'favorites' && currentPlaylist) ||
         isDynamicPlaylistId(selectedPlaylistId)
       ) && (
-        <PlaylistHeaderBanner
-          currentPlaylist={currentPlaylist}
-          filteredSongs={filteredSongs}
-          isCasting={isCasting}
-          activeDevice={activeDevice}
-          onPlaySong={handlePlaySongWithQueue}
-          onPlayAll={onPlayAll}
-          onCastAllToXiaomi={onCastAllToXiaomi}
-          onOpenBatchAdd={() => setShowBatchAddModal(true)}
-          onRenamePlaylist={(pl) => {
-            setRenamePlaylistId(pl.id);
-            setRenamePlaylistName(pl.name);
-            setShowRenamePlaylistModal(true);
-          }}
-          onExportPlaylist={exportPlaylist}
-          onDeletePlaylist={(id) => {
-            if (onDeletePlaylist) onDeletePlaylist(id);
-            setSelectedPlaylistId('all');
-          }}
-          onClearRecentHistory={handleClearRecentHistory}
-          dynamicType={
-            selectedPlaylistId === 'dynamic:top_played'
-              ? 'top_played'
-              : selectedPlaylistId === 'dynamic:recently_played'
-              ? 'recently_played'
-              : selectedPlaylistId === 'dynamic:lossless'
-              ? 'lossless'
-              : null
-          }
-          isLight={isLight}
-        />
+        <div className="shrink-0">
+          <PlaylistHeaderBanner
+            currentPlaylist={currentPlaylist}
+            filteredSongs={filteredSongs}
+            isCasting={isCasting}
+            activeDevice={activeDevice}
+            onPlaySong={handlePlaySongWithQueue}
+            onPlayAll={onPlayAll}
+            onCastAllToXiaomi={onCastAllToXiaomi}
+            onOpenBatchAdd={() => setShowBatchAddModal(true)}
+            onRenamePlaylist={(pl) => {
+              setRenamePlaylistId(pl.id);
+              setRenamePlaylistName(pl.name);
+              setShowRenamePlaylistModal(true);
+            }}
+            onExportPlaylist={exportPlaylist}
+            onDeletePlaylist={(id) => {
+              if (onDeletePlaylist) onDeletePlaylist(id);
+              setSelectedPlaylistId('all');
+            }}
+            onClearRecentHistory={handleClearRecentHistory}
+            dynamicType={
+              selectedPlaylistId === 'dynamic:top_played'
+                ? 'top_played'
+                : selectedPlaylistId === 'dynamic:recently_played'
+                ? 'recently_played'
+                : selectedPlaylistId === 'dynamic:lossless'
+                ? 'lossless'
+                : null
+            }
+            isLight={isLight}
+          />
+        </div>
       )}
 
       {/* 4. Listening Insights Analytics Panel */}
       {showInsights && (
-        <ListeningInsightsPanel
-          songs={songs}
-          isLight={isLight}
-          onClose={() => setShowInsights(false)}
-          onPlaySong={(s, q) => onPlaySong(s, q || songs)}
-        />
+        <div className="shrink-0 max-h-[30vh] overflow-y-auto rounded-2xl">
+          <ListeningInsightsPanel
+            songs={songs}
+            isLight={isLight}
+            onClose={() => setShowInsights(false)}
+            onPlaySong={(s, q) => onPlaySong(s, q || songs)}
+          />
+        </div>
       )}
 
       {/* 5. Search, Filter, Sort & Export Toolbar */}
-      <LibraryToolbar
-        searchQuery={searchQuery}
-        onSearchChange={setSearchQuery}
-        sourceFilter={sourceFilter}
-        onSourceFilterChange={setSourceFilter}
-        sortOption={sortOption}
-        onSortChange={setSortOption}
-        isBatchMode={isBatchMode}
-        onToggleBatchMode={() => {
-          setIsBatchMode(prev => !prev);
-          clearBatchSelection();
-        }}
-        filteredCount={filteredSongs.length}
-        totalSongsCount={songs.length}
-        selectedPlaylistId={selectedPlaylistId}
-        onExportPlaylist={exportPlaylist}
-        onClearAllSongs={() => setShowClearConfirmModal(true)}
-        isLight={isLight}
-        viewMode={viewMode}
-        onViewModeChange={handleViewModeChange}
-        showInsights={showInsights}
-        onToggleInsights={() => setShowInsights(prev => !prev)}
-        onOpenHealthDoctor={() => setShowHealthDoctor(true)}
-        onOpenNasModal={() => setShowNasModal(true)}
-      />
+      <div className="shrink-0">
+        <LibraryToolbar
+          searchQuery={searchQuery}
+          onSearchChange={setSearchQuery}
+          sourceFilter={sourceFilter}
+          onSourceFilterChange={setSourceFilter}
+          sortOption={sortOption}
+          onSortChange={setSortOption}
+          isBatchMode={isBatchMode}
+          onToggleBatchMode={() => {
+            setIsBatchMode(prev => !prev);
+            clearBatchSelection();
+          }}
+          filteredCount={filteredSongs.length}
+          totalSongsCount={songs.length}
+          selectedPlaylistId={selectedPlaylistId}
+          onExportPlaylist={exportPlaylist}
+          onClearAllSongs={() => setShowClearConfirmModal(true)}
+          isLight={isLight}
+          viewMode={viewMode}
+          onViewModeChange={handleViewModeChange}
+          showInsights={showInsights}
+          onToggleInsights={() => setShowInsights(prev => !prev)}
+          onOpenHealthDoctor={() => setShowHealthDoctor(true)}
+          onOpenNasModal={() => setShowNasModal(true)}
+        />
+      </div>
 
-      {/* 5. Main Song Table Container */}
-      <div className={`rounded-2xl border shadow-xl overflow-hidden transition-colors duration-200 ${
+      {/* 6. Main Song Table Container - Fills remaining viewport height and scrolls independently */}
+      <div className={`flex-1 min-h-[200px] flex flex-col rounded-2xl border shadow-xl overflow-hidden transition-colors duration-200 ${
         isLight ? 'bg-white border-zinc-200 shadow-sm' : 'bg-zinc-900/60 border-white/10'
       }`}>
-        {/* Table Header */}
+        {/* Table Header (Pinned at top) */}
         <SongTableHeader
           isLight={isLight}
           isBatchMode={isBatchMode}
@@ -779,22 +789,24 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
 
         {/* Dual Mode Song List Body: Virtual Scroll Stream vs Standard Paginated */}
         {viewMode === 'virtual' ? (
-          <div>
+          <div className="flex-1 min-h-0 flex flex-col">
             {filteredSongs.length === 0 ? (
-              <LibraryEmptyState
-                sourceFilter={sourceFilter}
-                searchQuery={searchQuery}
-                isLight={isLight}
-                onClearSourceFilter={() => setSourceFilter('all')}
-                onClearSearch={() => setSearchQuery('')}
-                onOpenNavidromeModal={onOpenNavidromeModal}
-              />
+              <div className="flex-1 min-h-0 overflow-y-auto flex flex-col justify-center">
+                <LibraryEmptyState
+                  sourceFilter={sourceFilter}
+                  searchQuery={searchQuery}
+                  isLight={isLight}
+                  onClearSourceFilter={() => setSourceFilter('all')}
+                  onClearSearch={() => setSearchQuery('')}
+                  onOpenNavidromeModal={onOpenNavidromeModal}
+                />
+              </div>
             ) : (
               <VirtualList<Song>
                 items={filteredSongs}
                 itemHeight={72}
                 overscan={8}
-                className={`h-[640px] max-h-[75vh] w-full overflow-y-auto divide-y ${
+                className={`flex-1 min-h-0 h-full w-full overflow-y-auto divide-y ${
                   isLight ? 'divide-zinc-100 scrollbar-thin scrollbar-thumb-zinc-300' : 'divide-white/5 scrollbar-thin scrollbar-thumb-zinc-800'
                 }`}
                 renderItem={(song, songIndex) => {
@@ -830,8 +842,8 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
                 }}
               />
             )}
-            {/* Virtual Stream Status Bar */}
-            <div className={`px-4 sm:px-6 py-3 border-t flex flex-wrap items-center justify-between gap-3 text-xs ${
+            {/* Virtual Stream Status Bar (Pinned at bottom) */}
+            <div className={`shrink-0 px-4 sm:px-6 py-2.5 border-t flex flex-wrap items-center justify-between gap-3 text-xs ${
               isLight ? 'bg-zinc-50 border-zinc-200 text-zinc-600' : 'bg-zinc-950/40 border-white/5 text-zinc-400'
             }`}>
               <div className="flex items-center gap-2">
@@ -868,8 +880,10 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
             </div>
           </div>
         ) : (
-          <>
-            <div className={`divide-y ${isLight ? 'divide-zinc-100' : 'divide-white/5'}`}>
+          <div className="flex-1 min-h-0 flex flex-col">
+            <div className={`flex-1 min-h-0 overflow-y-auto divide-y ${
+              isLight ? 'divide-zinc-100 scrollbar-thin scrollbar-thumb-zinc-300' : 'divide-white/5 scrollbar-thin scrollbar-thumb-zinc-800'
+            }`}>
               {paginatedSongs.length === 0 ? (
                 <LibraryEmptyState
                   sourceFilter={sourceFilter}
@@ -915,7 +929,7 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
               )}
             </div>
 
-            {/* Pagination Bar */}
+            {/* Pagination Bar (Pinned at bottom) */}
             <LibraryPagination
               currentPage={validCurrentPage}
               pageSize={pageSize}
@@ -928,7 +942,7 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
               viewMode={viewMode}
               onViewModeChange={handleViewModeChange}
             />
-          </>
+          </div>
         )}
       </div>
 

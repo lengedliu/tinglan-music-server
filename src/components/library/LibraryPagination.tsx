@@ -32,7 +32,7 @@ export const LibraryPagination: React.FC<LibraryPaginationProps> = ({
 
   return (
     <div
-      className={`px-6 py-4 border-t flex flex-col sm:flex-row items-center justify-between gap-4 text-xs ${
+      className={`shrink-0 px-4 sm:px-6 py-2.5 sm:py-3 border-t flex flex-col sm:flex-row items-center justify-between gap-3 text-xs ${
         isLight
           ? 'bg-zinc-50 border-zinc-200 text-zinc-600'
           : 'bg-zinc-950/40 border-white/5 text-zinc-400'
