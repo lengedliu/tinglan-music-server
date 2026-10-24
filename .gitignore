@@ -6,6 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
-data/
-music/
+/data/
+/music/
+!src/data/
+!src/data/**
 passport_debug.log

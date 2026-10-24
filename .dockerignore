@@ -5,5 +5,7 @@ dist
 .env
 .env.local
 *.log
-music
-data
+/music
+/data
+!src/data
+!src/data/**
