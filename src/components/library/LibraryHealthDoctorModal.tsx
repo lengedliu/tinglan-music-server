@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Activity,
   CheckCircle2,
@@ -396,10 +397,10 @@ export const LibraryHealthDoctorModal: React.FC<LibraryHealthDoctorModalProps> =
     return true;
   });
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/75 backdrop-blur-md animate-fadeIn">
+  return createPortal(
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 sm:p-6 md:p-8 bg-black/75 backdrop-blur-md animate-fadeIn">
       <div
-        className={`w-full max-w-5xl max-h-[92vh] rounded-3xl border shadow-2xl flex flex-col overflow-hidden transition-all ${
+        className={`w-full max-w-5xl max-h-[86vh] rounded-3xl border shadow-2xl flex flex-col overflow-hidden transition-all ${
           isLight ? 'bg-white border-zinc-200 text-zinc-900' : 'bg-zinc-950 border-white/10 text-white'
         }`}
       >
@@ -552,7 +553,7 @@ export const LibraryHealthDoctorModal: React.FC<LibraryHealthDoctorModalProps> =
         </div>
 
         {/* Content Area */}
-        <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-6">
+        <div className="flex-1 min-h-0 overflow-y-auto p-5 sm:p-6 space-y-6">
           {/* TAB 1: AUDIT */}
           {activeTab === 'audit' && (
             <div className="space-y-6 animate-fadeIn">
@@ -1587,6 +1588,7 @@ export const LibraryHealthDoctorModal: React.FC<LibraryHealthDoctorModalProps> =
           onShowToast={onShowToast}
         />
       )}
-    </div>
+    </div>,
+    document.body
   );
 };

@@ -2945,7 +2945,7 @@ export default function App() {
         {/* Scrollable Main Content Area - Only this container scrolls */}
         <main 
           ref={mainContentRef}
-          className="flex-1 min-h-0 w-full overflow-y-auto overflow-x-hidden relative z-10 scroll-smooth"
+          className="flex-1 min-h-0 w-full overflow-y-auto overflow-x-hidden relative scroll-smooth"
         >
           <div className="max-w-[1480px] w-full mx-auto px-3 sm:px-6 lg:px-8 pt-4 sm:pt-6 pb-36 md:pb-28">
             {activeTab === 'library' && (

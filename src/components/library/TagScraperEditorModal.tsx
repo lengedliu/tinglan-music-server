@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Search,
   Sparkles,
@@ -205,10 +206,10 @@ export const TagScraperEditorModal: React.FC<TagScraperEditorModalProps> = ({
   const hasSyncedTimestamps = /\[\d{2}:\d{2}(?:\.\d{1,3})?\]/.test(lyrics);
   const lyricsLineCount = lyrics ? lyrics.trim().split('\n').length : 0;
 
-  return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-6 bg-black/80 backdrop-blur-md animate-fadeIn">
+  return createPortal(
+    <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 sm:p-6 md:p-8 bg-black/80 backdrop-blur-md animate-fadeIn">
       <div
-        className={`w-full max-w-5xl max-h-[92vh] rounded-3xl border shadow-2xl flex flex-col overflow-hidden ${
+        className={`w-full max-w-5xl max-h-[86vh] rounded-3xl border shadow-2xl flex flex-col overflow-hidden ${
           isLight ? 'bg-white border-zinc-200 text-zinc-900' : 'bg-zinc-950 border-white/10 text-white'
         }`}
       >
@@ -247,7 +248,7 @@ export const TagScraperEditorModal: React.FC<TagScraperEditorModalProps> = ({
         </div>
 
         {/* Main 2-Column Workbench */}
-        <div className="flex-1 overflow-y-auto grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-zinc-200 dark:divide-white/10">
+        <div className="flex-1 min-h-0 overflow-y-auto grid grid-cols-1 lg:grid-cols-12 divide-y lg:divide-y-0 lg:divide-x divide-zinc-200 dark:divide-white/10">
           {/* LEFT COLUMN (5 cols): Current Song Tag Editor */}
           <div className="lg:col-span-5 p-5 space-y-4">
             <div className="flex items-center justify-between">
@@ -708,6 +709,7 @@ export const TagScraperEditorModal: React.FC<TagScraperEditorModalProps> = ({
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
