@@ -63,7 +63,7 @@ export interface MusicLibraryProps {
   playlists: Playlist[];
   currentSong: Song | null;
   isPlaying: boolean;
-  onPlaySong: (song: Song, targetQueue?: Song[]) => void;
+  onPlaySong: (song: Song, targetQueue?: Song[], initialSeekSeconds?: number) => void;
   onPlayAll?: (songs: Song[], startIndex?: number) => void;
   onCastSongToXiaomi: (song: Song, targetQueue?: Song[]) => void;
   onCastAllToXiaomi?: (songs: Song[]) => void;
@@ -73,7 +73,8 @@ export interface MusicLibraryProps {
   onOpenUploadModal: () => void;
   onScanMusicDir: () => void;
   isScanning: boolean;
-  onCreatePlaylist: (name: string, description: string) => void;
+  onCreatePlaylist: (name: string, description: string, isShared?: boolean, initialSongIds?: string[]) => void;
+  onPlaylistImported?: (playlist: Playlist) => void;
   onToggleSongInPlaylist?: (songId: string, playlistId: string) => void;
   onDeletePlaylist?: (playlistId: string) => void;
   onRenamePlaylist?: (playlistId: string, newName: string) => void;
@@ -105,6 +106,7 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
   onScanMusicDir,
   isScanning,
   onCreatePlaylist,
+  onPlaylistImported,
   onToggleSongInPlaylist,
   onDeletePlaylist,
   onRenamePlaylist,
@@ -324,7 +326,10 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
     } else if (selectedPlaylistId !== 'all') {
       const targetPl = visiblePlaylists.find(p => p.id === selectedPlaylistId);
       if (targetPl) {
-        result = result.filter(s => targetPl.songIds.includes(s.id));
+        const songMap = new Map(result.map(s => [s.id, s]));
+        result = targetPl.songIds
+          .map(id => songMap.get(id))
+          .filter((s): s is Song => Boolean(s));
       }
     }
 
@@ -661,13 +666,7 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
       {/* 2. Cross-Device Resume Points Shelf (Phase 1) */}
       <ResumePointsShelf
         onPlaySong={(s, pos) => {
-          onPlaySong(s);
-          if (pos && pos > 0) {
-            setTimeout(() => {
-              const audioEl = document.querySelector('audio');
-              if (audioEl) audioEl.currentTime = pos;
-            }, 100);
-          }
+          onPlaySong(s, undefined, pos && pos > 0 ? pos : undefined);
         }}
         onCastSongToXiaomi={(s) => onCastSongToXiaomi(s)}
         activeDevice={activeDevice}
@@ -1008,10 +1007,10 @@ const MusicLibraryComponent: React.FC<MusicLibraryProps> = ({
         allSongs={songs}
         onPlaySong={onPlaySong}
         onImportSuccess={(createdPlaylist, playImmediately) => {
-          if (onCreatePlaylist) {
-            // Already saved in backend, trigger refresh/select
-            setSelectedPlaylistId(createdPlaylist.id);
+          if (onPlaylistImported) {
+            onPlaylistImported(createdPlaylist);
           }
+          setSelectedPlaylistId(createdPlaylist.id);
           if (playImmediately && createdPlaylist.songIds.length > 0) {
             const playlistSongs = createdPlaylist.songIds
               .map(id => songs.find(s => s.id === id))

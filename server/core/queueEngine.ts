@@ -4,7 +4,7 @@ import { Song } from './musicEngine.js';
 import { JsonStore } from '../storage/jsonStore.js';
 import { logEngine } from './logEngine.js';
 
-export type QueueLoopMode = 'all' | 'one' | 'shuffle';
+export type QueueLoopMode = 'all' | 'one' | 'shuffle' | 'off';
 
 export interface QueueStatus {
   queue: Song[];
@@ -46,6 +46,7 @@ export class QueueEngine extends EventEmitter {
   private targetDid: string = '';
   private targetDeviceName: string = '';
   private songStartTime: number = 0;
+  private pausedElapsedSeconds: number = 0;
   private currentDuration: number = 180;
   private currentSongStarted: boolean = false;
   private autoAdvanceTimer: NodeJS.Timeout | null = null;
@@ -141,6 +142,7 @@ export class QueueEngine extends EventEmitter {
       this.isPlaying = false;
       this.currentSongStarted = false;
       this.songStartTime = 0;
+      this.pausedElapsedSeconds = 0;
       this.clearTimer();
       this.stopHeartbeat();
       console.log(`[QueueEngine] 📂 已加载持久化播放队列快照 (静默待命): 共 ${this.queue.length} 首, 停留在第 ${this.currentIndex + 1} 首《${this.queue[this.currentIndex]?.title}》`);
@@ -219,10 +221,14 @@ export class QueueEngine extends EventEmitter {
     } else if (songs.length > 0) {
       this.queue = [...songs];
       const cleanSongId = (song.id || '').replace(/\.(mp3|flac|wav|m4a|aac|ogg|opus)$/i, '');
-      const matchIdx = this.queue.findIndex(s => {
+      // Match by exact song ID first to prevent duplicate song titles from resetting currentIndex to index 0
+      let matchIdx = this.queue.findIndex(s => {
         const cleanS = (s.id || '').replace(/\.(mp3|flac|wav|m4a|aac|ogg|opus)$/i, '');
-        return cleanS === cleanSongId || s.id === song.id || s.title === song.title;
+        return (cleanSongId && cleanS === cleanSongId) || (song.id && s.id === song.id);
       });
+      if (matchIdx === -1 && song.title) {
+        matchIdx = this.queue.findIndex(s => s.title === song.title);
+      }
       if (matchIdx >= 0) {
         this.currentIndex = matchIdx;
       } else {
@@ -237,6 +243,7 @@ export class QueueEngine extends EventEmitter {
     this.isPlaying = true;
     this.currentSongStarted = false;
     this.songStartTime = Date.now();
+    this.pausedElapsedSeconds = 0;
     this.currentDuration = isLive ? 0 : ((song.duration && song.duration > 5) ? song.duration : 180);
 
     console.log(`[QueueEngine] 🔄 同步当前曲目: 第 ${this.currentIndex + 1}/${this.queue.length} 首《${this.queue[this.currentIndex]?.title}》, 模式: ${this.loopMode}, 时长: ${isLive ? '24h无限电台直播' : `${this.currentDuration}s`}`);
@@ -318,10 +325,10 @@ export class QueueEngine extends EventEmitter {
   public getStatus(): QueueStatus {
     const currentSong = this.queue[this.currentIndex] || null;
     const now = Date.now();
-    const elapsed = this.isPlaying && this.songStartTime > 0 
-      ? Math.max(0, Math.floor((now - this.songStartTime) / 1000)) 
-      : 0;
-    const remaining = this.isPlaying && this.currentDuration > 0
+    const elapsed = this.isPlaying && this.songStartTime > 0
+      ? Math.max(0, Math.floor((now - this.songStartTime) / 1000))
+      : (!this.isPlaying && this.pausedElapsedSeconds > 0 ? this.pausedElapsedSeconds : 0);
+    const remaining = this.currentDuration > 0 && (this.isPlaying || this.pausedElapsedSeconds > 0)
       ? Math.max(0, this.currentDuration - elapsed)
       : 0;
 
@@ -372,6 +379,7 @@ export class QueueEngine extends EventEmitter {
     this.isPlaying = true;
     this.currentSongStarted = false;
     this.songStartTime = Date.now();
+    this.pausedElapsedSeconds = 0;
     this.currentDuration = isLive ? 0 : ((song.duration && song.duration > 5) ? song.duration : 180);
 
     console.log(`[QueueEngine] ▶️ 启动全歌单连续投播: 共 ${this.queue.length} 首, 起始首:《${song.title}》, 模式: ${this.loopMode}, 时长: ${isLive ? '24h无限电台直播' : `${this.currentDuration}s`}`);
@@ -489,7 +497,7 @@ export class QueueEngine extends EventEmitter {
     // 1. First time speaker pulls stream for this song
     if (!this.currentSongStarted) {
       this.currentSongStarted = true;
-      this.songStartTime = now;
+      this.songStartTime = now - (this.pausedElapsedSeconds * 1000);
       if (options?.duration && options.duration > 5) {
         this.currentDuration = options.duration;
       } else if (activeSong?.duration && activeSong.duration > 5) {
@@ -662,6 +670,7 @@ export class QueueEngine extends EventEmitter {
     }
 
     // 4. Update playback timer and remaining duration
+    this.pausedElapsedSeconds = elapsedSeconds;
     this.songStartTime = Date.now() - (elapsedSeconds * 1000);
     const remaining = Math.max(5, this.currentDuration - elapsedSeconds);
     this.scheduleAutoAdvance(remaining);
@@ -704,6 +713,14 @@ export class QueueEngine extends EventEmitter {
       // User explicitly wanted single track loop
       nextIdx = this.currentIndex;
       console.log(`[QueueEngine] 🔂 单曲循环模式：重新播放《${this.queue[nextIdx]?.title}》`);
+    } else if (this.loopMode === 'off' && !force && this.currentIndex >= this.queue.length - 1) {
+      // Non-looping mode reached the end of the queue naturally
+      console.log(`[QueueEngine] ⏹️ 顺序播放模式 (off)：已到达队列末尾，自动停止播放`);
+      this.pause();
+      if (this.pauseDispatcher && this.targetDid) {
+        this.pauseDispatcher(this.targetDid).catch(() => {});
+      }
+      return { success: true, song: null, message: '队列已全部播放完毕' };
     } else {
       // Default / 'all': Sequence through whole playlist
       nextIdx = (this.currentIndex + 1) % this.queue.length;
@@ -766,6 +783,7 @@ export class QueueEngine extends EventEmitter {
     this.isPlaying = true;
     this.currentSongStarted = false;
     this.songStartTime = Date.now();
+    this.pausedElapsedSeconds = 0;
     this.currentDuration = isLive ? 0 : ((song.duration && song.duration > 5) ? song.duration : 180);
 
     console.log(`[QueueEngine] ⏭️ 切换至第 ${this.currentIndex + 1}/${this.queue.length} 首:《${song.title}》 (时长: ${isLive ? '24h无限电台直播' : `${this.currentDuration}s`})`);
@@ -867,16 +885,16 @@ export class QueueEngine extends EventEmitter {
       return false;
     }
 
-    const currentTrack = this.queue[this.currentIndex];
     const [movedItem] = this.queue.splice(fromIndex, 1);
     this.queue.splice(toIndex, 0, movedItem);
 
-    // Keep currentIndex synced with the current playing track
-    if (currentTrack) {
-      const newCurrentIdx = this.queue.findIndex(s => s.id === currentTrack.id);
-      if (newCurrentIdx !== -1) {
-        this.currentIndex = newCurrentIdx;
-      }
+    // Keep currentIndex accurately synced by index arithmetic (safe even with duplicate song IDs)
+    if (fromIndex === this.currentIndex) {
+      this.currentIndex = toIndex;
+    } else if (fromIndex < this.currentIndex && toIndex >= this.currentIndex) {
+      this.currentIndex = Math.max(0, this.currentIndex - 1);
+    } else if (fromIndex > this.currentIndex && toIndex <= this.currentIndex) {
+      this.currentIndex = Math.min(this.queue.length - 1, this.currentIndex + 1);
     }
 
     this.emit('change', this.getStatus());
@@ -934,6 +952,7 @@ export class QueueEngine extends EventEmitter {
     this.isPlaying = false;
     this.currentSongStarted = false;
     this.songStartTime = 0;
+    this.pausedElapsedSeconds = 0;
     this.currentDuration = 0;
     this.emit('change', this.getStatus());
   }
@@ -951,6 +970,9 @@ export class QueueEngine extends EventEmitter {
    * Pause queue playback
    */
   public pause() {
+    if (this.isPlaying && this.songStartTime > 0) {
+      this.pausedElapsedSeconds = Math.max(0, Math.floor((Date.now() - this.songStartTime) / 1000));
+    }
     this.clearTimer();
     this.stopHeartbeat();
     this.isPlaying = false;
@@ -970,10 +992,54 @@ export class QueueEngine extends EventEmitter {
       this.emit('change', this.getStatus());
       return;
     }
-    const remaining = Math.max(5, this.currentDuration - Math.floor((Date.now() - this.songStartTime) / 1000));
+    // Restore songStartTime relative to the elapsed seconds accumulated before pause
+    this.songStartTime = Date.now() - (this.pausedElapsedSeconds * 1000);
+    const remaining = Math.max(5, this.currentDuration - this.pausedElapsedSeconds);
     this.scheduleAutoAdvance(remaining);
     this.startHeartbeat();
     this.emit('change', this.getStatus());
+  }
+
+  /**
+   * Seek to a specific position (in seconds) within the current track
+   */
+  public async seek(seekSeconds: number, targetDidOverride?: string): Promise<{ success: boolean; message: string }> {
+    if (targetDidOverride) this.targetDid = targetDidOverride;
+    this.ensureQueueContext();
+    if (this.queue.length === 0) {
+      return { success: false, message: '当前播放队列为空' };
+    }
+    const currentSong = this.queue[this.currentIndex];
+    if (!currentSong) {
+      return { success: false, message: '未找到当前播放曲目' };
+    }
+    if (this.isLiveStream(currentSong)) {
+      return { success: false, message: '直播电台不支持拖动进度' };
+    }
+
+    const clampedSeek = Math.max(0, Math.min(Math.floor(seekSeconds), Math.max(0, this.currentDuration - 2)));
+    this.pausedElapsedSeconds = clampedSeek;
+    this.songStartTime = Date.now() - (clampedSeek * 1000);
+    this.isPlaying = true;
+
+    let dispatchRes: { success: boolean; message?: string; error?: string } = { success: true };
+    if (this.castDispatcher && this.targetDid) {
+      try {
+        dispatchRes = await this.castDispatcher(currentSong, this.targetDid, clampedSeek);
+      } catch (err: any) {
+        dispatchRes = { success: false, error: err.message };
+      }
+    }
+
+    const remaining = Math.max(5, this.currentDuration - clampedSeek);
+    this.scheduleAutoAdvance(remaining);
+    this.startHeartbeat();
+    this.emit('change', this.getStatus());
+
+    return {
+      success: dispatchRes.success,
+      message: dispatchRes.success ? `已跳转至 ${clampedSeek}s 播放` : (dispatchRes.error || '跳转进度失败')
+    };
   }
 
   private scheduleAutoAdvance(durationSeconds: number) {

@@ -24,7 +24,7 @@ export function buildMiotCloudAuth(config: any): MiotCloudAuth | null {
   if (!userId) return null;
 
   // Prefer the correctly-paired xiaomiio (MIoT) credentials
-  const ioToken = String(config.xiaomiioServiceToken || config.xiaomiioToken || '').trim();
+  const ioToken = String(config.xiaomiioServiceToken || config.miotServiceToken || config.xiaomiioToken || '').trim();
   const ioSsecurity = String(config.xiaomiioSsecurity || '').trim();
   if (ioToken && ioSsecurity) {
     return { userId, serviceToken: ioToken, ssecurity: ioSsecurity };
@@ -33,13 +33,16 @@ export function buildMiotCloudAuth(config: any): MiotCloudAuth | null {
   // Fall back to the internally-consistent micoapi (Mina) pair
   const micoToken = String(config.micoServiceToken || config.serviceToken || '').trim();
   const micoSsecurity = String(config.ssecurity || '').trim();
+  if (ioToken && micoSsecurity) {
+    return { userId, serviceToken: ioToken, ssecurity: micoSsecurity };
+  }
   if (micoToken && micoSsecurity) {
     return { userId, serviceToken: micoToken, ssecurity: micoSsecurity };
   }
 
   // Last resort (previous behavior): a token without its matching secret
   if (ioToken || micoToken) {
-    return { userId, serviceToken: ioToken || micoToken, ssecurity: micoSsecurity };
+    return { userId, serviceToken: ioToken || micoToken, ssecurity: ioSsecurity || micoSsecurity };
   }
   return null;
 }

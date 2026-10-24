@@ -118,6 +118,10 @@ export default function App() {
     } catch {}
     return 0.75;
   });
+  const volumeRef = useRef(volume);
+  volumeRef.current = volume;
+  const lastVolumeControlAtRef = useRef<number>(0);
+  const latestSpeakerVolumeByDidRef = useRef<Record<string, number>>({});
   const [isShuffle, setIsShuffle] = useState(() => {
     try {
       return localStorage.getItem('tinglan_is_shuffle') === 'true';
@@ -350,8 +354,17 @@ export default function App() {
     });
   };
 
+  const fadeIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const clearActiveFade = () => {
+    if (fadeIntervalRef.current) {
+      clearInterval(fadeIntervalRef.current);
+      fadeIntervalRef.current = null;
+    }
+  };
+
   const fadeAudioOut = (durationMs: number): Promise<void> => {
     return new Promise((resolve) => {
+      clearActiveFade();
       if (!audioRef.current || durationMs <= 0) {
         resolve();
         return;
@@ -360,7 +373,7 @@ export default function App() {
       const startTime = Date.now();
       const interval = setInterval(() => {
         if (!audioRef.current) {
-          clearInterval(interval);
+          clearActiveFade();
           resolve();
           return;
         }
@@ -368,14 +381,16 @@ export default function App() {
         const progress = Math.min(1, elapsed / durationMs);
         audioRef.current.volume = Math.max(0, startVol * (1 - progress));
         if (progress >= 1) {
-          clearInterval(interval);
+          clearActiveFade();
           resolve();
         }
       }, 40);
+      fadeIntervalRef.current = interval;
     });
   };
 
   const fadeAudioIn = (targetVol: number, durationMs: number): void => {
+    clearActiveFade();
     if (!audioRef.current || durationMs <= 0) {
       if (audioRef.current) audioRef.current.volume = targetVol;
       return;
@@ -384,16 +399,17 @@ export default function App() {
     const startTime = Date.now();
     const interval = setInterval(() => {
       if (!audioRef.current) {
-        clearInterval(interval);
+        clearActiveFade();
         return;
       }
       const elapsed = Date.now() - startTime;
       const progress = Math.min(1, elapsed / durationMs);
       audioRef.current.volume = Math.min(targetVol, targetVol * progress);
       if (progress >= 1) {
-        clearInterval(interval);
+        clearActiveFade();
       }
     }, 40);
+    fadeIntervalRef.current = interval;
   };
 
   const handleToggleABLoop = () => {
@@ -445,7 +461,7 @@ export default function App() {
         // Smooth fade out in the last 60 seconds
         if (prev.smoothFadeOut && prev.remainingSeconds <= 60 && audioRef.current) {
           if (sleepTimerFadeInitialVolRef.current === null) {
-            sleepTimerFadeInitialVolRef.current = volume;
+            sleepTimerFadeInitialVolRef.current = volumeRef.current;
           }
           const fraction = Math.max(0, (prev.remainingSeconds - 1) / 60);
           const fadedVolume = (sleepTimerFadeInitialVolRef.current || 0.75) * fraction;
@@ -457,7 +473,7 @@ export default function App() {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [sleepTimer.enabled, sleepTimer.stopAtEndOfSong, isCasting, activeDevice, volume]);
+  }, [sleepTimer.enabled, sleepTimer.stopAtEndOfSong, isCasting, activeDevice]);
 
   const fetchDevices = () => {
     apiFetch('/api/miot/devices')
@@ -550,7 +566,10 @@ export default function App() {
             }
             if (status.loopMode) {
               if (status.loopMode === 'shuffle') setIsShuffle(true);
-              else if (status.loopMode === 'one' || status.loopMode === 'all') setRepeatMode(status.loopMode);
+              else if (status.loopMode === 'one' || status.loopMode === 'all' || status.loopMode === 'off') {
+                setIsShuffle(false);
+                setRepeatMode(status.loopMode);
+              }
             }
           } else if (status.queue && status.queue.length > 0) {
             // Even if paused, if backend has a casted queue and client had no custom queue saved:
@@ -683,10 +702,14 @@ export default function App() {
     } catch {}
   }, [isCasting]);
 
+  // Debounce localStorage persistence for volume so 60fps dragging never triggers synchronous disk I/O
   useEffect(() => {
-    try {
-      localStorage.setItem('tinglan_volume', String(volume));
-    } catch {}
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem('tinglan_volume', String(volume));
+      } catch {}
+    }, 250);
+    return () => clearTimeout(timer);
   }, [volume]);
 
   useEffect(() => {
@@ -714,6 +737,19 @@ export default function App() {
       if (!status) return;
       // Synchronize speaker queue state in real-time
       if (isCasting) {
+        if (status.currentSong && currentSong && status.currentSong.id !== currentSong.id) {
+          // If Sleep Timer "stopAtEndOfSong" is active during Speaker Cast Mode, intercept track transition and stop playback
+          if (sleepTimer.enabled && sleepTimer.stopAtEndOfSong) {
+            setSleepTimer(prev => ({ ...prev, enabled: false, remainingSeconds: 0 }));
+            setIsPlaying(false);
+            if (activeDevice) {
+              handleControlDevice(activeDevice.did, 'pause');
+            }
+            apiFetch('/api/queue/pause', { method: 'POST' }).catch(() => {});
+            showToast('睡眠定时器已触发', '当前歌曲已投播完毕，已为您自动暂停音箱播放', 'info');
+            return;
+          }
+        }
         if (status.isPlaying !== undefined && !status.isTransitioning) {
           setIsPlaying(Boolean(status.isPlaying));
         }
@@ -773,10 +809,23 @@ export default function App() {
         setSongs(prev => [event.song, ...prev.filter(s => s.id !== event.song.id)]);
       } else if (event.action === 'delete' && event.songId) {
         setSongs(prev => prev.filter(s => s.id !== event.songId));
+        setPlaylists(prev => prev.map(pl => ({
+          ...pl,
+          songIds: pl.songIds ? pl.songIds.filter(id => id !== event.songId) : []
+        })));
       } else if (event.action === 'batch_delete') {
         apiFetch('/api/songs').then(r => r.json()).then(s => {
           if (Array.isArray(s)) setSongs(s);
         }).catch(() => {});
+        fetchPlaylistsFromBackend();
+      }
+    });
+
+    const unsubPlaylistsUpdated = subscribe('playlists_updated', (event: any) => {
+      if (event?.playlists && Array.isArray(event.playlists)) {
+        setPlaylists(event.playlists);
+      } else {
+        fetchPlaylistsFromBackend();
       }
     });
 
@@ -790,9 +839,17 @@ export default function App() {
       const isTarget = data.did === activeDeviceId || (activeDevice && data.did === activeDevice.did);
       if (isTarget) {
         if (typeof data.volume === 'number' && data.volume >= 0) {
-          const normalizedVol = data.volume > 1 ? data.volume / 100 : data.volume;
-          setVolume(normalizedVol);
-          if (audioRef.current) audioRef.current.volume = normalizedVol;
+          // Ignore stale SSE volume updates arriving while the user is actively adjusting volume (2s cooldown)
+          if (Date.now() - lastVolumeControlAtRef.current >= 2000) {
+            const pctVol = data.volume <= 1 && data.volume > 0 ? Math.round(data.volume * 100) : Math.round(data.volume);
+            const normalizedVol = Math.max(0, Math.min(1, pctVol / 100));
+            setVolume(normalizedVol);
+            if (audioRef.current) audioRef.current.volume = normalizedVol;
+            setDevices(prev => prev.map(d => d.did === data.did ? {
+              ...d,
+              status: { ...d.status, volume: pctVol }
+            } : d));
+          }
         }
         if (isCasting && typeof data.isPlaying === 'boolean') {
           setIsPlaying(data.isPlaying);
@@ -810,10 +867,11 @@ export default function App() {
       unsubScanComplete();
       unsubScanError();
       unsubLibraryChange();
+      unsubPlaylistsUpdated();
       unsubTaskExecuted();
       unsubDeviceStatus();
     };
-  }, [subscribe, isCasting, currentSong?.id, activeDeviceId, activeDevice]);
+  }, [subscribe, isCasting, currentSong?.id, activeDeviceId, activeDevice, sleepTimer.enabled, sleepTimer.stopAtEndOfSong]);
 
   // Phase 3: Mobile Lock-Screen Wake-up & Network Reconnection Self-Healing
   const reconcilePlaybackState = useCallback(() => {
@@ -1015,14 +1073,18 @@ export default function App() {
     recordSongPlay(song, deviceName).catch(() => {});
   };
 
-  const handlePlaySong = (song: Song, targetQueue?: Song[]) => {
+  const handlePlaySong = (song: Song, targetQueue?: Song[], initialSeekSeconds?: number) => {
     // Unlock Web Audio API context if present
     if ((window as any).__tinglanAudioCtx && (window as any).__tinglanAudioCtx.state === 'suspended') {
       (window as any).__tinglanAudioCtx.resume().catch(() => {});
     }
 
+    const startOffset = (typeof initialSeekSeconds === 'number' && initialSeekSeconds > 0)
+      ? Math.floor(initialSeekSeconds)
+      : 0;
+
     setCurrentSong(song);
-    timeActions.setCurrentTime(0);
+    timeActions.setCurrentTime(startOffset);
     timeActions.setDuration(song.duration || 200);
 
     const baseQueue = (targetQueue && targetQueue.length > 0)
@@ -1040,13 +1102,15 @@ export default function App() {
 
     if (isCasting) {
       // In Speaker Cast Mode: pause local audio completely and cast to Xiaomi Speaker with active queue context
+      clearActiveFade();
       if (audioRef.current) {
         audioRef.current.pause();
       }
       setIsPlaying(true);
-      castSongToDevice(song, activeDevice, newQueue);
+      castSongToDevice(song, activeDevice, newQueue, startOffset > 0 ? startOffset : undefined);
     } else {
       // In Local Playback Mode: load and play HTML5 audio directly through browser/computer speakers
+      clearActiveFade();
       const isNavi = Boolean((song.id && song.id.startsWith('navidrome-')) || (song.url && song.url.includes('/rest/stream')));
       const playSrc = appendAuthToken((song.url && !song.url.includes('pixabay') && !isNavi) 
         ? song.url 
@@ -1064,7 +1128,17 @@ export default function App() {
         if (!audioRef.current.src || !audioRef.current.src.endsWith(playSrc)) {
           audioRef.current.src = playSrc;
         }
-        audioRef.current.currentTime = 0;
+        audioRef.current.currentTime = startOffset;
+
+        if (startOffset > 0) {
+          const applySeekOnMetadata = () => {
+            if (audioRef.current && Math.abs(audioRef.current.currentTime - startOffset) > 1) {
+              audioRef.current.currentTime = startOffset;
+            }
+            audioRef.current?.removeEventListener('loadedmetadata', applySeekOnMetadata);
+          };
+          audioRef.current.addEventListener('loadedmetadata', applySeekOnMetadata);
+        }
 
         const playPromise = audioRef.current.play();
         if (playPromise !== undefined) {
@@ -1072,6 +1146,9 @@ export default function App() {
             .then(() => {
               setIsPlaying(true);
               isCrossfadingRef.current = false;
+              if (startOffset > 0 && audioRef.current && Math.abs(audioRef.current.currentTime - startOffset) > 1) {
+                audioRef.current.currentTime = startOffset;
+              }
               if (audioSettings.crossfadeDuration > 0 && !isHlsStream) {
                 fadeAudioIn(volume, Math.min(audioSettings.crossfadeDuration * 1000, 3000));
               } else if (audioRef.current) {
@@ -1088,6 +1165,7 @@ export default function App() {
                 const handleCanPlay = () => {
                   if (audioRef.current) {
                     audioRef.current.volume = volume;
+                    if (startOffset > 0) audioRef.current.currentTime = startOffset;
                     audioRef.current.play().then(() => {
                       setIsPlaying(true);
                       if (audioSettings.crossfadeDuration > 0 && !isHlsStream) {
@@ -1111,7 +1189,7 @@ export default function App() {
     if (audioSettings.crossfadeDuration > 0 && !isCasting) {
       await fadeAudioOut(Math.min(audioSettings.crossfadeDuration * 1000, 3000));
     }
-    handleNextSong();
+    handleNextSong(true);
   };
 
   const handlePlayAll = (targetSongs: Song[], startIndex: number = 0, autoCastToSpeaker?: boolean) => {
@@ -1128,8 +1206,7 @@ export default function App() {
 
     if (shouldCast) {
       setIsCasting(true);
-      // Ensure continuous playlist loop unless user explicitly selected 'one'
-      const queueMode = isShuffle ? 'shuffle' : repeatMode === 'one' ? 'one' : 'all';
+      const queueMode = isShuffle ? 'shuffle' : repeatMode;
 
       setCurrentSong(startSong);
       timeActions.setCurrentTime(0);
@@ -1234,13 +1311,7 @@ export default function App() {
       : savedMusicQueue[0];
 
     setPlayQueue(savedMusicQueue);
-    handlePlaySong(songToResume, savedMusicQueue);
-
-    if (savedMusicTime > 0) {
-      setTimeout(() => {
-        handleSeek(savedMusicTime);
-      }, 300);
-    }
+    handlePlaySong(songToResume, savedMusicQueue, savedMusicTime > 0 ? savedMusicTime : undefined);
 
     showToast('已恢复音乐歌单', `已无缝切回音乐队列 (${savedMusicQueue.length} 首): ${songToResume.title}`, 'success');
     setSavedMusicQueue(null);
@@ -1279,14 +1350,30 @@ export default function App() {
     castSongToDevice(song, activeDevice, queueToUse);
   };
 
-  const handleNextSong = () => {
+  const handleNextSong = (isAutoAdvance: boolean = false) => {
     const queue = playQueue.length > 0 ? playQueue : songs;
     if (queue.length === 0) return;
     const currentIndex = queue.findIndex(s => s.id === currentSong?.id);
-    let nextIndex = 0;
 
+    // If non-looping mode ('off') reaches the end of the queue automatically, stop playback cleanly
+    if (isAutoAdvance && !isShuffle && repeatMode === 'off' && currentIndex >= queue.length - 1) {
+      setIsPlaying(false);
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.currentTime = 0;
+      }
+      timeActions.setCurrentTime(0);
+      showToast('播放列表已结束', '顺序播放已完成全部曲目', 'info');
+      return;
+    }
+
+    let nextIndex = 0;
     if (isShuffle) {
-      nextIndex = Math.floor(Math.random() * queue.length);
+      if (queue.length > 1) {
+        do {
+          nextIndex = Math.floor(Math.random() * queue.length);
+        } while (nextIndex === currentIndex);
+      }
     } else {
       nextIndex = (currentIndex + 1) % queue.length;
     }
@@ -1294,13 +1381,25 @@ export default function App() {
     const nextSong = queue[nextIndex];
 
     if (isCasting) {
-      // Route 'Next' directly to Speaker Queue Engine with active queue context
+      // Route 'Next' through backend QueueEngine so currentIndex advances cleanly without re-uploading full queue
       setCurrentSong(nextSong);
       timeActions.setCurrentTime(0);
       timeActions.setDuration(nextSong.duration || 200);
       setIsPlaying(true);
       if (audioRef.current) audioRef.current.pause();
-      castSongToDevice(nextSong, activeDevice, queue);
+      apiFetch('/api/queue/next', { method: 'POST' })
+        .then(r => r.json())
+        .then(res => {
+          if (!res || !res.success) {
+            castSongToDevice(nextSong, activeDevice, queue);
+          } else if (res.song) {
+            setCurrentSong(res.song);
+            timeActions.setDuration(res.song.duration || 200);
+          }
+        })
+        .catch(() => {
+          castSongToDevice(nextSong, activeDevice, queue);
+        });
     } else {
       // Route 'Next' to local browser audio
       handlePlaySong(nextSong, queue);
@@ -1335,13 +1434,25 @@ export default function App() {
     const prevSong = queue[prevIndex];
 
     if (isCasting) {
-      // Route 'Prev' directly to Speaker Queue Engine with active queue context
+      // Route 'Prev' through backend QueueEngine
       setCurrentSong(prevSong);
       timeActions.setCurrentTime(0);
       timeActions.setDuration(prevSong.duration || 200);
       setIsPlaying(true);
       if (audioRef.current) audioRef.current.pause();
-      castSongToDevice(prevSong, activeDevice, queue);
+      apiFetch('/api/queue/prev', { method: 'POST' })
+        .then(r => r.json())
+        .then(res => {
+          if (!res || !res.success) {
+            castSongToDevice(prevSong, activeDevice, queue);
+          } else if (res.song) {
+            setCurrentSong(res.song);
+            timeActions.setDuration(res.song.duration || 200);
+          }
+        })
+        .catch(() => {
+          castSongToDevice(prevSong, activeDevice, queue);
+        });
     } else {
       // Route 'Prev' to local browser audio
       handlePlaySong(prevSong, queue);
@@ -1368,21 +1479,50 @@ export default function App() {
   }, [handleSeek, timeActions]);
 
   const volumeDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const handleVolumeChange = (newVolume: number) => {
-    setVolume(newVolume);
+  const handleVolumeChange = useCallback((newVolume: number) => {
+    const clamped = Math.max(0, Math.min(1, newVolume));
+    // Apply immediately to HTMLAudioElement before React re-render completes
+    if (audioRef.current) {
+      audioRef.current.volume = clamped;
+    }
+    setVolume(clamped);
+
     if (isCasting && activeDevice) {
+      const targetPct = Math.round(clamped * 100);
+      lastVolumeControlAtRef.current = Date.now();
+      latestSpeakerVolumeByDidRef.current[activeDevice.did] = targetPct;
+      setDevices(prev => prev.map(d => d.did === activeDevice.did ? {
+        ...d,
+        status: { ...d.status, volume: targetPct }
+      } : d));
+
       if (volumeDebounceTimerRef.current) clearTimeout(volumeDebounceTimerRef.current);
       volumeDebounceTimerRef.current = setTimeout(() => {
-        handleControlDevice(activeDevice.did, 'volume', Math.round(newVolume * 100));
-      }, 300);
+        handleControlDevice(activeDevice.did, 'volume', targetPct, { silent: true });
+      }, 180);
     }
+  }, [isCasting, activeDevice]);
+
+  const handleToggleShuffle = () => {
+    setIsShuffle(prev => {
+      const nextShuffle = !prev;
+      if (isCasting && activeDevice) {
+        const queueMode = nextShuffle ? 'shuffle' : repeatMode;
+        apiFetch('/api/queue/mode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: queueMode })
+        }).catch(() => {});
+      }
+      return nextShuffle;
+    });
   };
 
   const handleCycleRepeat = () => {
     setRepeatMode(prev => {
       const nextMode = prev === 'off' ? 'all' : prev === 'all' ? 'one' : 'off';
       if (isCasting && activeDevice) {
-        const queueMode = isShuffle ? 'shuffle' : nextMode === 'one' ? 'one' : 'all';
+        const queueMode = isShuffle ? 'shuffle' : nextMode;
         apiFetch('/api/queue/mode', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1394,7 +1534,7 @@ export default function App() {
   };
 
   // Casting Logic to Xiaomi Speaker
-  const castSongToDevice = (song: Song, targetDev: XiaomiDevice | undefined, customQueue?: Song[]) => {
+  const castSongToDevice = (song: Song, targetDev: XiaomiDevice | undefined, customQueue?: Song[], seekSeconds?: number) => {
     const dev = targetDev || activeDevice;
     if (!dev) {
       showToast('未找到可用小米音箱', '请先配置或扫描局域网音箱设备', 'error');
@@ -1412,7 +1552,7 @@ export default function App() {
 
     // Synchronize currentSong state immediately so playerbar & lyrics show track info
     setCurrentSong(song);
-    timeActions.setCurrentTime(0);
+    timeActions.setCurrentTime(seekSeconds && seekSeconds > 0 ? seekSeconds : 0);
     timeActions.setDuration(song.duration || 0);
     setIsPlaying(true);
     setIsCasting(true);
@@ -1443,7 +1583,7 @@ export default function App() {
     }
 
     const queueToSend = (customQueue && customQueue.length > 0) ? customQueue : (playQueue.length > 0 ? playQueue : songs);
-    const queueMode = isShuffle ? 'shuffle' : repeatMode === 'one' ? 'one' : 'all';
+    const queueMode = isShuffle ? 'shuffle' : repeatMode;
 
     // 25-second timeout controller to allow full DLNA/miIO/Cloud multi-track fallback
     const controller = new AbortController();
@@ -1462,7 +1602,8 @@ export default function App() {
         duration: song.duration,
         streamUrl,
         queue: queueToSend,
-        mode: queueMode
+        mode: queueMode,
+        ...(seekSeconds && seekSeconds > 0 ? { seekSeconds } : {})
       }),
       signal: controller.signal
     })
@@ -1586,15 +1727,29 @@ export default function App() {
             clearInterval(checkInterval);
             setCommandState(prev => {
               if (prev.action !== 'cast' || prev.targetDid !== dev.did) return prev;
+              const isVoiceFallback = String(data.protocol || '').includes('Voice') || String(data.protocol || '').includes('Directive');
               return {
                 ...prev,
                 status: 'success',
                 castingStage: 'PLAYING',
                 stageHistory: [
                   { stage: 'COMMAND_SENT', label: '指令发送成功', success: true, timestamp: doneStr },
-                  { stage: 'DEVICE_ACK', label: '音箱已接单确认', success: true, timestamp: doneStr },
-                  { stage: 'STREAM_CONNECTED', label: '音箱正在播放音频', success: true, detail: '音箱已接单播放（云端/局域网直通通道）', timestamp: new Date().toLocaleTimeString() },
-                  { stage: 'PLAYING', label: '高保真播放中', success: true, timestamp: new Date().toLocaleTimeString() }
+                  { stage: 'DEVICE_ACK', label: `音箱已确认接收 (${data.protocol || '云端/局域网'})`, success: true, timestamp: doneStr },
+                  {
+                    stage: 'STREAM_CONNECTED',
+                    label: isVoiceFallback ? '云端语音音源直连' : '指令已下发（未捕获本机拉流）',
+                    success: isVoiceFallback,
+                    detail: isVoiceFallback
+                      ? '音箱正在播放小爱云端曲库音源'
+                      : '12秒内未检测到音箱请求本机音频流，若音箱无声请检查局域网防火墙或固定本机局域网IP',
+                    timestamp: new Date().toLocaleTimeString()
+                  },
+                  {
+                    stage: 'PLAYING',
+                    label: isVoiceFallback ? '云端播放中' : '等待音箱响应',
+                    success: isVoiceFallback,
+                    timestamp: new Date().toLocaleTimeString()
+                  }
                 ]
               };
             });
@@ -1751,14 +1906,41 @@ export default function App() {
     }
   };
 
-  const handleControlDevice = (did: string, action: string, value?: any) => {
-    // UI State -> pending
-    setCommandState({
-      status: 'pending',
-      action: action as any,
-      targetDid: did,
-      timestamp: Date.now()
-    });
+  const handleControlDevice = (did: string, action: string, value?: any, options?: { silent?: boolean }) => {
+    const isVolumeAction = action === 'volume' && typeof value === 'number';
+    const isSilent = Boolean(options?.silent);
+    const requestSentAt = Date.now();
+
+    // Optimistic state update for volume adjustments so the UI slider never snaps back on release
+    if (isVolumeAction) {
+      const targetPct = Math.max(0, Math.min(100, Math.round(value)));
+      lastVolumeControlAtRef.current = requestSentAt;
+      latestSpeakerVolumeByDidRef.current[did] = targetPct;
+
+      setDevices(prev => prev.map(d => d.did === did ? {
+        ...d,
+        status: {
+          ...d.status,
+          volume: targetPct
+        }
+      } : d));
+
+      if (did === activeDeviceId || (activeDevice && did === activeDevice.did)) {
+        const normalized = targetPct / 100;
+        setVolume(normalized);
+        if (audioRef.current) audioRef.current.volume = normalized;
+      }
+    }
+
+    // UI State -> pending (skip noisy pending banner during live silent volume scrubbing)
+    if (!isSilent) {
+      setCommandState({
+        status: 'pending',
+        action: action as any,
+        targetDid: did,
+        timestamp: requestSentAt
+      });
+    }
 
     const controller = new AbortController();
     const timeoutTimer = setTimeout(() => controller.abort(), 12000);
@@ -1778,17 +1960,34 @@ export default function App() {
         return data;
       })
       .then(data => {
-        // UI State -> success
-        setCommandState({
-          status: 'success',
-          action: action as any,
-          targetDid: did,
-          timestamp: Date.now()
-        });
+        if (!isSilent) {
+          setCommandState({
+            status: 'success',
+            action: action as any,
+            targetDid: did,
+            timestamp: Date.now()
+          });
+        }
 
-        // Device State: Update purely from verified server device status
+        // Device State: Update from server response while preserving newer optimistic volume if user kept dragging
         if (data.device) {
-          setDevices(prev => prev.map(d => d.did === did ? data.device : d));
+          const latestOptimisticVol = latestSpeakerVolumeByDidRef.current[did];
+          const hasNewerVolumeCommit = isVolumeAction && lastVolumeControlAtRef.current > requestSentAt;
+
+          setDevices(prev => prev.map(d => {
+            if (d.did !== did) return d;
+            if (hasNewerVolumeCommit && typeof latestOptimisticVol === 'number') {
+              return {
+                ...data.device,
+                status: {
+                  ...data.device.status,
+                  volume: latestOptimisticVol
+                }
+              };
+            }
+            return data.device;
+          }));
+
           if (action === 'pause' || action === 'stop') {
             if (did === activeDeviceId) setIsPlaying(false);
           } else if (action === 'play') {
@@ -1798,6 +1997,7 @@ export default function App() {
       })
       .catch((err: any) => {
         clearTimeout(timeoutTimer);
+        if (isSilent) return;
         const isTimeout = err.name === 'AbortError';
         const errorDesc = isTimeout
           ? `控制指令【${action}】响应超时（6秒）`
@@ -2051,7 +2251,12 @@ export default function App() {
     handlePlaySong(fallbackSong);
   };
 
-  const handleCreatePlaylist = async (name: string, description: string, isShared: boolean = true) => {
+  const handleCreatePlaylist = async (
+    name: string,
+    description: string,
+    isShared: boolean = true,
+    initialSongIds: string[] = []
+  ) => {
     let activeUserId = 'user-admin';
     try {
       const familyUserRes = await apiFetch('/api/family/users');
@@ -2061,6 +2266,8 @@ export default function App() {
       }
     } catch {}
 
+    const safeInitialSongIds = Array.isArray(initialSongIds) ? initialSongIds : [];
+
     try {
       const res = await apiFetch('/api/playlists', {
         method: 'POST',
@@ -2068,7 +2275,7 @@ export default function App() {
         body: JSON.stringify({
           name,
           description,
-          songIds: [],
+          songIds: safeInitialSongIds,
           isShared,
           ownerUserId: activeUserId
         })
@@ -2076,7 +2283,13 @@ export default function App() {
       const data = await res.json();
       if (data.playlist) {
         setPlaylists(prev => [...prev, data.playlist]);
-        showToast('新歌单创建成功', `歌单《${name}》已保存为 ${isShared ? '全家公开共享' : '个人私有歌单'}`, 'success');
+        showToast(
+          '新歌单创建成功',
+          safeInitialSongIds.length > 0
+            ? `已创建《${name}》并将当前歌曲加入歌单`
+            : `歌单《${name}》已保存为 ${isShared ? '全家公开共享' : '个人私有歌单'}`,
+          'success'
+        );
         return;
       }
     } catch (e) {}
@@ -2085,7 +2298,7 @@ export default function App() {
       id: `pl-${Date.now()}`,
       name,
       description,
-      songIds: [],
+      songIds: safeInitialSongIds,
       createdAt: new Date().toISOString().split('T')[0],
       isShared,
       ownerUserId: activeUserId
@@ -2166,6 +2379,11 @@ export default function App() {
       try {
         localStorage.setItem('tinglan_play_queue', JSON.stringify(nextQueue));
       } catch {}
+      apiFetch('/api/queue/replace', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ queue: nextQueue })
+      }).catch(() => {});
       return nextQueue;
     });
     showToast('已加入播放队列', `已将 ${selectedSongs.length} 首歌曲追加至当前队列末尾`, 'success');
@@ -2333,7 +2551,7 @@ export default function App() {
           break;
         case 'KeyS':
           e.preventDefault();
-          setIsShuffle(prev => !prev);
+          handleToggleShuffle();
           break;
         case 'KeyR':
           e.preventDefault();
@@ -2652,7 +2870,7 @@ export default function App() {
                 audioRef.current.play().catch(() => {});
               }
             } else {
-              handleNextSong();
+              handleNextSong(true);
             }
           }}
           onError={(e) => {
@@ -2747,6 +2965,12 @@ export default function App() {
               onScanMusicDir={handleScanMusicDir}
               isScanning={isScanning}
               onCreatePlaylist={handleCreatePlaylist}
+              onPlaylistImported={(importedPl) => {
+                setPlaylists(prev => prev.some(p => p.id === importedPl.id)
+                  ? prev.map(p => p.id === importedPl.id ? importedPl : p)
+                  : [...prev, importedPl]
+                );
+              }}
               onRenamePlaylist={handleRenamePlaylist}
               onToggleSongInPlaylist={handleToggleSongInPlaylist}
               onDeletePlaylist={handleDeletePlaylist}
@@ -2896,7 +3120,7 @@ export default function App() {
           onOpenLyrics={() => setActiveTab('lyrics')}
           onOpenXiaomiPanel={() => setActiveTab('xiaomi')}
           isShuffle={isShuffle}
-          onToggleShuffle={() => setIsShuffle(prev => !prev)}
+          onToggleShuffle={handleToggleShuffle}
           repeatMode={repeatMode}
           onCycleRepeat={handleCycleRepeat}
           onOpenEQ={() => setIsEQModalOpen(true)}
@@ -2909,9 +3133,9 @@ export default function App() {
           onPlaybackSpeedChange={handlePlaybackSpeedChange}
           queueCount={playQueue.length}
           speakerVolume={activeDevice?.status?.volume ?? 40}
-          onSpeakerVolumeChange={(targetVol) => {
+          onSpeakerVolumeChange={(targetVol, silent) => {
             if (activeDevice) {
-              handleControlDevice(activeDevice.did, 'volume', targetVol);
+              handleControlDevice(activeDevice.did, 'volume', targetVol, { silent });
             }
           }}
           onOpenVinyl={() => setIsVinylOpen(true)}
@@ -2962,6 +3186,11 @@ export default function App() {
           onDeviceChange={(dev) => setActiveDeviceId(dev.did)}
           onSelectSong={handlePlaySong}
           onRemoveFromQueue={(songId) => {
+            apiFetch('/api/queue/remove', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ songId })
+            }).catch(() => {});
             setPlayQueue(prev => {
               const nextQueue = prev.filter(s => s.id !== songId);
               if (currentSong?.id === songId) {
@@ -3000,7 +3229,7 @@ export default function App() {
             showToast('播放队列已清空', '本地播放器已重置为待命状态，曲目暂停', 'info');
           }}
           isShuffle={isShuffle}
-          onToggleShuffle={() => setIsShuffle(prev => !prev)}
+          onToggleShuffle={handleToggleShuffle}
           repeatMode={repeatMode}
           onCycleRepeat={handleCycleRepeat}
           onNext={handleNextSong}
@@ -3096,7 +3325,7 @@ export default function App() {
           volume={volume}
           onVolumeChange={handleVolumeChange}
           isShuffle={isShuffle}
-          onToggleShuffle={() => setIsShuffle(prev => !prev)}
+          onToggleShuffle={handleToggleShuffle}
           repeatMode={repeatMode}
           onCycleRepeat={handleCycleRepeat}
           isCasting={isCasting}

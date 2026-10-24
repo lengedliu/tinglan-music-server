@@ -177,8 +177,7 @@ export const adaptiveHeartbeatEngine = new AdaptiveHeartbeatEngine(deviceManager
 export const dynamicPlaylistEngine = new DynamicPlaylistEngine(DATA_DIR);
 const audioTranscoder = ffmpegTranscoder;
 
-// Seed sample harmonic tracks in background
-ensureSampleTracksSeeded(MUSIC_DIR);
+// Sample harmonic tracks will be seeded asynchronously after server listen
 
 // Cryptographically secure, persistent JWT secret
 const JWT_SECRET_FILE = path.join(DATA_DIR, '.jwt_secret');
@@ -219,7 +218,9 @@ function getDefaultUserAvatar(role: string = 'user', username: string = 'user'):
   return USER_AVATAR_PRESETS[Math.abs(hash) % USER_AVATAR_PRESETS.length];
 }
 
-const defaultAdminUser = {
+let storedUsers: any[] = loadJson(USERS_FILE, []);
+let existingAdmin = storedUsers.find(u => u.username === 'admin');
+const defaultAdminUser = existingAdmin || {
   id: 'usr-admin-001',
   username: 'admin',
   email: 'admin@tinglan.audio',
@@ -234,14 +235,19 @@ const defaultAdminUser = {
   createdAt: new Date().toISOString()
 };
 
-let storedUsers: any[] = loadJson(USERS_FILE, [defaultAdminUser]);
-if (!storedUsers.some(u => u.username === 'admin')) {
+if (!existingAdmin) {
   storedUsers.unshift(defaultAdminUser);
 }
+let usersModified = !existingAdmin;
 storedUsers.forEach(u => {
-  if (!u.avatarUrl) u.avatarUrl = getDefaultUserAvatar(u.role, u.username);
+  if (!u.avatarUrl) {
+    u.avatarUrl = getDefaultUserAvatar(u.role, u.username);
+    usersModified = true;
+  }
 });
-saveJson(USERS_FILE, storedUsers);
+if (usersModified) {
+  saveJson(USERS_FILE, storedUsers);
+}
 // [Fix A2] Seed the JWT-revocation registry from persisted password-change stamps
 hydratePasswordChangedAt(storedUsers);
 
@@ -301,17 +307,18 @@ taskSchedulerEngine.setHandlers({
   playPlaylistOnDevice: async (did: string, playlistId: string) => {
     const pl = musicRepository.getAllPlaylists().find(p => p.id === playlistId);
     if (!pl || !pl.songIds || pl.songIds.length === 0) return false;
-    const firstSong = musicRepository.getSongById(pl.songIds[0]);
-    if (!firstSong) return false;
-    const res = await dispatchCastSongDirectly({
-      song: firstSong,
-      targetDid: did,
-      miotConfig,
-      saveMiotConfigFn: (cfg) => persistMiotConfig(cfg),
-      serverPort: PORT,
-      jwtSecret: JWT_SECRET,
-      activeStreamIps
-    });
+    const playlistSongs = pl.songIds
+      .map(id => musicRepository.getSongById(id))
+      .filter((s): s is NonNullable<typeof s> => Boolean(s));
+    if (playlistSongs.length === 0) return false;
+    const dev = deviceRepository.getDeviceByDid(did);
+    const res = await queueEngine.playQueue(
+      playlistSongs,
+      0,
+      did,
+      dev?.name || '小爱音箱',
+      'all'
+    );
     return res.success;
   },
   setVolumeOnDevice: async (did: string, volume: number) => {
@@ -502,21 +509,20 @@ automationService.registerActionHandler(async (scene, context) => {
     } else if (scene.actionType === 'play_playlist') {
       const plId = scene.payload.playlistId || 'all';
       const playlist = musicRepository.getPlaylistById(plId) || musicRepository.getAllPlaylists()[0];
-      const songs = playlist ? musicRepository.getAllSongs().filter(s => playlist.songIds.includes(s.id)) : musicRepository.getAllSongs();
+      const songs = playlist && Array.isArray(playlist.songIds)
+        ? playlist.songIds
+            .map(id => musicRepository.getSongById(id))
+            .filter((s): s is NonNullable<typeof s> => Boolean(s))
+        : musicRepository.getAllSongs();
       if (songs.length > 0) {
-        const castRes = await dispatchCastSongDirectly({
-          song: songs[0],
-          targetDid: dev.did,
-          miotConfig: activeMiotConfig,
-          saveMiotConfigFn: (cfg) => {
-            activeMiotConfig = cfg;
-            persistMiotConfig(cfg);
-          },
-          serverPort: PORT,
-          jwtSecret: JWT_SECRET,
-          activeStreamIps
-        });
-        results.push(`${dev.name}: ${castRes.success ? '歌单曲目推流成功' : '歌单推流指令已下发'}`);
+        const queueRes = await queueEngine.playQueue(
+          songs,
+          0,
+          dev.did,
+          dev.name || '小爱音箱',
+          'all'
+        );
+        results.push(`${dev.name}: ${queueRes.success ? `歌单连续播放已启动 (${songs.length} 首)` : '歌单推流指令已下发'}`);
       }
     } else if (scene.actionType === 'stop_playback') {
       try {
@@ -948,7 +954,8 @@ app.use('/api/miot', createMiotRouter({
   jwtSecret: JWT_SECRET,
   musicDir: MUSIC_DIR,
   activeStreamIps,
-  recentStreamEvents
+  recentStreamEvents,
+  waitForStreamConsumption
 }));
 
 // P0: Scheduled Tasks API
@@ -967,7 +974,8 @@ const groupRouter = createGroupRouter({
     ...args,
     serverPort: PORT,
     jwtSecret: JWT_SECRET,
-    activeStreamIps
+    activeStreamIps,
+    waitForStreamConsumption: waitForStreamConsumption as any
   })
 });
 app.use('/api/groups', groupRouter);
@@ -987,7 +995,8 @@ queueEngine.setCastDispatcher(async (song: any, targetDid: string, seekSeconds?:
     },
     serverPort: PORT,
     jwtSecret: JWT_SECRET,
-    activeStreamIps
+    activeStreamIps,
+    waitForStreamConsumption: waitForStreamConsumption as any
   });
 });
 queueEngine.setSongProvider(() => musicRepository.getAllSongs() as any);
@@ -1175,27 +1184,8 @@ app.all('/api/*', (req: Request, res: Response) => {
 
 // Server bootstrap & entry point
 async function startServer() {
-  restoreSessionAndDevicesOnStartup({
-    getMiotConfig: () => miotConfig,
-    saveMiotConfig: (cfg) => persistMiotConfig(cfg),
-    activeStreamIps,
-    serverPort: PORT,
-    jwtSecret: JWT_SECRET
-  });
-
-  bindVoiceCommandCallbacks({
-    getMiotConfig: () => miotConfig,
-    saveMiotConfig: (cfg) => persistMiotConfig(cfg),
-    activeStreamIps,
-    serverPort: PORT,
-    jwtSecret: JWT_SECRET
-  });
-
-  // Start Real-time Music Directory Auto-Watcher
-  libraryWatcherService.init(MUSIC_DIR, true);
-
   if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
+    const vitePromise = createViteServer({
       server: {
         middlewareMode: true,
         watch: {
@@ -1204,7 +1194,26 @@ async function startServer() {
       },
       appType: 'spa',
     });
-    app.use(vite.middlewares);
+    let viteMiddleware: any = null;
+    vitePromise
+      .then((v) => {
+        viteMiddleware = v.middlewares;
+      })
+      .catch((err) => {
+        console.error('Vite middleware initialization error:', err);
+      });
+
+    app.use(async (req, res, next) => {
+      try {
+        if (!viteMiddleware) {
+          const v = await vitePromise;
+          viteMiddleware = v.middlewares;
+        }
+        return viteMiddleware(req, res, next);
+      } catch (err) {
+        next(err);
+      }
+    });
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
@@ -1216,6 +1225,33 @@ async function startServer() {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`TingLan Music Server running on http://0.0.0.0:${PORT}`);
     console.log(`Local network addresses: ${getLocalNetworkIps().map(ip => `http://${ip}:${PORT}`).join(', ')}`);
+
+    setImmediate(() => {
+      try {
+        ensureSampleTracksSeeded(MUSIC_DIR);
+      } catch (err) {
+        console.warn('[Bootstrap] Sample track seed warning:', err);
+      }
+
+      restoreSessionAndDevicesOnStartup({
+        getMiotConfig: () => miotConfig,
+        saveMiotConfig: (cfg) => persistMiotConfig(cfg),
+        activeStreamIps,
+        serverPort: PORT,
+        jwtSecret: JWT_SECRET
+      });
+
+      bindVoiceCommandCallbacks({
+        getMiotConfig: () => miotConfig,
+        saveMiotConfig: (cfg) => persistMiotConfig(cfg),
+        activeStreamIps,
+        serverPort: PORT,
+        jwtSecret: JWT_SECRET
+      });
+
+      // Start Real-time Music Directory Auto-Watcher
+      libraryWatcherService.init(MUSIC_DIR, true);
+    });
   });
 }
 

@@ -132,7 +132,8 @@ export function createStreamRouter(options: StreamRouterOptions) {
       const matchIp = !targetIp || e.clientIp === targetIp || targetIp.includes(e.clientIp) || e.clientIp.includes(targetIp);
       const cleanEventSong = (e.songId || '').replace(/\.(mp3|flac|wav|m4a|aac|ogg|opus)$/i, '').toLowerCase();
       const matchSong = !cleanSong || cleanEventSong.includes(cleanSong) || cleanSong.includes(cleanEventSong);
-      return matchIp && matchSong && (e.timeMs >= startTime - 1500);
+      const isSpeakerMatch = matchIp || (!e.isBrowser && Boolean(cleanSong));
+      return isSpeakerMatch && matchSong && (e.timeMs >= startTime - 1500);
     });
 
     if (recent) {
@@ -157,7 +158,8 @@ export function createStreamRouter(options: StreamRouterOptions) {
         const matchIp = !targetIp || ev.clientIp === targetIp || targetIp.includes(ev.clientIp) || ev.clientIp.includes(targetIp);
         const cleanEventSong = (ev.songId || '').replace(/\.(mp3|flac|wav|m4a|aac|ogg|opus)$/i, '').toLowerCase();
         const matchSong = !cleanSong || cleanEventSong.includes(cleanSong) || cleanSong.includes(cleanEventSong);
-        if (matchIp && matchSong) {
+        const isSpeakerMatch = matchIp || (!ev.isBrowser && Boolean(cleanSong));
+        if (isSpeakerMatch && matchSong) {
           resolved = true;
           clearTimeout(timer);
           unsubscribe();
@@ -362,12 +364,16 @@ export function createStreamRouter(options: StreamRouterOptions) {
           if (isHlsPlaylist) {
             const playlistText = await upstreamRes.text();
             const baseUrl = new URL(targetUrl);
+            const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
+            const host = (req.headers['x-forwarded-host'] as string) || req.headers.host || req.get('host') || `localhost:${options.port}`;
+            const originPrefix = `${proto}://${host}`;
+            const streamTokenParam = req.query.token ? `&token=${encodeURIComponent(String(req.query.token))}` : '';
             const rewrittenPlaylist = playlistText.split('\n').map(line => {
               const trimmed = line.trim();
               if (!trimmed || trimmed.startsWith('#')) return line;
               try {
                 const fullSegmentUrl = new URL(trimmed, baseUrl).toString();
-                return `/api/radio/proxy?url=${encodeURIComponent(fullSegmentUrl)}`;
+                return `${originPrefix}/api/radio/proxy?url=${encodeURIComponent(fullSegmentUrl)}${streamTokenParam}`;
               } catch {
                 return line;
               }
@@ -790,23 +796,27 @@ export function createStreamRouter(options: StreamRouterOptions) {
       (miotConfig.activeDeviceId ? xiaomiDevices.find((d: any) => d.did === miotConfig.activeDeviceId) : null);
     const resolvedModel = matchedDev?.model || 'wifispeaker';
 
-    // Transcode non-MP3 files on demand
-    if (matchedExt !== '.mp3') {
-      const existingCachePath = options.audioTranscoder.getCachedMp3(localFilePath, cleanSongId);
+    const seekTimeSec = Math.max(0, Math.floor(Number(req.query.t || 0)));
+
+    // Transcode non-MP3 files on demand, or live-seek when ?t= is specified and FFmpeg is available
+    if (matchedExt !== '.mp3' || (seekTimeSec > 0 && options.audioTranscoder.isAvailable())) {
+      const existingCachePath = seekTimeSec === 0 ? options.audioTranscoder.getCachedMp3(localFilePath, cleanSongId) : null;
       if (existingCachePath) {
         localFilePath = existingCachePath;
         matchedExt = '.mp3';
       } else {
-        const durationSec = foundSong?.duration || 240;
+        const durationSec = Math.max(10, (foundSong?.duration || 240) - seekTimeSec);
         const estimatedMp3Size = Math.max(1024 * 1024, Math.round(durationSec * (320 * 1000 / 8)) + 4096);
         const rangeHeader = req.headers.range;
 
         if (req.method === 'HEAD') {
-          options.audioTranscoder.ensureStandardMp3Async(localFilePath, cleanSongId, {
-            clientIp,
-            userAgent,
-            deviceModel: resolvedModel
-          }).catch(() => {});
+          if (seekTimeSec === 0) {
+            options.audioTranscoder.ensureStandardMp3Async(localFilePath, cleanSongId, {
+              clientIp,
+              userAgent,
+              deviceModel: resolvedModel
+            }).catch(() => {});
+          }
 
           res.writeHead(200, {
             'Content-Length': estimatedMp3Size,
@@ -818,19 +828,34 @@ export function createStreamRouter(options: StreamRouterOptions) {
           return res.end();
         }
 
-        // Live streaming pipe
+        // Live streaming pipe (with optional startTimeSeconds seek)
         if (options.audioTranscoder.isAvailable() && (!rangeHeader || rangeHeader === 'bytes=0-' || rangeHeader.startsWith('bytes=0-'))) {
-          const liveSession = await options.audioTranscoder.createLiveTranscodeStreamAsync(localFilePath, 0, {
+          const liveSession = await options.audioTranscoder.createLiveTranscodeStreamAsync(localFilePath, seekTimeSec, {
             sessionId: `stream-${cleanSongId}-${Date.now()}`,
             songId: cleanSongId,
-            persistCache: true,
+            persistCache: seekTimeSec === 0,
             clientIp,
             userAgent,
             deviceModel: resolvedModel,
             timeoutMs: 3000
           });
 
-          if (liveSession && !liveSession.isPassThrough) {
+          if (liveSession && (!liveSession.isPassThrough || seekTimeSec > 0)) {
+            if (!isBrowserClient && clientIp && clientIp !== '127.0.0.1' && clientIp !== 'localhost') {
+              activeStreamIps.add(clientIp);
+            }
+            notifyStreamConsumed({
+              clientIp,
+              songId: String(songId),
+              userAgent,
+              status: rangeHeader ? 206 : 200,
+              timeMs: Date.now(),
+              isBrowser: isBrowserClient,
+              startByte: 0,
+              range: rangeHeader || '',
+              duration: foundSong?.duration
+            });
+
             const isRange = Boolean(rangeHeader);
             res.writeHead(isRange ? 206 : 200, {
               'Content-Type': 'audio/mpeg',
@@ -980,15 +1005,24 @@ export function createStreamRouter(options: StreamRouterOptions) {
         });
         fileStream.pipe(res);
       } else {
+        // If FFmpeg is not available and ?t= seekTimeSec was requested, approximate byte offset
+        const totalDur = foundSong?.duration || 200;
+        const approxStartByte = (seekTimeSec > 0 && totalDur > 0 && seekTimeSec < totalDur)
+          ? Math.min(fileSize - 4096, Math.max(0, Math.floor((seekTimeSec / totalDur) * fileSize)))
+          : 0;
+        const remainingBytes = Math.max(0, fileSize - approxStartByte);
+
         res.writeHead(200, {
-          'Content-Length': fileSize,
+          'Content-Length': remainingBytes,
           'Content-Type': contentType,
           'Accept-Ranges': 'bytes',
           'Cache-Control': 'no-cache',
           'Connection': 'keep-alive'
         });
 
-        const fileStream = fs.createReadStream(localFilePath);
+        const fileStream = approxStartByte > 0
+          ? fs.createReadStream(localFilePath, { start: approxStartByte, end: fileSize - 1 })
+          : fs.createReadStream(localFilePath);
         res.on('close', () => fileStream.destroy());
         res.on('finish', () => {
           if (!isBrowserClient) {

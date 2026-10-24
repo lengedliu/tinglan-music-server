@@ -101,6 +101,9 @@ export function sanitizeDevice(dev: any, isTranscoding = false) {
 
   let deviceState: 'online' | 'offline' | 'unknown' | 'connecting' | 'playing' | 'paused' | 'buffering' | 'transcoding' | 'error' = 'offline';
   const transcodingActive = isTranscoding || (transcodeSemaphorePool.getStats().activeCount > 0 && queueEngine.getStatus().targetDid === dev.did);
+  const isPlayingMerged = dev.status?.playing ?? dev.isPlaying ?? false;
+  const volumeMerged = dev.status?.volume ?? dev.currentVolume ?? 45;
+
   if (!isOnline) {
     deviceState = 'offline';
   } else if (dev.status?.error) {
@@ -109,7 +112,7 @@ export function sanitizeDevice(dev: any, isTranscoding = false) {
     deviceState = 'transcoding';
   } else if (dev.status?.buffering || dev.status?.connecting) {
     deviceState = dev.status?.buffering ? 'buffering' : 'connecting';
-  } else if (dev.status?.playing) {
+  } else if (isPlayingMerged) {
     deviceState = 'playing';
   } else if (dev.status?.paused) {
     deviceState = 'paused';
@@ -158,11 +161,14 @@ export function sanitizeDevice(dev: any, isTranscoding = false) {
     isOnline,
     deviceState,
     hardware: dev.hardware,
-    status: dev.status || {
-      playing: false,
-      volume: 45,
+    status: {
+      playing: isPlayingMerged,
+      volume: volumeMerged,
       muted: false,
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      ...(dev.status || {}),
+      playing: isPlayingMerged,
+      volume: volumeMerged
     },
     raw: dev.raw || undefined
   };
@@ -177,12 +183,14 @@ export function sanitizeMiotConfig(config: any) {
     micoServiceToken,
     miotServiceToken,
     xiaomiioServiceToken,
+    xiaomiioSsecurity,
     passToken,
     psecurity_ph,
     securityToken,
     ...safeConfig
   } = config;
-  const hasToken = Boolean(serviceToken && String(serviceToken).trim().length > 0);
+  const effectiveToken = serviceToken || micoServiceToken || miotServiceToken || xiaomiioServiceToken;
+  const hasToken = Boolean(effectiveToken && String(effectiveToken).trim().length > 0);
   return {
     ...safeConfig,
     hasServiceToken: hasToken,
@@ -190,7 +198,7 @@ export function sanitizeMiotConfig(config: any) {
     hasMiotServiceToken: Boolean(miotServiceToken),
     hasXiaomiioServiceToken: Boolean(xiaomiioServiceToken),
     hasPassToken: Boolean(passToken),
-    serviceToken: hasToken ? `${String(serviceToken).slice(0, 4)}••••••••` : '',
+    serviceToken: hasToken ? `${String(effectiveToken).slice(0, 4)}••••••••` : '',
     miUserMasked: config.miUser ? (config.miUser.length > 4 ? `${config.miUser.slice(0, 2)}***${config.miUser.slice(-2)}` : '***') : ''
   };
 }
@@ -1065,7 +1073,12 @@ export async function dispatchCastSongDirectly(options: DispatchCastOptions): Pr
   const streamToken = `${exp}.${hmac}`;
 
   const seekParam = (typeof seekSeconds === 'number' && seekSeconds > 0) ? `&t=${Math.floor(seekSeconds)}` : '';
-  const resolvedStreamUrl = `${baseHost}/api/stream/${encodeURIComponent(cleanSongId)}.mp3?token=${streamToken}${seekParam}`;
+  let resolvedStreamUrl = `${baseHost}/api/stream/${encodeURIComponent(cleanSongId)}.mp3?token=${streamToken}${seekParam}`;
+  const rawSongUrl = typeof song.url === 'string' ? song.url.trim() : '';
+  const isNavidromeOrRawStream = rawSongUrl && (rawSongUrl.includes('/rest/stream.view') || rawSongUrl.includes(':4533') || rawSongUrl.includes('subsonic'));
+  if (rawSongUrl && (rawSongUrl.includes('/api/radio/') || (rawSongUrl.startsWith('http') && !rawSongUrl.includes('localhost') && !rawSongUrl.includes('127.0.0.1') && !isNavidromeOrRawStream && !rawSongUrl.includes('/api/stream/')))) {
+    resolvedStreamUrl = rawSongUrl.startsWith('/api/') ? `${baseHost}${rawSongUrl}` : rawSongUrl;
+  }
 
   const selectedCastMode = (miotConfig.castMode || 'auto') as any;
 

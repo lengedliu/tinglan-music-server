@@ -571,25 +571,52 @@ export const VinylPlayerModal: React.FC<VinylPlayerModalProps> = ({
             )}
 
             {/* Volume */}
-            <div className="hidden sm:flex items-center gap-2">
+            <div
+              className="hidden sm:flex items-center gap-2 select-none"
+              onWheel={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const cur = isMuted ? 0 : volume;
+                const delta = e.deltaY < 0 ? 0.03 : -0.03;
+                const next = Math.max(0, Math.min(1, Math.round((cur + delta) * 100) / 100));
+                setIsMuted(next === 0);
+                if (next > 0) setPrevVol(next);
+                onVolumeChange(next);
+              }}
+            >
               <button 
                 onClick={handleToggleMute}
-                className="p-1.5 text-zinc-400 hover:text-white transition"
+                className="p-1.5 text-zinc-400 hover:text-white transition cursor-pointer"
+                title={`音量: ${Math.round((isMuted ? 0 : volume) * 100)}% (支持滚轮微调)`}
               >
                 {volume === 0 || isMuted ? <VolumeX className="w-5 h-5 text-red-400" /> : <Volume2 className="w-5 h-5" />}
               </button>
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                value={isMuted ? 0 : volume}
-                onChange={(e) => {
-                  setIsMuted(false);
-                  onVolumeChange(parseFloat(e.target.value));
-                }}
-                className="w-20 h-1.5 accent-[#FF6700] rounded-lg cursor-pointer bg-white/20"
-              />
+              <div className="w-24 h-7 flex items-center relative group/vinylvol">
+                <div className="w-full h-1.5 group-hover/vinylvol:h-2 rounded-full bg-white/20 relative transition-all duration-150 pointer-events-none">
+                  <div
+                    className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-[#FF6700] to-orange-400"
+                    style={{ width: `${Math.round((isMuted ? 0 : volume) * 100)}%` }}
+                  />
+                  <div
+                    className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3 h-3 rounded-full bg-white border-2 border-[#FF6700] shadow-md opacity-0 group-hover/vinylvol:opacity-100 transition-opacity"
+                    style={{ left: `${Math.round((isMuted ? 0 : volume) * 100)}%` }}
+                  />
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={isMuted ? 0 : volume}
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    setIsMuted(val === 0);
+                    if (val > 0) setPrevVol(val);
+                    onVolumeChange(val);
+                  }}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 m-0"
+                />
+              </div>
             </div>
           </div>
         </div>

@@ -1,4 +1,4 @@
-import React, { memo } from 'react';
+import React, { memo, useState, useRef, useEffect, useCallback } from 'react';
 import { 
   Sliders, 
   Moon, 
@@ -40,7 +40,7 @@ export interface MobilePlayerActionsSheetProps {
   onToggleABLoop?: () => void;
   onOpenInspector?: () => void;
   speakerVolume?: number;
-  onSpeakerVolumeChange?: (vol: number) => void;
+  onSpeakerVolumeChange?: (vol: number, silent?: boolean) => void;
   volume: number;
   onVolumeChange: (vol: number) => void;
 }
@@ -73,7 +73,49 @@ export const MobilePlayerActionsSheet: React.FC<MobilePlayerActionsSheetProps> =
   const { themeConfig, isLight: ctxIsLight } = useTheme();
   const isLight = Boolean(ctxIsLight ?? themeConfig?.isLight);
 
+  const [draggingSpeakerVol, setDraggingSpeakerVol] = useState<number | null>(null);
+  const [committedSpeakerVol, setCommittedSpeakerVol] = useState<number | null>(null);
+  const lastLiveDispatchAtRef = useRef<number>(0);
+  const commitHoldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (committedSpeakerVol !== null && Math.abs(speakerVolume - committedSpeakerVol) <= 1) {
+      setCommittedSpeakerVol(null);
+      if (commitHoldTimerRef.current) {
+        clearTimeout(commitHoldTimerRef.current);
+        commitHoldTimerRef.current = null;
+      }
+    }
+  }, [speakerVolume, committedSpeakerVol]);
+
+  useEffect(() => {
+    return () => {
+      if (commitHoldTimerRef.current) clearTimeout(commitHoldTimerRef.current);
+    };
+  }, []);
+
+  const commitMobileSpeakerVol = useCallback((finalVal: number) => {
+    const clamped = Math.max(0, Math.min(100, Math.round(finalVal)));
+    setDraggingSpeakerVol(null);
+    setCommittedSpeakerVol(clamped);
+    if (commitHoldTimerRef.current) clearTimeout(commitHoldTimerRef.current);
+    commitHoldTimerRef.current = setTimeout(() => {
+      setCommittedSpeakerVol(null);
+    }, 2200);
+    if (onSpeakerVolumeChange) {
+      onSpeakerVolumeChange(clamped, false);
+    }
+  }, [onSpeakerVolumeChange]);
+
   if (!isOpen) return null;
+
+  const effectiveSpeakerVol =
+    draggingSpeakerVol !== null
+      ? draggingSpeakerVol
+      : committedSpeakerVol !== null
+        ? committedSpeakerVol
+        : speakerVolume;
+  const displayPercent = isCasting ? Math.round(effectiveSpeakerVol) : Math.round(volume * 100);
 
   return (
     <div className="fixed inset-0 z-[80] md:hidden flex flex-col justify-end animate-in fade-in duration-200">
@@ -121,30 +163,56 @@ export const MobilePlayerActionsSheet: React.FC<MobilePlayerActionsSheetProps> =
                 {isCasting ? <Speaker className="w-4 h-4 text-[#FF6700]" /> : <Laptop className="w-4 h-4 text-zinc-400" />}
                 {isCasting ? `音箱音量 (${activeDevice?.name || '小爱音箱'})` : '浏览器本地音量'}
               </span>
-              <span className="font-mono text-[#FF6700]">
-                {isCasting ? `${speakerVolume}%` : `${Math.round(volume * 100)}%`}
+              <span className="font-mono text-[#FF6700] font-bold">
+                {displayPercent}%
               </span>
             </div>
-            {isCasting ? (
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value={speakerVolume}
-                onChange={(e) => onSpeakerVolumeChange && onSpeakerVolumeChange(Number(e.target.value))}
-                className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-[#FF6700] bg-zinc-700/50"
-              />
-            ) : (
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                value={volume}
-                onChange={(e) => onVolumeChange(Number(e.target.value))}
-                className="w-full h-2 rounded-lg appearance-none cursor-pointer accent-[#FF6700] bg-zinc-700/50"
-              />
-            )}
+            <div className="relative h-8 flex items-center select-none">
+              <div className={`w-full h-2.5 rounded-full relative pointer-events-none ${
+                isLight ? 'bg-zinc-200' : 'bg-zinc-700/80'
+              }`}>
+                <div
+                  className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-[#FF6700] to-orange-400"
+                  style={{ width: `${displayPercent}%` }}
+                />
+                <div
+                  className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-4 h-4 rounded-full bg-white border-2 border-[#FF6700] shadow-md"
+                  style={{ left: `${displayPercent}%` }}
+                />
+              </div>
+              {isCasting ? (
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={effectiveSpeakerVol}
+                  onChange={(e) => {
+                    const nextVal = Number(e.target.value);
+                    setDraggingSpeakerVol(nextVal);
+                    const now = Date.now();
+                    if (now - lastLiveDispatchAtRef.current >= 180) {
+                      lastLiveDispatchAtRef.current = now;
+                      if (onSpeakerVolumeChange) onSpeakerVolumeChange(nextVal, true);
+                    }
+                  }}
+                  onPointerUp={(e) => commitMobileSpeakerVol(Number((e.target as HTMLInputElement).value))}
+                  onTouchEnd={(e) => commitMobileSpeakerVol(Number((e.target as HTMLInputElement).value))}
+                  onMouseUp={(e) => commitMobileSpeakerVol(Number((e.target as HTMLInputElement).value))}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 m-0"
+                />
+              ) : (
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={volume}
+                  onChange={(e) => onVolumeChange(Number(e.target.value))}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 m-0"
+                />
+              )}
+            </div>
           </div>
 
           {/* Quick Cast Toggle Button */}

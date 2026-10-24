@@ -428,6 +428,21 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
       setSongs(storedSongs);
       musicRepository.deleteSong(id);
       musicRepository.deleteSong(safeId);
+
+      // Clean deleted song reference from all playlists
+      const storedPlaylists = getPlaylists();
+      let plModified = false;
+      for (const pl of storedPlaylists) {
+        if (pl.songIds && pl.songIds.length > 0) {
+          const origLen = pl.songIds.length;
+          pl.songIds = pl.songIds.filter(sId => sId !== id && sId !== safeId);
+          if (pl.songIds.length < origLen) plModified = true;
+        }
+      }
+      if (plModified) {
+        setPlaylists(storedPlaylists);
+      }
+
       appEventBus.broadcast('library:change', {
         action: 'delete',
         songId: id,
@@ -632,18 +647,7 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
     res.json({ success: true, message: `已清空全部 ${count} 首歌曲`, count });
   });
 
-  // Toggle Favorite
-  router.post('/:id/favorite', (req: Request, res: Response) => {
-    const { id } = req.params;
-    const storedSongs = getSongs();
-    const song = storedSongs.find(s => s.id === id);
-    if (song) {
-      song.isFavorite = !song.isFavorite;
-      setSongs(storedSongs);
-      return res.json({ success: true, isFavorite: song.isFavorite });
-    }
-    res.status(404).json({ error: 'Song not found' });
-  });
+  // Toggle or Set Favorite (unified below with interactionRepository)
 
   // Track playback event (increment playCount, record listening history)
   router.post('/:id/play', (req: Request, res: Response) => {
@@ -693,20 +697,20 @@ export function createSongsRouter(options: SongsRouterOptions): Router {
     res.json({ success: true, interactions });
   });
 
-  // Set favorite state
+  // Toggle or Set favorite state (unified single route)
   router.post('/:id/favorite', (req: Request, res: Response) => {
     const { id } = req.params;
     const { isFavorite } = req.body || {};
     const clientUser = (req as any).user;
-    const favValue = typeof isFavorite === 'boolean' ? isFavorite : true;
+
+    const songs = getSongs();
+    const song = songs.find(s => s.id === id || s.id.replace(/\.[^.]+$/, '') === id);
+    const favValue = typeof isFavorite === 'boolean' ? isFavorite : (song ? !song.isFavorite : true);
 
     if (clientUser?.id) {
       interactionRepository.setFavorite(clientUser.id, id, favValue);
     }
 
-    // Also sync global song object isFavorite for single-user fallback
-    const songs = getSongs();
-    const song = songs.find(s => s.id === id || s.id.replace(/\.[^.]+$/, '') === id);
     if (song) {
       song.isFavorite = favValue;
       setSongs(songs);
@@ -946,7 +950,8 @@ export function createPlaylistsRouter(options: PlaylistsRouterOptions): Router {
 
     // If autoApply is requested, compute and update playlist songIds immediately
     if (body.autoApply && getSongs) {
-      const allSongs = getSongs();
+      const rawSongs = getSongs();
+      const allSongs = dynamicPlaylistEngine ? dynamicPlaylistEngine.enrichSongs(rawSongs) : rawSongs;
       const matched = smartPlaylistRepository.evaluateRules(allSongs, saved);
       const storedPlaylists = getPlaylists();
       const pl = storedPlaylists.find(p => p.id === id);
@@ -966,7 +971,8 @@ export function createPlaylistsRouter(options: PlaylistsRouterOptions): Router {
     if (!rule) {
       return res.status(400).json({ success: false, error: '未找到智能规则配置' });
     }
-    const allSongs = getSongs ? getSongs() : [];
+    const rawSongs = getSongs ? getSongs() : [];
+    const allSongs = dynamicPlaylistEngine ? dynamicPlaylistEngine.enrichSongs(rawSongs) : rawSongs;
     const matchedSongs = smartPlaylistRepository.evaluateRules(allSongs, rule);
 
     if (req.body.applyToPlaylist) {
@@ -1008,25 +1014,27 @@ export function createPlaylistsRouter(options: PlaylistsRouterOptions): Router {
   });
 
   router.post('/', (req: Request, res: Response) => {
-    const { name, description, songIds } = req.body;
+    const { name, description, songIds, isShared, ownerUserId, coverUrl } = req.body;
     const storedPlaylists = getPlaylists();
-    const newPl = {
+    const newPl: Playlist = {
       id: `pl-${Date.now()}`,
       name: name || '新建歌单',
       description: description || '',
-      coverUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=600&q=80',
+      coverUrl: coverUrl || 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=600&q=80',
       songIds: Array.isArray(songIds) ? songIds : [],
-      createdAt: new Date().toISOString().split('T')[0]
+      createdAt: new Date().toISOString().split('T')[0],
+      ...(typeof isShared === 'boolean' ? { isShared } : { isShared: true }),
+      ...(ownerUserId ? { ownerUserId } : {})
     };
     storedPlaylists.push(newPl);
     setPlaylists(storedPlaylists);
     res.json({ success: true, playlist: newPl, playlists: storedPlaylists });
   });
 
-  // Update playlist (name, description, songIds)
+  // Update playlist (name, description, songIds, isShared, ownerUserId, coverUrl)
   router.put('/:id', (req: Request, res: Response) => {
     const { id } = req.params;
-    const { name, description, songIds } = req.body;
+    const { name, description, songIds, isShared, ownerUserId, coverUrl } = req.body;
     const storedPlaylists = getPlaylists();
     const playlist = storedPlaylists.find(p => p.id === id);
     if (!playlist) {
@@ -1036,6 +1044,9 @@ export function createPlaylistsRouter(options: PlaylistsRouterOptions): Router {
     if (name !== undefined) playlist.name = name.trim();
     if (description !== undefined) playlist.description = description.trim();
     if (Array.isArray(songIds)) playlist.songIds = songIds;
+    if (typeof isShared === 'boolean') playlist.isShared = isShared;
+    if (ownerUserId !== undefined) playlist.ownerUserId = ownerUserId;
+    if (coverUrl !== undefined) playlist.coverUrl = coverUrl;
 
     setPlaylists(storedPlaylists);
     res.json({ success: true, playlist, playlists: storedPlaylists });

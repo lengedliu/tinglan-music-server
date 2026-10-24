@@ -26,6 +26,8 @@ export class MusicRepository {
   private playlistsPersistTimer: NodeJS.Timeout | null = null;
   private isPersistingSongs: boolean = false;
   private isPersistingPlaylists: boolean = false;
+  private pendingSongsRePersist: boolean = false;
+  private pendingPlaylistsRePersist: boolean = false;
   private sqliteDb: any = null;
 
   constructor(dataDir: string = path.join(process.cwd(), 'data')) {
@@ -338,7 +340,10 @@ export class MusicRepository {
    * Atomic asynchronous persistence using temporary file and rename
    */
   public async persistSongsAsync(): Promise<void> {
-    if (this.isPersistingSongs) return;
+    if (this.isPersistingSongs) {
+      this.pendingSongsRePersist = true;
+      return;
+    }
     this.isPersistingSongs = true;
     const tmpFile = `${this.songsFile}.tmp.${Date.now()}`;
     try {
@@ -353,11 +358,18 @@ export class MusicRepository {
       } catch {}
     } finally {
       this.isPersistingSongs = false;
+      if (this.pendingSongsRePersist) {
+        this.pendingSongsRePersist = false;
+        this.schedulePersistSongs(100);
+      }
     }
   }
 
   public async persistPlaylistsAsync(): Promise<void> {
-    if (this.isPersistingPlaylists) return;
+    if (this.isPersistingPlaylists) {
+      this.pendingPlaylistsRePersist = true;
+      return;
+    }
     this.isPersistingPlaylists = true;
     const tmpFile = `${this.playlistsFile}.tmp.${Date.now()}`;
     try {
@@ -372,6 +384,10 @@ export class MusicRepository {
       } catch {}
     } finally {
       this.isPersistingPlaylists = false;
+      if (this.pendingPlaylistsRePersist) {
+        this.pendingPlaylistsRePersist = false;
+        this.schedulePersistPlaylists(100);
+      }
     }
   }
 

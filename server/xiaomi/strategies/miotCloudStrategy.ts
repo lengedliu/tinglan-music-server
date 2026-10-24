@@ -1,6 +1,6 @@
 import { ICastStrategy, CastContext } from './castStrategy.js';
 import { CastResult } from '../xiaomiAdapter.js';
-import { miotRpcEngine } from '../../miotRpc.js';
+import { miotRpcEngine, buildMiotCloudAuth } from '../../miotRpc.js';
 
 export class MiotCloudCastStrategy implements ICastStrategy {
   public name = 'MIoT_Cloud_Spec';
@@ -8,9 +8,8 @@ export class MiotCloudCastStrategy implements ICastStrategy {
 
   public canHandle(ctx: CastContext): boolean {
     if (ctx.castMode === 'xiaoai_directive') return false;
-    const activeIoToken = ctx.miotConfig?.miotServiceToken || ctx.miotConfig?.xiaomiioServiceToken || ctx.miotConfig?.serviceToken;
-    const activeSsec = ctx.miotConfig?.ssecurity;
-    return Boolean(ctx.miotConfig?.isLoggedIn && ctx.miotConfig?.userId && (activeIoToken || activeSsec));
+    const miotAuth = buildMiotCloudAuth(ctx.miotConfig);
+    return Boolean(ctx.miotConfig?.isLoggedIn && miotAuth && miotAuth.serviceToken && miotAuth.ssecurity);
   }
 
   private isMiotActionSuccess(res: any): boolean {
@@ -26,16 +25,11 @@ export class MiotCloudCastStrategy implements ICastStrategy {
 
   public async execute(ctx: CastContext): Promise<CastResult | null> {
     const { targetDevice, streamUrl, songTitle, steps, nowStr, verifyStreamConsumed, miotConfig } = ctx;
-    const activeIoToken = miotConfig?.miotServiceToken || miotConfig?.xiaomiioServiceToken || miotConfig?.serviceToken;
-    const activeSsec = miotConfig?.ssecurity;
+    const miotAuth = buildMiotCloudAuth(miotConfig);
+    if (!miotAuth) return null;
 
     try {
       console.log(`[CastStrategy][MIoT] Inspecting MIoT Spec for "${targetDevice.model || 'unknown'}"...`);
-      const miotAuth = {
-        userId: String(miotConfig.userId),
-        serviceToken: activeIoToken,
-        ssecurity: activeSsec
-      };
 
       const specInfo = await miotRpcEngine.inspectDeviceMediaSpec(targetDevice.model || '');
 

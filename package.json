@@ -4,9 +4,9 @@
   "version": "2.0.0",
   "type": "module",
   "scripts": {
-    "dev": "cross-env NODE_OPTIONS=\"--openssl-legacy-provider\" tsx server.ts",
+    "dev": "tsx server.ts",
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external \"--define:import.meta.url=\\\"require('url').pathToFileURL(__filename).href\\\"\" --sourcemap --outfile=dist/server.cjs",
-    "start": "cross-env NODE_OPTIONS=\"--openssl-legacy-provider\" node dist/server.cjs",
+    "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit"

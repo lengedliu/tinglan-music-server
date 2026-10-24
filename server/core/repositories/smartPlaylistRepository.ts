@@ -203,10 +203,10 @@ export class SmartPlaylistRepository {
         else if (cond.field === 'genre') actualVal = song.genre;
         else if (cond.field === 'year') actualVal = song.year;
         else if (cond.field === 'duration') actualVal = song.duration;
-        else if (cond.field === 'rating' && interactions) {
-          actualVal = interactions.get(song.id)?.rating || 0;
-        } else if (cond.field === 'playCount' && interactions) {
-          actualVal = interactions.get(song.id)?.playCount || 0;
+        else if (cond.field === 'rating') {
+          actualVal = interactions?.get(song.id)?.rating ?? (song as any).rating ?? 0;
+        } else if (cond.field === 'playCount') {
+          actualVal = interactions?.get(song.id)?.playCount ?? song.playCount ?? 0;
         }
 
         if (actualVal === undefined || actualVal === null) return false;
@@ -241,9 +241,27 @@ export class SmartPlaylistRepository {
     if (rule.sortBy === 'random') {
       matched.sort(() => Math.random() - 0.5);
     } else if (rule.sortBy === 'title') {
-      matched.sort((a, b) => a.title.localeCompare(b.title));
+      matched.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
     } else if (rule.sortBy === 'artist') {
       matched.sort((a, b) => (a.artist || '').localeCompare(b.artist || ''));
+    } else if (rule.sortBy === 'play_count') {
+      matched.sort((a, b) => {
+        const countA = interactions?.get(a.id)?.playCount ?? a.playCount ?? 0;
+        const countB = interactions?.get(b.id)?.playCount ?? b.playCount ?? 0;
+        return countB - countA;
+      });
+    } else if (rule.sortBy === 'rating') {
+      matched.sort((a, b) => {
+        const ratingA = interactions?.get(a.id)?.rating ?? (a as any).rating ?? 0;
+        const ratingB = interactions?.get(b.id)?.rating ?? (b as any).rating ?? 0;
+        return ratingB - ratingA;
+      });
+    } else if (rule.sortBy === 'recently_added') {
+      matched.sort((a, b) => {
+        const timeA = (a as any).addedAt || a.lastPlayedAt || 0;
+        const timeB = (b as any).addedAt || b.lastPlayedAt || 0;
+        return Number(timeB) - Number(timeA);
+      });
     }
 
     // Limit

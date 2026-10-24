@@ -18,7 +18,7 @@ export interface LibraryModalsProps {
   // 1. New Playlist Modal
   showNewPlaylistModal: boolean;
   onCloseNewPlaylistModal: () => void;
-  onCreatePlaylist: (name: string, description: string, isShared?: boolean) => void;
+  onCreatePlaylist: (name: string, description: string, isShared?: boolean, initialSongIds?: string[]) => void;
 
   // 2. Add Single Song to Playlist Modal
   songToAddToPlaylist: Song | null;
@@ -101,7 +101,8 @@ export const LibraryModals: React.FC<LibraryModalsProps> = ({
 
   const handleInlineCreateAndAdd = () => {
     if (!inlineNewPlaylistName.trim()) return;
-    onCreatePlaylist(inlineNewPlaylistName.trim(), '快速创建歌单');
+    const initialIds = songToAddToPlaylist ? [songToAddToPlaylist.id] : [];
+    onCreatePlaylist(inlineNewPlaylistName.trim(), '快速创建歌单', true, initialIds);
     setInlineNewPlaylistName('');
   };
 

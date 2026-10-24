@@ -75,7 +75,18 @@ export class DeviceManager {
   public updateDevice(did: string, updates: Partial<XiaomiDevice>): XiaomiDevice | null {
     const dev = deviceRepository.getDeviceByDid(did);
     if (!dev) return null;
-    const merged = { ...dev, ...updates };
+    const nextStatus = {
+      playing: false,
+      volume: 45,
+      muted: false,
+      ...(dev as any).status
+    };
+    if (updates.isPlaying !== undefined) nextStatus.playing = updates.isPlaying;
+    if (updates.currentVolume !== undefined && updates.currentVolume > 0) nextStatus.volume = updates.currentVolume;
+    if (updates.currentTrack !== undefined && updates.currentTrack) nextStatus.currentTitle = updates.currentTrack;
+    nextStatus.updatedAt = new Date().toISOString();
+
+    const merged = { ...dev, ...updates, status: nextStatus };
     deviceRepository.addOrUpdateDevice(merged as any);
     this.enrichHardwareProfiles();
     return deviceRepository.getDeviceByDid(did) as XiaomiDevice;
@@ -84,7 +95,18 @@ export class DeviceManager {
   public updatePlaybackState(did: string, isPlaying: boolean, trackName?: string, volume?: number) {
     const dev = deviceRepository.getDeviceByDid(did);
     if (dev) {
-      const updates: any = { isPlaying };
+      const nextStatus = {
+        playing: isPlaying,
+        volume: volume !== undefined && volume > 0 ? volume : ((dev as any).status?.volume ?? 45),
+        muted: (dev as any).status?.muted ?? false,
+        ...(dev as any).status,
+        updatedAt: new Date().toISOString()
+      };
+      nextStatus.playing = isPlaying;
+      if (trackName !== undefined && trackName) nextStatus.currentTitle = trackName;
+      if (volume !== undefined && volume > 0) nextStatus.volume = volume;
+
+      const updates: any = { isPlaying, status: nextStatus };
       if (trackName !== undefined) updates.currentTrack = trackName;
       if (volume !== undefined) updates.currentVolume = volume;
       deviceRepository.addOrUpdateDevice({ ...dev, ...updates } as any);

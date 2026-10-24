@@ -1,15 +1,14 @@
 import { ICastStrategy, CastContext } from './castStrategy.js';
 import { CastResult } from '../xiaomiAdapter.js';
-import { miotRpcEngine } from '../../miotRpc.js';
+import { miotRpcEngine, buildMiotCloudAuth } from '../../miotRpc.js';
 
 export class VoiceDirectiveCastStrategy implements ICastStrategy {
   public name = 'Voice_Directive_Fallback';
   public priority = 10;
 
   public canHandle(ctx: CastContext): boolean {
-    const activeIoToken = ctx.miotConfig?.miotServiceToken || ctx.miotConfig?.xiaomiioServiceToken || ctx.miotConfig?.serviceToken;
-    const activeSsec = ctx.miotConfig?.ssecurity;
-    return Boolean(ctx.miotConfig?.isLoggedIn && ctx.miotConfig?.userId && (activeIoToken || activeSsec));
+    const miotAuth = buildMiotCloudAuth(ctx.miotConfig);
+    return Boolean(ctx.miotConfig?.isLoggedIn && miotAuth && miotAuth.serviceToken && miotAuth.ssecurity);
   }
 
   private isMiotActionSuccess(res: any): boolean {
@@ -25,15 +24,10 @@ export class VoiceDirectiveCastStrategy implements ICastStrategy {
 
   public async execute(ctx: CastContext): Promise<CastResult | null> {
     const { targetDevice, streamUrl, songTitle, songArtist, steps, nowStr, miotConfig } = ctx;
-    const activeIoToken = miotConfig?.miotServiceToken || miotConfig?.xiaomiioServiceToken || miotConfig?.serviceToken;
-    const activeSsec = miotConfig?.ssecurity;
+    const miotAuth = buildMiotCloudAuth(miotConfig);
+    if (!miotAuth) return null;
 
     const songQuery = songArtist ? `${songArtist} 的 ${songTitle}` : (songTitle || '音乐');
-    const miotAuth = {
-      userId: String(miotConfig.userId),
-      serviceToken: activeIoToken,
-      ssecurity: activeSsec
-    };
 
     try {
       console.log(`[CastStrategy][Voice] Sending Cloud Voice Directive (siid=7, aiid=4): "播放 ${songQuery}"`);

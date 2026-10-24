@@ -129,7 +129,7 @@ export function createQueueRouter(options: QueueRouterOptions): Router {
   // Update loop mode
   router.post('/mode', (req: Request, res: Response) => {
     const { mode } = req.body;
-    if (mode && ['all', 'one', 'shuffle'].includes(mode)) {
+    if (mode && ['all', 'one', 'shuffle', 'off'].includes(mode)) {
       queueEngine.setLoopMode(mode);
     }
     res.json({

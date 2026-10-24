@@ -68,24 +68,38 @@ export function restoreSessionAndDevicesOnStartup(options: BootstrapOptions): vo
         const micoToken = micoRes.status === 'fulfilled' ? micoRes.value.serviceToken : '';
         const ioToken = ioRes.status === 'fulfilled' ? ioRes.value.serviceToken : '';
         const recoveredUid = (micoRes.status === 'fulfilled' && micoRes.value.userId) || (ioRes.status === 'fulfilled' && ioRes.value.userId) || candidateUid;
-        const ssec = (micoRes.status === 'fulfilled' && micoRes.value.ssecurity) || (ioRes.status === 'fulfilled' && ioRes.value.ssecurity) || miotConfig.ssecurity;
+        const micoSsec = micoRes.status === 'fulfilled' ? micoRes.value.ssecurity : '';
+        const ioSsec = ioRes.status === 'fulfilled' ? ioRes.value.ssecurity : '';
 
         if (micoToken || ioToken) {
           if (micoToken) {
             miotConfig.micoServiceToken = micoToken;
             miotConfig.serviceToken = micoToken;
           }
-          if (ioToken) miotConfig.miotServiceToken = ioToken;
+          if (ioToken) {
+            miotConfig.miotServiceToken = ioToken;
+            miotConfig.xiaomiioServiceToken = ioToken;
+            miotConfig.xiaomiioToken = ioToken;
+            if (!micoToken) {
+              miotConfig.serviceToken = ioToken;
+            }
+          }
           miotConfig.isMicoValid = Boolean(micoToken);
-          if (ssec) miotConfig.ssecurity = ssec;
+          if (micoSsec || ioSsec) {
+            miotConfig.ssecurity = micoSsec || ioSsec;
+          }
+          if (ioSsec) {
+            miotConfig.xiaomiioSsecurity = ioSsec;
+          }
           if (recoveredUid && recoveredUid !== '0') {
             miotConfig.userId = recoveredUid;
             miotConfig.miUser = `uid_${recoveredUid}`;
           }
           miotConfig.isLoggedIn = true;
+          miotConfig.isCredentialsDead = false;
           isValid = true;
           saveMiotConfig(miotConfig);
-          console.log(`[Auth] 🔑 启动自检：已通过 passToken 为用户 ${miotConfig.userId} 成功换领最新 serviceToken`);
+          console.log(`[Auth] 🔑 启动自检：已通过 passToken 为用户 ${miotConfig.userId} 成功换领最新双域 serviceToken`);
         } else {
           console.warn('[Auth] ❌ passToken 换发 serviceToken 失败，建议重新登录');
         }
@@ -110,7 +124,8 @@ export function restoreSessionAndDevicesOnStartup(options: BootstrapOptions): vo
             userId: miotConfig.userId,
             micoServiceToken: activeMico || undefined,
             miotServiceToken: activeMiot || undefined,
-            ssecurity: miotConfig.ssecurity,
+            xiaomiioServiceToken: miotConfig.xiaomiioServiceToken || activeMiot || undefined,
+            ssecurity: miotConfig.xiaomiioSsecurity || miotConfig.ssecurity,
             existingDevices: [],
             activeStreamIps: Array.from(activeStreamIps)
           });

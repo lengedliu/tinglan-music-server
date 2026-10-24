@@ -7,6 +7,8 @@ export interface Playlist {
   coverUrl: string;
   songIds: string[];
   createdAt: string;
+  isShared?: boolean;
+  ownerUserId?: string;
 }
 
 export type PlayMode = 'sequence' | 'loop' | 'single' | 'shuffle';

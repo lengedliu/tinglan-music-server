@@ -51,6 +51,7 @@ export interface MiotRouterOptions {
   musicDir: string;
   activeStreamIps: any;
   recentStreamEvents: any[];
+  waitForStreamConsumption?: (targetIp?: string, songId?: string, timeoutMs?: number) => Promise<{ consumed: boolean; latencyMs?: number; event?: any }>;
 }
 
 export function createMiotRouter(options: MiotRouterOptions): Router {
@@ -64,7 +65,8 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
     jwtSecret,
     musicDir,
     activeStreamIps,
-    recentStreamEvents
+    recentStreamEvents,
+    waitForStreamConsumption
   } = options;
 
   function checkMiotAdminPermission(req: Request, res: Response): boolean {
@@ -596,30 +598,38 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
     if (checkRes.success && checkRes.status === 'confirmed') {
       const miotConfig = getMiotConfig();
       const effectiveSid = sid || 'micoapi';
-      let primaryToken = checkRes.serviceToken || '';
-      let micoServiceToken = effectiveSid === 'micoapi' ? primaryToken : undefined;
-      let miotServiceToken = effectiveSid === 'micoapi' ? undefined : primaryToken;
-      // [Fix b] ssecurity is domain-scoped. The previous single-field logic let
-      // the micoapi exchange overwrite the xiaomiio secret (or vice versa),
-      // producing mismatched RC4 signature pairs. Track both domains explicitly.
-      let micoSsecurity = effectiveSid === 'micoapi' ? (checkRes.ssecurity || '') : '';
-      let ioSsecurity = effectiveSid === 'micoapi' ? '' : (checkRes.ssecurity || '');
+      const primaryToken = checkRes.serviceToken || '';
+      let micoServiceToken: string | undefined = undefined;
+      let miotServiceToken: string | undefined = undefined;
+      let micoSsecurity = '';
+      let ioSsecurity = '';
 
+      // Note: generateLoginQrCode normalizes 'micoapi' and 'xiaomiio' to 'mijia',
+      // so primaryToken/checkRes.ssecurity are scoped to 'mijia'. Always exchange
+      // genuine domain-specific STS tokens for both 'micoapi' and 'xiaomiio' when passToken is available.
       if (checkRes.userId && checkRes.passToken) {
-        if (!micoServiceToken) {
-          try {
-            const micoTokenRes = await xiaomiPassport.fetchAdditionalStsToken(checkRes.userId, checkRes.passToken, 'micoapi');
-            if (micoTokenRes.serviceToken) micoServiceToken = micoTokenRes.serviceToken;
-            if (micoTokenRes.ssecurity) micoSsecurity = micoTokenRes.ssecurity;
-          } catch {}
+        const [micoTokenRes, ioTokenRes] = await Promise.allSettled([
+          xiaomiPassport.fetchAdditionalStsToken(checkRes.userId, checkRes.passToken, 'micoapi'),
+          xiaomiPassport.fetchAdditionalStsToken(checkRes.userId, checkRes.passToken, 'xiaomiio')
+        ]);
+        if (micoTokenRes.status === 'fulfilled') {
+          if (micoTokenRes.value.serviceToken) micoServiceToken = micoTokenRes.value.serviceToken;
+          if (micoTokenRes.value.ssecurity) micoSsecurity = micoTokenRes.value.ssecurity;
         }
-        if (!miotServiceToken) {
-          try {
-            const ioTokenRes = await xiaomiPassport.fetchAdditionalStsToken(checkRes.userId, checkRes.passToken, 'xiaomiio');
-            if (ioTokenRes.serviceToken) miotServiceToken = ioTokenRes.serviceToken;
-            if (ioTokenRes.ssecurity) ioSsecurity = ioTokenRes.ssecurity;
-          } catch {}
+        if (ioTokenRes.status === 'fulfilled') {
+          if (ioTokenRes.value.serviceToken) miotServiceToken = ioTokenRes.value.serviceToken;
+          if (ioTokenRes.value.ssecurity) ioSsecurity = ioTokenRes.value.ssecurity;
         }
+      }
+
+      // Fallback only if STS exchange for a domain did not return a token
+      if (!micoServiceToken && effectiveSid === 'micoapi' && primaryToken) {
+        micoServiceToken = primaryToken;
+        if (!micoSsecurity && checkRes.ssecurity) micoSsecurity = checkRes.ssecurity;
+      }
+      if (!miotServiceToken && effectiveSid !== 'micoapi' && primaryToken) {
+        miotServiceToken = primaryToken;
+        if (!ioSsecurity && checkRes.ssecurity) ioSsecurity = checkRes.ssecurity;
       }
 
       if (!checkRes.userId || (!micoServiceToken && !miotServiceToken && !primaryToken)) {
@@ -631,20 +641,18 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
       }
 
       miotConfig.userId = checkRes.userId;
+      miotConfig.serviceToken = micoServiceToken || miotServiceToken || primaryToken;
       miotConfig.micoServiceToken = micoServiceToken;
       miotConfig.miotServiceToken = miotServiceToken;
       miotConfig.xiaomiioServiceToken = miotServiceToken;
       miotConfig.xiaomiioToken = miotServiceToken;
       miotConfig.isMicoValid = Boolean(micoServiceToken);
-      // Legacy single field: prefer the mico-domain secret (paired with
-      // micoServiceToken); fall back to the io secret when mico is absent
-      miotConfig.ssecurity = micoSsecurity || ioSsecurity;
+      miotConfig.ssecurity = micoSsecurity || ioSsecurity || checkRes.ssecurity || '';
       if (ioSsecurity) miotConfig.xiaomiioSsecurity = ioSsecurity;
       miotConfig.passToken = checkRes.passToken;
       miotConfig.miUser = `uid_${checkRes.userId}`;
       miotConfig.isLoggedIn = true;
       miotConfig.bindMode = 'account';
-      // [Fix] A fresh binding means fresh credentials — clear any dead marker
       miotConfig.isCredentialsDead = false;
       setMiotConfig(miotConfig);
 
@@ -660,7 +668,8 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
           userId: checkRes.userId,
           micoServiceToken,
           miotServiceToken,
-          ssecurity: micoSsecurity || ioSsecurity,
+          xiaomiioServiceToken: miotServiceToken,
+          ssecurity: ioSsecurity || micoSsecurity || checkRes.ssecurity,
           existingDevices: deviceRepository.getAllDevices(),
           activeStreamIps: Array.from(activeStreamIps)
         });
@@ -709,8 +718,9 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
   router.post('/ws/reconnect', (req: Request, res: Response) => {
     if (!checkMiotAdminPermission(req, res)) return;
     const miotConfig = getMiotConfig();
-    if (miotConfig.userId && miotConfig.serviceToken) {
-      minaWsClient.connect(miotConfig.userId, miotConfig.serviceToken, miotConfig.activeDeviceId || '');
+    const activeMicoToken = miotConfig.micoServiceToken || miotConfig.serviceToken;
+    if (miotConfig.userId && activeMicoToken) {
+      minaWsClient.connect(miotConfig.userId, activeMicoToken, miotConfig.activeDeviceId || '');
       return res.json({ success: true, message: '正在重新建立 Mina WebSocket 连接...' });
     }
     return res.status(400).json({ success: false, error: '未配置有效的小米云端凭证' });
@@ -1117,7 +1127,7 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
         userId: miotConfig.userId,
         micoServiceToken: miotConfig.micoServiceToken || (miotConfig.isMicoValid ? miotConfig.serviceToken : undefined),
         miotServiceToken: miotConfig.miotServiceToken || miotConfig.xiaomiioServiceToken || (!miotConfig.isMicoValid ? miotConfig.serviceToken : undefined),
-        ssecurity: miotConfig.ssecurity,
+        ssecurity: miotConfig.xiaomiioSsecurity || miotConfig.ssecurity,
         subnetPrefix,
         existingDevices: deviceRepository.getAllDevices(),
         activeStreamIps: Array.from(activeStreamIps)
@@ -1150,7 +1160,7 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
     }
   });
 
-  router.post('/devices/scan', async (req: Request, res: Response) => {
+  router.post(['/devices/scan', '/devices/scan-subnet'], async (req: Request, res: Response) => {
     if (!checkMiotAdminPermission(req, res)) return;
 
     const { subnetPrefix } = req.body || {};
@@ -1160,7 +1170,7 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
         userId: miotConfig.userId,
         micoServiceToken: miotConfig.micoServiceToken || (miotConfig.isMicoValid ? miotConfig.serviceToken : undefined),
         miotServiceToken: miotConfig.miotServiceToken || miotConfig.xiaomiioServiceToken || (!miotConfig.isMicoValid ? miotConfig.serviceToken : undefined),
-        ssecurity: miotConfig.ssecurity,
+        ssecurity: miotConfig.xiaomiioSsecurity || miotConfig.ssecurity,
         subnetPrefix,
         existingDevices: deviceRepository.getAllDevices(),
         activeStreamIps: Array.from(activeStreamIps)
@@ -1342,7 +1352,10 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
     const resolvedServerHost = baseHost;
 
     const streamToken = generateStreamToken(cleanSongId);
-    let resolvedStreamUrl = `${baseHost}/api/stream/${encodeURIComponent(cleanSongId)}.mp3?token=${streamToken}`;
+    const seekParam = (typeof req.body.seekSeconds === 'number' && req.body.seekSeconds > 0)
+      ? `&seek=${Math.floor(req.body.seekSeconds)}`
+      : '';
+    let resolvedStreamUrl = `${baseHost}/api/stream/${encodeURIComponent(cleanSongId)}.mp3?token=${streamToken}${seekParam}`;
     const isNavidromeOrRawStream = streamUrl && (streamUrl.includes('/rest/stream.view') || streamUrl.includes(':4533') || streamUrl.includes('subsonic'));
     if (streamUrl && (streamUrl.includes('/api/radio/') || (streamUrl.startsWith('http') && !streamUrl.includes('localhost') && !streamUrl.includes('127.0.0.1') && !isNavidromeOrRawStream))) {
       resolvedStreamUrl = streamUrl.startsWith('/api/') ? `${baseHost}${streamUrl}` : streamUrl;
@@ -1376,7 +1389,8 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
       {
         songArtist,
         duration,
-        castMode: selectedCastMode
+        castMode: selectedCastMode,
+        waitForStreamConsumption
       }
     );
 
@@ -1572,12 +1586,7 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
     let localMiioResult: any = null;
 
     const activeMicoToken = miotConfig.micoServiceToken || (miotConfig.isMicoValid ? miotConfig.serviceToken : undefined);
-    const activeIoToken = miotConfig.miotServiceToken || miotConfig.xiaomiioServiceToken || (!miotConfig.isMicoValid ? miotConfig.serviceToken : undefined);
-    const cloudAuth = (miotConfig.userId && activeIoToken) ? {
-      userId: String(miotConfig.userId),
-      serviceToken: activeIoToken,
-      ssecurity: miotConfig.ssecurity
-    } : undefined;
+    const cloudAuth = buildMiotCloudAuth(miotConfig) || undefined;
 
     const dispatchAction = async (miioMethod: string, miioParams: any[], siid: number, aiid: number, inArgs: any[] = [], minaAction?: { path: string; method: string; msg: any }) => {
       const tasks: Promise<any>[] = [];
@@ -1684,6 +1693,9 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
       case 'play':
         (targetDevice as any).status.playing = true;
         detail = '已发送播放指令';
+        if (queueEngine.getStatus().targetDid === targetDevice.did) {
+          queueEngine.resume();
+        }
         await dispatchAction(
           'player_play_operation', ['play'],
           3, 2, [],
@@ -1695,6 +1707,9 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
       case 'stop':
         (targetDevice as any).status.playing = false;
         detail = '已发送暂停/停止指令';
+        if (queueEngine.getStatus().targetDid === targetDevice.did) {
+          queueEngine.pause();
+        }
         await dispatchAction(
           'player_play_operation', ['pause'],
           3, 1, [],
@@ -1706,6 +1721,10 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
         const nextState = !(targetDevice as any).status.playing;
         (targetDevice as any).status.playing = nextState;
         detail = nextState ? '已发送播放指令' : '已发送暂停指令';
+        if (queueEngine.getStatus().targetDid === targetDevice.did) {
+          if (nextState) queueEngine.resume();
+          else queueEngine.pause();
+        }
         await dispatchAction(
           'player_play_operation', [nextState ? 'play' : 'pause'],
           3, nextState ? 2 : 1, [],
@@ -1713,25 +1732,46 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
         );
         break;
 
-      case 'next':
+      case 'next': {
         detail = '已切换至下一首';
-        queueEngine.next(true, targetDevice.did);
-        await dispatchAction(
-          'player_play_operation', ['next'],
-          3, 3, [],
-          { path: 'mediaplayer', method: 'player_play_operation', msg: { action: 'next' } }
-        );
+        const nextRes = await queueEngine.next(true, targetDevice.did);
+        if (!nextRes.success || !nextRes.song) {
+          await dispatchAction(
+            'player_play_operation', ['next'],
+            3, 3, [],
+            { path: 'mediaplayer', method: 'player_play_operation', msg: { action: 'next' } }
+          );
+        } else {
+          cloudResult = { success: true };
+        }
         break;
+      }
 
-      case 'prev':
+      case 'prev': {
         detail = '已切换至上一首';
-        queueEngine.prev(targetDevice.did);
-        await dispatchAction(
-          'player_play_operation', ['prev'],
-          3, 4, [],
-          { path: 'mediaplayer', method: 'player_play_operation', msg: { action: 'prev' } }
-        );
+        const prevRes = await queueEngine.prev(targetDevice.did);
+        if (!prevRes.success || !prevRes.song) {
+          await dispatchAction(
+            'player_play_operation', ['prev'],
+            3, 4, [],
+            { path: 'mediaplayer', method: 'player_play_operation', msg: { action: 'prev' } }
+          );
+        } else {
+          cloudResult = { success: true };
+        }
         break;
+      }
+
+      case 'seek': {
+        const seekSec = Math.max(0, Math.floor(Number(value) || 0));
+        (targetDevice as any).status.currentPosition = seekSec;
+        detail = `已跳转播放进度至 ${seekSec}s`;
+        const seekRes = await queueEngine.seek(seekSec, targetDevice.did);
+        if (seekRes.success) {
+          cloudResult = { success: true };
+        }
+        break;
+      }
 
       case 'volume':
         const vol = Math.max(0, Math.min(100, Number(value) || 45));
@@ -1823,14 +1863,28 @@ export function createMiotRouter(options: MiotRouterOptions): Router {
           });
         } else if (action === 'volume') {
           const volVal = Math.max(0, Math.min(100, Number(volume) || 45));
+          const volRes = await xiaomiAdapter.setVolume(
+            dev,
+            volVal,
+            (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry, miotConfig, setMiotConfig),
+            (ip, token, method, params, timeoutMs) => sendMiioCommand(ip, token, method, params, timeoutMs || 2500),
+            miotConfig
+          );
           if ((dev as any).status) (dev as any).status.volume = volVal;
           deviceRepository.addOrUpdateDevice(dev as any);
-          results.push({ did, name: devName, success: true, message: `音量已调整为 ${volVal}%` });
+          results.push({ did, name: devName, success: volRes.success, message: volRes.success ? `音量已调整为 ${volVal}%` : '音量指令未响应' });
         } else {
           const isPlay = action === 'play';
+          const opRes = await xiaomiAdapter.setPlaybackOperation(
+            dev,
+            isPlay ? 'play' : 'pause',
+            (path, method, msg, tDid, retry) => callMinaCloudApi(path, method, msg, tDid, retry, miotConfig, setMiotConfig),
+            (ip, token, method, params, timeoutMs) => sendMiioCommand(ip, token, method, params, timeoutMs || 2500),
+            miotConfig
+          );
           if ((dev as any).status) (dev as any).status.playing = isPlay;
           deviceRepository.addOrUpdateDevice(dev as any);
-          results.push({ did, name: devName, success: true, message: isPlay ? '已同步播放' : '已同步暂停' });
+          results.push({ did, name: devName, success: opRes.success, message: opRes.success ? (isPlay ? '已同步播放' : '已同步暂停') : '播控指令未响应' });
         }
       } catch (err: any) {
         results.push({ did, name: devName, success: false, message: err.message || '指令发送异常' });

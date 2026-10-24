@@ -34,7 +34,7 @@ export interface PlayerBarProps {
   onOpenSubsonic?: () => void;
   queueCount?: number;
   speakerVolume?: number;
-  onSpeakerVolumeChange?: (vol: number) => void;
+  onSpeakerVolumeChange?: (vol: number, silent?: boolean) => void;
   playbackSpeed?: number;
   onPlaybackSpeedChange?: (speed: number) => void;
   sleepTimer?: SleepTimerConfig;

@@ -72,7 +72,7 @@ interface XiaomiSpeakerPanelProps {
   devices: XiaomiDevice[];
   activeDevice: XiaomiDevice | undefined;
   onSelectDevice: (did: string) => void;
-  onControlDevice: (did: string, action: string, value?: any) => void;
+  onControlDevice: (did: string, action: string, value?: any, options?: { silent?: boolean }) => void;
   onSendTts: (did: string, text: string, mode?: string, voice?: string) => void;
   miotConfig: MiotConfig;
   onUpdateConfig: (newConfig: Partial<MiotConfig>) => void;
@@ -321,6 +321,7 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
   // Speaker Volume State with Mouse/Touch Release (Debounced/Committed) Control
   const [speakerVolume, setSpeakerVolume] = useState<number>(activeDevice?.status?.volume ?? 40);
   const [isDraggingVolume, setIsDraggingVolume] = useState(false);
+  const lastLiveVolAtRef = useRef<number>(0);
 
   useEffect(() => {
     if (!isDraggingVolume && activeDevice?.status?.volume !== undefined) {
@@ -329,7 +330,8 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
   }, [activeDevice?.status?.volume, activeDevice?.did, isDraggingVolume]);
 
   const handleCommitSpeakerVolume = (val?: number) => {
-    const targetVal = typeof val === 'number' ? val : speakerVolume;
+    const targetVal = Math.max(0, Math.min(100, Math.round(typeof val === 'number' ? val : speakerVolume)));
+    setSpeakerVolume(targetVal);
     setIsDraggingVolume(false);
     if (activeDevice) {
       onControlDevice(activeDevice.did, 'volume', targetVal);
@@ -546,11 +548,12 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
           setQrStatusText(`✅ 登录与同步完成！共发现 ${deviceCount} 台小爱音箱设备`);
           setLoginSuccessMsg(`小米账号授权绑定成功 (${userStr})，已全自动换取双 STS 凭证，同步 ${deviceCount} 台音箱设备`);
           
+          const { serviceToken: _maskedToken, ...cleanServerConfig } = data.config || {};
           onUpdateConfig({
             isLoggedIn: true,
             miUser: userStr,
             bindMode: 'account',
-            ...(data.config || {})
+            ...cleanServerConfig
           });
           if (data.devices && Array.isArray(data.devices)) {
             onDevicesUpdated?.(data.devices);
@@ -3055,14 +3058,25 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
             </div>
 
             {/* Volume Dial / Slider */}
-            <div className="space-y-3 p-4 rounded-2xl bg-zinc-950/60 border border-white/5">
+            <div
+              className="space-y-3 p-4 rounded-2xl bg-zinc-950/60 border border-white/5 select-none"
+              onWheel={(e) => {
+                e.preventDefault();
+                const delta = e.deltaY < 0 ? 3 : -3;
+                const nextVal = Math.max(0, Math.min(100, Math.round(speakerVolume + delta)));
+                if (nextVal !== speakerVolume) {
+                  setSpeakerVolume(nextVal);
+                  if (activeDevice) onControlDevice(activeDevice.did, 'volume', nextVal, { silent: true });
+                }
+              }}
+            >
               <div className="flex items-center justify-between text-xs">
                 <span className="text-zinc-400 flex items-center gap-1.5">
                   <Volume2 className="w-4 h-4 text-[#FF6700]" />
                   音箱输出音量
                   {isDraggingVolume && (
-                    <span className="text-[10px] text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded font-mono ml-1 animate-pulse">
-                      松开后下发指令
+                    <span className="text-[10px] text-[#FF6700] bg-[#FF6700]/10 border border-[#FF6700]/20 px-1.5 py-0.5 rounded font-mono ml-1">
+                      实时同步中
                     </span>
                   )}
                 </span>
@@ -3070,28 +3084,45 @@ export const XiaomiSpeakerPanel: React.FC<XiaomiSpeakerPanelProps> = ({
                   {speakerVolume}%
                 </span>
               </div>
-              <input
-                id="input-speaker-volume-slider"
-                type="range"
-                min="0"
-                max="100"
-                step="1"
-                value={speakerVolume}
-                onMouseDown={() => setIsDraggingVolume(true)}
-                onTouchStart={() => setIsDraggingVolume(true)}
-                onChange={(e) => {
-                  setSpeakerVolume(Number(e.target.value));
-                  setIsDraggingVolume(true);
-                }}
-                onMouseUp={(e) => handleCommitSpeakerVolume(Number((e.target as HTMLInputElement).value))}
-                onTouchEnd={(e) => handleCommitSpeakerVolume(Number((e.target as HTMLInputElement).value))}
-                onKeyUp={(e) => {
-                  if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'].includes(e.key)) {
-                    handleCommitSpeakerVolume(Number((e.target as HTMLInputElement).value));
-                  }
-                }}
-                className="w-full h-2 bg-zinc-800 rounded-lg accent-[#FF6700] cursor-pointer focus:outline-none"
-              />
+              <div className="relative h-7 flex items-center group/spkvol">
+                <div className="w-full h-2 group-hover/spkvol:h-2.5 bg-zinc-800 rounded-full relative transition-all duration-150 pointer-events-none">
+                  <div
+                    className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-[#FF6700] to-orange-400"
+                    style={{ width: `${speakerVolume}%` }}
+                  />
+                  <div
+                    className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-4 h-4 rounded-full bg-white border-2 border-[#FF6700] shadow-[0_1px_8px_rgba(255,103,0,0.5)] transition-transform duration-100 group-hover/spkvol:scale-110"
+                    style={{ left: `${speakerVolume}%` }}
+                  />
+                </div>
+                <input
+                  id="input-speaker-volume-slider"
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={speakerVolume}
+                  onChange={(e) => {
+                    const nextVal = Number(e.target.value);
+                    setSpeakerVolume(nextVal);
+                    setIsDraggingVolume(true);
+                    const now = Date.now();
+                    if (activeDevice && now - lastLiveVolAtRef.current >= 180) {
+                      lastLiveVolAtRef.current = now;
+                      onControlDevice(activeDevice.did, 'volume', nextVal, { silent: true });
+                    }
+                  }}
+                  onPointerUp={(e) => handleCommitSpeakerVolume(Number((e.target as HTMLInputElement).value))}
+                  onMouseUp={(e) => handleCommitSpeakerVolume(Number((e.target as HTMLInputElement).value))}
+                  onTouchEnd={(e) => handleCommitSpeakerVolume(Number((e.target as HTMLInputElement).value))}
+                  onKeyUp={(e) => {
+                    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End'].includes(e.key)) {
+                      handleCommitSpeakerVolume(Number((e.target as HTMLInputElement).value));
+                    }
+                  }}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 m-0"
+                />
+              </div>
               <div className="flex items-center justify-between text-[10px] text-zinc-500 font-mono select-none">
                 <button
                   type="button"

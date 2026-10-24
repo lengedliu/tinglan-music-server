@@ -39,15 +39,17 @@ export class MinaCloudCastStrategy implements ICastStrategy {
             statusCode: 200,
             message: `XiaoWei CP 协议 player_play_music 下发成功`
           });
-          verifyStreamConsumed('Tier 2 XiaoWei player_play_music').catch(() => {});
-          return {
-            success: true,
-            message: `已通过小米云端 (XiaoWei player_play_music) 成功下发播放到【${targetDevice.name}】`,
-            protocol: 'Mina Cloud UBUS (XiaoWei CP)',
-            streamUrl,
-            details: ubusRes,
-            steps
-          };
+          const isConsumed = await verifyStreamConsumed('Tier 2 XiaoWei player_play_music');
+          if (isConsumed) {
+            return {
+              success: true,
+              message: `已通过小米云端 (XiaoWei player_play_music) 成功下发播放到【${targetDevice.name}】`,
+              protocol: 'Mina Cloud UBUS (XiaoWei CP)',
+              streamUrl,
+              details: ubusRes,
+              steps
+            };
+          }
         }
 
         // Sub-fallback: player_play_url type 1
@@ -60,15 +62,17 @@ export class MinaCloudCastStrategy implements ICastStrategy {
             statusCode: 200,
             message: `Mina UBUS player_play_url(type=1, media=app_ios) 下发成功`
           });
-          verifyStreamConsumed('Tier 2 Mina UBUS type=1').catch(() => {});
-          return {
-            success: true,
-            message: `已通过小米云端 (UBUS player_play_url type=1) 成功下发播放到【${targetDevice.name}】`,
-            protocol: 'Mina Cloud UBUS (type=1)',
-            streamUrl,
-            details: ubusRes,
-            steps
-          };
+          const isConsumed = await verifyStreamConsumed('Tier 2 Mina UBUS type=1');
+          if (isConsumed) {
+            return {
+              success: true,
+              message: `已通过小米云端 (UBUS player_play_url type=1) 成功下发播放到【${targetDevice.name}】`,
+              protocol: 'Mina Cloud UBUS (type=1)',
+              streamUrl,
+              details: ubusRes,
+              steps
+            };
+          }
         }
       } else {
         // Standard Method: player_play_url
@@ -83,15 +87,17 @@ export class MinaCloudCastStrategy implements ICastStrategy {
             statusCode: 200,
             message: `Mina UBUS player_play_url(type=${primaryPlayType}, media=app_ios) 下发成功`
           });
-          verifyStreamConsumed('Tier 2 Mina UBUS').catch(() => {});
-          return {
-            success: true,
-            message: `已通过小米云端 (UBUS player_play_url) 成功下发播放到【${targetDevice.name}】`,
-            protocol: 'MiService Mina Cloud UBUS',
-            streamUrl,
-            details: ubusRes,
-            steps
-          };
+          const isConsumed = await verifyStreamConsumed('Tier 2 Mina UBUS');
+          if (isConsumed) {
+            return {
+              success: true,
+              message: `已通过小米云端 (UBUS player_play_url) 成功下发播放到【${targetDevice.name}】`,
+              protocol: 'MiService Mina Cloud UBUS',
+              streamUrl,
+              details: ubusRes,
+              steps
+            };
+          }
         }
 
         // Sub-fallback: type 2
@@ -104,15 +110,17 @@ export class MinaCloudCastStrategy implements ICastStrategy {
             statusCode: 200,
             message: `Mina UBUS player_play_url(type=2, media=app_ios) 下发成功`
           });
-          verifyStreamConsumed('Tier 2 Mina UBUS type=2').catch(() => {});
-          return {
-            success: true,
-            message: `已通过小米云端 (UBUS player_play_url type=2) 成功下发播放到【${targetDevice.name}】`,
-            protocol: 'MiService Mina Cloud UBUS (type=2)',
-            streamUrl,
-            details: ubusRes,
-            steps
-          };
+          const isConsumed = await verifyStreamConsumed('Tier 2 Mina UBUS type=2');
+          if (isConsumed) {
+            return {
+              success: true,
+              message: `已通过小米云端 (UBUS player_play_url type=2) 成功下发播放到【${targetDevice.name}】`,
+              protocol: 'MiService Mina Cloud UBUS (type=2)',
+              streamUrl,
+              details: ubusRes,
+              steps
+            };
+          }
         }
       }
 
